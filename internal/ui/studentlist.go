@@ -31,7 +31,7 @@ func newStudentTable(a *App) *studentTable {
 			r := t.rows[i]
 			row.update(r)
 			row.onDouble = func() { t.app.showCheckInOutDialog(r) }
-			row.onSecondary = func(pos fyne.Position) { t.app.showRemoveDialog(r) }
+			row.onSecondary = func(pos fyne.Position) { t.app.showRowContextMenu(r, pos) }
 		},
 	)
 	return t
@@ -97,17 +97,20 @@ func (r *studentRow) DoubleTapped(_ *fyne.PointEvent) {
 // Tapped implements fyne.Tappable (needed so DoubleTapped fires).
 func (r *studentRow) Tapped(_ *fyne.PointEvent) {}
 
-// TappedSecondary implements fyne.SecondaryTappable (right-click).
-func (r *studentRow) TappedSecondary(e *fyne.PointEvent) {
-	if r.onSecondary != nil {
+// MouseDown implements desktop.Mouseable so the right-click context menu opens
+// on press-down (matching platform conventions) rather than on release.
+func (r *studentRow) MouseDown(e *desktop.MouseEvent) {
+	if e.Button == desktop.MouseButtonSecondary && r.onSecondary != nil {
 		r.onSecondary(e.AbsolutePosition)
 	}
 }
 
+// MouseUp implements desktop.Mouseable (no-op; the menu opens on MouseDown).
+func (r *studentRow) MouseUp(_ *desktop.MouseEvent) {}
+
 var _ fyne.Tappable = (*studentRow)(nil)
 var _ fyne.DoubleTappable = (*studentRow)(nil)
-var _ fyne.SecondaryTappable = (*studentRow)(nil)
+var _ desktop.Mouseable = (*studentRow)(nil)
 
 // keep theme import used for potential future styling
 var _ = theme.Color
-var _ = desktop.MouseButtonPrimary

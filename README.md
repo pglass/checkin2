@@ -33,6 +33,24 @@ make test       # run unit tests (DB, state, pruner, QR/PDF)
 make generate   # regenerate db/gen from db/schema.sql + db/queries.sql
 ```
 
+## Logging
+
+By default the app logs at **INFO** to a rotating file `checkin.log` in the same
+directory as the database. Rotation keeps disk usage bounded (10 MB per file, up
+to 5 compressed backups, 90-day max age).
+
+```sh
+checkin                       # INFO -> checkin.log next to the DB (rotated)
+checkin -log-level DEBUG      # more verbose
+checkin -log-file -           # log to stdout only, no file, no rotation
+checkin -log-file /var/log/checkin -log-level WARN   # custom directory
+```
+
+Levels: `DEBUG`, `INFO`, `WARN`, `ERROR`. At DEBUG you also get: each student
+check-in/out/add/remove, each QR detection (with the decoded JSON), and the raw
+string of any QR code that failed to parse. Webcam presence is logged at startup
+(INFO if found, WARN if not).
+
 ## Data
 
 - **Location:** `~/Library/Application Support/checkin/checkin.db` (macOS),

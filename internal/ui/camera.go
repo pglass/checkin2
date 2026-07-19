@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"image"
-	"log"
+	"log/slog"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -19,15 +19,16 @@ import (
 // preview image, and routes scan events onto the UI goroutine via fyne.Do.
 func (a *App) startCamera(ctx context.Context) {
 	if !camera.Available(0) {
-		log.Println("no webcam detected; running without camera")
+		slog.Warn("no webcam detected; running without camera")
 		return
 	}
+	slog.Info("webcam detected; starting camera")
 	cam := camera.New()
 	a.cam = cam
 
 	go func() {
 		if err := cam.Run(ctx, 0); err != nil {
-			log.Printf("camera stopped: %v", err)
+			slog.Error("camera stopped", "error", err)
 		}
 	}()
 
@@ -71,8 +72,11 @@ func (a *App) updatePreview(img image.Image) {
 func (a *App) routeScan(ev camera.ScanEvent) {
 	p, err := qr.ParsePayload(ev.Payload)
 	if err != nil || p.Version != qr.Version || p.Name == "" {
-		return // not one of our codes
+		// Detected a QR code we can't use: log the raw string for diagnosis.
+		slog.Debug("QR code detected but not parseable", "raw", ev.Payload)
+		return
 	}
+	slog.Debug("QR code detected", "json", ev.Payload, "name", p.Name)
 
 	st, err := a.store.StudentByName(a.ctx, p.Name)
 	fyne.Do(func() {

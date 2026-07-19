@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,6 +125,7 @@ func (s *Store) AddStudent(ctx context.Context, name string) (gen.Student, error
 	if err := s.appendLog(ctx, st.ID, st.Name, ActionAdded); err != nil {
 		return gen.Student{}, err
 	}
+	slog.Debug("student added", "id", st.ID, "name", st.Name)
 	return st, nil
 }
 
@@ -136,6 +138,7 @@ func (s *Store) RemoveStudent(ctx context.Context, id int64, name string) error 
 		return err
 	}
 	s.day.clear(id)
+	slog.Debug("student removed", "id", id, "name", name)
 	return nil
 }
 
@@ -146,6 +149,7 @@ func (s *Store) CheckIn(ctx context.Context, id int64, name string) error {
 		return err
 	}
 	s.day.setIn(id, now)
+	slog.Debug("student checked in", "id", id, "name", name, "at", now)
 	return nil
 }
 
@@ -156,6 +160,7 @@ func (s *Store) CheckOut(ctx context.Context, id int64, name string) error {
 		return err
 	}
 	s.day.setOut(id, now)
+	slog.Debug("student checked out", "id", id, "name", name, "at", now)
 	return nil
 }
 

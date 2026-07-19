@@ -56,6 +56,15 @@ func (a *App) showAddStudentDialogPrefill(prefill, notice string) {
 	a.win.Canvas().Focus(entry)
 }
 
+// showRowContextMenu pops up the right-click context menu for a student row at
+// the given position, offering "Remove Student".
+func (a *App) showRowContextMenu(row store.StudentRow, pos fyne.Position) {
+	menu := fyne.NewMenu("",
+		fyne.NewMenuItem("Remove Student", func() { a.showRemoveDialog(row) }),
+	)
+	widget.ShowPopUpMenuAtPosition(menu, a.win.Canvas(), pos)
+}
+
 // showRemoveDialog confirms removal of a student.
 func (a *App) showRemoveDialog(row store.StudentRow) {
 	name := canvas.NewText(row.Name, theme.Color(theme.ColorNameForeground))
