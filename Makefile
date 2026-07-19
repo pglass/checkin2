@@ -13,10 +13,15 @@ export CGO_ENABLED := 1
 # Fyne 2.8's migration warning and opts into the future default behaviour.
 TAGS := migrated_fynedo
 
-.PHONY: build run test generate package check-opencv
+# All Go sources: the checkin binary rebuilds only when one of these changes.
+GO_SOURCES := $(shell find . -name '*.go')
 
-build: check-opencv
-	go build -tags "$(TAGS)" -ldflags="-extldflags=-Wl,-no_warn_duplicate_libraries" ./cmd/checkin/
+.PHONY: run test generate package check-opencv
+
+# check-opencv is an order-only prerequisite (after the |) so it gates the build
+# without forcing a rebuild on every invocation.
+checkin: $(GO_SOURCES) | check-opencv
+	go build -tags "$(TAGS)" -ldflags="-extldflags=-Wl,-no_warn_duplicate_libraries" -o checkin ./cmd/checkin/
 
 run: check-opencv
 	go run -tags "$(TAGS)" ./cmd/checkin

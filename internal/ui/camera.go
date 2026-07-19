@@ -15,20 +15,23 @@ import (
 	"github.com/pglass/checkin/internal/store"
 )
 
-// startCamera opens the webcam (if present), drains preview frames into the
-// preview image, and routes scan events onto the UI goroutine via fyne.Do.
+// startCamera opens the webcam (if present) in the background, draining preview
+// frames into the preview image and routing scan events onto the UI goroutine
+// via fyne.Do. Opening a webcam can take seconds (OS init + permission), so it
+// must not run on the startup path or it stalls the first paint.
 func (a *App) startCamera(ctx context.Context) {
-	if !camera.Available(0) {
-		slog.Warn("no webcam detected; running without camera")
-		return
-	}
-	slog.Info("webcam detected; starting camera")
 	cam := camera.New()
 	a.cam = cam
 
 	go func() {
-		if err := cam.Run(ctx, 0); err != nil {
-			slog.Error("camera stopped", "error", err)
+		// Run is the sole camera open; a prior Available() probe would open the
+		// device twice and block startup, so presence is reported from here.
+		err := cam.Run(ctx, 0)
+		switch {
+		case err == nil || ctx.Err() != nil:
+			// Clean stop (context cancelled on shutdown).
+		default:
+			slog.Warn("no webcam detected; running without camera", "error", err)
 		}
 	}()
 

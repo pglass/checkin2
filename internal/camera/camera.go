@@ -6,6 +6,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -44,17 +45,6 @@ func New() *Camera {
 	}
 }
 
-// Available reports whether a webcam could be opened. Callers use this to
-// decide whether to show the preview; the app remains usable without a camera.
-func Available(deviceID int) bool {
-	vc, err := gocv.OpenVideoCapture(deviceID)
-	if err != nil {
-		return false
-	}
-	vc.Close()
-	return true
-}
-
 // Run opens the device and loops until ctx is cancelled. It returns an error
 // only if the camera cannot be opened; a missing camera is not fatal to the app.
 func (c *Camera) Run(ctx context.Context, deviceID int) error {
@@ -63,6 +53,7 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 		return err
 	}
 	defer vc.Close()
+	slog.Info("webcam detected; camera started", "device", deviceID)
 
 	img := gocv.NewMat()
 	defer img.Close()
