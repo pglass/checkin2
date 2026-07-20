@@ -2,11 +2,14 @@ package ui
 
 import (
 	"context"
+	"fmt"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 
 	"github.com/pglass/checkin/internal/camera"
 	"github.com/pglass/checkin/internal/store"
@@ -19,25 +22,36 @@ type App struct {
 	store   *store.Store
 	ctx     context.Context
 
-	table   *studentTable
-	cam     *camera.Camera
+	table           *studentTable
+	cam             *camera.Camera
+	cameraFPS       int
+	cameraReqWidth  int
+	cameraReqHeight int
 
 	// Camera preview lives in its own window, created on demand.
 	preview    *canvas.Image
 	previewWin fyne.Window
+	resLabel   *canvas.Text // status bar showing the actual resolution
+
+	// qrWin is the Generate QR PDF window; tracked so reopening raises the
+	// existing one instead of spawning a duplicate.
+	qrWin fyne.Window
 }
 
 // NewApp builds the main window (menubar + student list) but does not run it.
-func NewApp(ctx context.Context, s *store.Store) *App {
+func NewApp(ctx context.Context, s *store.Store, cameraFPS, cameraReqWidth, cameraReqHeight int) *App {
 	fa := app.NewWithID("com.pglass.checkin")
+	// Tight, consistent spacing across every window.
+	fa.Settings().SetTheme(newCompactTheme())
 	win := fa.NewWindow("Check-In")
 
-	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx}
+	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx,
+		cameraFPS: cameraFPS, cameraReqWidth: cameraReqWidth, cameraReqHeight: cameraReqHeight}
 	a.table = newStudentTable(a)
 
 	win.SetMainMenu(a.buildMenu())
 	// Main view is the student list only; the camera feed opens in its own window.
-	win.SetContent(a.table.widget())
+	win.SetContent(withWindowMargin(a.table.widget()))
 	win.Resize(fyne.NewSize(640, 480))
 
 	a.refresh()
@@ -87,20 +101,47 @@ func (a *App) toggleCamera() {
 	}
 
 	a.preview = newPreview()
+	a.resLabel = canvas.NewText("", theme.Color(theme.ColorNameForeground))
+	a.resLabel.TextSize = theme.CaptionTextSize()
 	if a.cam != nil {
+		// Resume frame production; the loop skips it while nobody is watching.
+		a.cam.SetPreviewing(true)
 		if f := a.cam.LatestFrame(); f != nil {
 			a.preview.Image = f
 			a.preview.Refresh()
 		}
 	}
+	a.updateResLabel()
+
+	// Preview fills the window; a thin status bar at the bottom shows resolution.
+	content := container.NewBorder(nil, a.resLabel, nil, nil, a.preview)
 
 	w := a.fyneApp.NewWindow("Camera")
-	w.SetContent(a.preview)
+	w.SetContent(withWindowMargin(content))
 	w.Resize(fyne.NewSize(480, 360))
 	w.SetOnClosed(func() {
+		if a.cam != nil {
+			a.cam.SetPreviewing(false)
+		}
 		a.previewWin = nil
 		a.preview = nil
+		a.resLabel = nil
 	})
 	a.previewWin = w
 	w.Show()
+}
+
+// updateResLabel writes the actual capture resolution into the camera window's
+// status bar. Reads "pending" until the first frame arrives.
+func (a *App) updateResLabel() {
+	if a.resLabel == nil || a.cam == nil {
+		return
+	}
+	act := a.cam.Actual()
+	text := "pending"
+	if act.Width > 0 && act.Height > 0 {
+		text = fmt.Sprintf("%d×%d", act.Width, act.Height)
+	}
+	a.resLabel.Text = text
+	a.resLabel.Refresh()
 }

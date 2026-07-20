@@ -16,7 +16,7 @@ TAGS := migrated_fynedo
 # All Go sources: the checkin binary rebuilds only when one of these changes.
 GO_SOURCES := $(shell find . -name '*.go')
 
-.PHONY: run test generate package check-opencv
+.PHONY: run test generate package check-opencv seed
 
 # check-opencv is an order-only prerequisite (after the |) so it gates the build
 # without forcing a rebuild on every invocation.
@@ -28,6 +28,10 @@ run: checkin
 
 test:
 	go test -tags "$(TAGS)" ./...
+
+# Build the seed tool (no OpenCV needed; it only touches the DB).
+seed:
+	go build -o seed ./cmd/seed/
 
 generate:
 	sqlc generate

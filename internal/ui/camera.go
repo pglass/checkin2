@@ -20,7 +20,7 @@ import (
 // via fyne.Do. Opening a webcam can take seconds (OS init + permission), so it
 // must not run on the startup path or it stalls the first paint.
 func (a *App) startCamera(ctx context.Context) {
-	cam := camera.New()
+	cam := camera.New(a.cameraFPS, a.cameraReqWidth, a.cameraReqHeight)
 	a.cam = cam
 
 	go func() {
@@ -68,6 +68,8 @@ func (a *App) updatePreview(img image.Image) {
 		}
 		a.preview.Image = img
 		a.preview.Refresh()
+		// Actual resolution is known once frames arrive; keep the status bar current.
+		a.updateResLabel()
 	})
 }
 

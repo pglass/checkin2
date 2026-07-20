@@ -60,10 +60,12 @@ func boldText(s string) *canvas.Text {
 	return t
 }
 
-// rowHeight is the fixed height of a list row: text height plus a small gap.
-// Kept tight so the list is vertically compact, unlike the default widget.Label
-// padding on all sides. Computed lazily so it reflects the active theme.
-func rowHeight() float32 { return theme.TextSize() + 6 }
+// rowHeight is the fixed height of a list row: text height plus the theme's
+// padding above and below. Derived from the theme (not a hard-coded gap) so the
+// list's vertical spacing tracks the app theme and stays consistent with the
+// rest of the UI. The custom renderer is still needed to override widget.List's
+// tall default row height.
+func rowHeight() float32 { return theme.TextSize() + 2*theme.Padding() }
 
 // studentRow is a custom list row supporting double-tap and secondary-tap. It
 // uses unpadded canvas.Text (not widget.Label) to avoid the label's built-in

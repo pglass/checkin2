@@ -1,4 +1,6 @@
 Checkin.app/
 checkin
 main
-
+seed
+**/*.db
+**/*.ini

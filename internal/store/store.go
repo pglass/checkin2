@@ -213,6 +213,10 @@ func (s *Store) StudentByName(ctx context.Context, name string) (gen.Student, er
 // Queries exposes the raw querier for the pruner and tests.
 func (s *Store) Queries() *gen.Queries { return s.q }
 
+// DB exposes the underlying connection for bulk operations (e.g. seeding) that
+// need transaction control.
+func (s *Store) DB() *sql.DB { return s.db }
+
 func (s *Store) appendLog(ctx context.Context, id int64, name, action string) error {
 	return s.appendLogAt(ctx, id, name, action, time.Now())
 }

@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gocv.io/x/gocv"
@@ -17,28 +18,67 @@ import (
 // don't re-trigger the same student's dialog immediately.
 const defaultCooldown = 8 * time.Second
 
+// defaultFPS paces the capture/detect loop when no rate is configured. QR
+// detection is CPU-heavy, so we run it well below the camera's native rate:
+// fast enough to catch a held-up QR code, cheap enough to idle quietly.
+const defaultFPS = 6
+
 // ScanEvent is emitted when a QR code is decoded (subject to cooldown).
 type ScanEvent struct {
 	Payload string
 	At      time.Time
 }
 
+// Resolution is a frame width/height in pixels.
+type Resolution struct{ Width, Height int }
+
 // Camera manages a webcam capture + QR detection loop.
 type Camera struct {
 	cooldown time.Duration
+	interval time.Duration // time between loop iterations (derived from fps)
+	req      Resolution    // capture resolution requested from the driver
 
 	mu       sync.Mutex
 	lastSeen map[string]time.Time
 	frame    image.Image // latest annotated frame for preview
+	actual   Resolution  // actual delivered frame size (0 until first read)
+
+	// previewing is set by the UI while the camera window is open. When false,
+	// the loop skips the frame->image.Image conversion and channel push (the
+	// main per-frame cost besides detection), since nobody is watching.
+	previewing atomic.Bool
 
 	Frames chan image.Image // latest-frame preview (buffered, size 1)
 	Scans  chan ScanEvent   // decoded payloads passing cooldown
 }
 
-// New creates a Camera (does not open the device yet).
-func New() *Camera {
+// SetPreviewing tells the camera whether a preview window is showing frames.
+// While false, annotated frames are not produced, cutting idle CPU.
+func (c *Camera) SetPreviewing(on bool) { c.previewing.Store(on) }
+
+// Requested returns the capture resolution asked of the driver.
+func (c *Camera) Requested() Resolution { return c.req }
+
+// Actual returns the delivered frame size, or a zero Resolution before the
+// first frame has been read.
+func (c *Camera) Actual() Resolution {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.actual
+}
+
+// New creates a Camera running the loop at fps frames per second and requesting
+// the given capture resolution. Does not open the device yet. fps <= 0 falls
+// back to defaultFPS; a non-positive width or height requests no specific size
+// (the driver's default).
+func New(fps, reqWidth, reqHeight int) *Camera {
+	if fps <= 0 {
+		fps = defaultFPS
+	}
 	return &Camera{
 		cooldown: defaultCooldown,
+		interval: time.Second / time.Duration(fps),
+		req:      Resolution{Width: reqWidth, Height: reqHeight},
 		lastSeen: map[string]time.Time{},
 		Frames:   make(chan image.Image, 1),
 		Scans:    make(chan ScanEvent, 8),
@@ -53,6 +93,7 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 		return err
 	}
 	defer vc.Close()
+	c.applyResolution(vc)
 	slog.Info("webcam detected; camera started", "device", deviceID)
 
 	img := gocv.NewMat()
@@ -64,6 +105,7 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 	straight := gocv.NewMat()
 	defer straight.Close()
 
+	logged := false // log the actual delivered frame size once
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -78,27 +120,58 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 			continue
 		}
 
+		if !logged {
+			// Actual delivered size; drivers may snap to their nearest supported
+			// resolution and ignore the requested one.
+			w, h := img.Cols(), img.Rows()
+			c.mu.Lock()
+			c.actual = Resolution{Width: w, Height: h}
+			c.mu.Unlock()
+			slog.Info("camera frame size", "width", w, "height", h)
+			logged = true
+		}
+
 		c.processFrame(&img, &points, &straight, &detector)
 
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(15 * time.Millisecond):
+		case <-time.After(c.interval):
 		}
 	}
+}
+
+// applyResolution asks the driver for the requested capture resolution. Cutting
+// pixels is the biggest CPU win after fps, since QR detection cost scales with
+// pixel count. Drivers snap to their nearest supported size, so the delivered
+// frame may differ (logged from the first read in Run).
+func (c *Camera) applyResolution(vc *gocv.VideoCapture) {
+	if c.req.Width <= 0 || c.req.Height <= 0 {
+		return // no specific size requested; leave the driver default
+	}
+	vc.Set(gocv.VideoCaptureFrameWidth, float64(c.req.Width))
+	vc.Set(gocv.VideoCaptureFrameHeight, float64(c.req.Height))
+	slog.Info("camera resolution requested", "width", c.req.Width, "height", c.req.Height)
 }
 
 // processFrame detects a QR, draws its bounding box on the frame, publishes the
 // annotated frame for preview, and emits a ScanEvent if cooldown allows.
 func (c *Camera) processFrame(img, points, straight *gocv.Mat, detector *gocv.QRCodeDetector) {
 	payload := detector.DetectAndDecode(*img, points, straight)
+	previewing := c.previewing.Load()
 	if payload != "" && !points.Empty() {
-		drawBox(img, points)
+		if previewing {
+			drawBox(img, points)
+		}
 		if c.allow(payload) {
 			c.emit(ScanEvent{Payload: payload, At: time.Now()})
 		}
 	}
-	c.publishFrame(img)
+	// Frame->image conversion + push is only useful with a viewer. Skipping it
+	// when hidden avoids a full-frame alloc/copy every loop.
+	if previewing {
+		c.publishFrame(img)
+	}
 }
 
 // drawBox draws the detected QR polygon onto the frame for visual feedback.
