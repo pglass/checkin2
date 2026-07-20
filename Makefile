@@ -23,8 +23,8 @@ GO_SOURCES := $(shell find . -name '*.go')
 checkin: $(GO_SOURCES) | check-opencv
 	go build -tags "$(TAGS)" -ldflags="-extldflags=-Wl,-no_warn_duplicate_libraries" -o checkin ./cmd/checkin/
 
-run: check-opencv
-	go run -tags "$(TAGS)" ./cmd/checkin
+run: checkin
+	./checkin -log-level DEBUG -log-file -
 
 test:
 	go test -tags "$(TAGS)" ./...

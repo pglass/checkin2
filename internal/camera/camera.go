@@ -141,6 +141,15 @@ func (c *Camera) publishFrame(img *gocv.Mat) {
 	}
 }
 
+// LatestFrame returns the most recent annotated frame, or nil if none yet.
+// Used to paint the preview immediately when its window opens, rather than
+// waiting for the next frame to arrive on the channel.
+func (c *Camera) LatestFrame() image.Image {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.frame
+}
+
 func (c *Camera) emit(e ScanEvent) {
 	select {
 	case c.Scans <- e:

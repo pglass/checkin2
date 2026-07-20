@@ -56,13 +56,28 @@ func (a *App) showAddStudentDialogPrefill(prefill, notice string) {
 	a.win.Canvas().Focus(entry)
 }
 
-// showRowContextMenu pops up the right-click context menu for a student row at
-// the given position, offering "Remove Student".
-func (a *App) showRowContextMenu(row store.StudentRow, pos fyne.Position) {
-	menu := fyne.NewMenu("",
-		fyne.NewMenuItem("Remove Student", func() { a.showRemoveDialog(row) }),
-	)
-	widget.ShowPopUpMenuAtPosition(menu, a.win.Canvas(), pos)
+// showRowContextMenu pops up the right-click context menu for a student row.
+// Every item is an advanced action, revealed only while Option/Alt is held
+// (macOS convention for hiding uncommon options). With no items to show, no
+// menu is displayed at all.
+func (a *App) showRowContextMenu(row store.StudentRow, pos fyne.Position, mod fyne.KeyModifier) {
+	var items []*fyne.MenuItem
+	if mod&fyne.KeyModifierAlt != 0 {
+		items = append(items,
+			fyne.NewMenuItem("Remove Student", func() { a.showRemoveDialog(row) }),
+			fyne.NewMenuItem("Clear Check-in Times", func() {
+				if err := a.store.Reset(a.ctx, row.ID); err != nil {
+					dialog.ShowError(err, a.win)
+					return
+				}
+				a.refresh()
+			}),
+		)
+	}
+	if len(items) == 0 {
+		return
+	}
+	widget.ShowPopUpMenuAtPosition(fyne.NewMenu("", items...), a.win.Canvas(), pos)
 }
 
 // showRemoveDialog confirms removal of a student.
@@ -129,19 +144,9 @@ func (a *App) showCheckInOutDialog(row store.StudentRow) {
 		action = widget.NewLabel("This student has checked out. Please close this window.")
 	}
 
-	reset := newHoldButton("Reset", func() {
-		if err := a.store.Reset(a.ctx, row.ID); err != nil {
-			dialog.ShowError(err, a.win)
-			return
-		}
-		a.refresh()
-		popup.Hide()
-	})
 	cancel := widget.NewButton("Cancel", func() { popup.Hide() })
 
-	// Reset sits bottom-right, Cancel bottom-left.
-	bottom := container.NewBorder(nil, nil, cancel, reset)
-	body := container.NewVBox(name, action, widget.NewSeparator(), bottom)
+	body := container.NewVBox(name, action, widget.NewSeparator(), cancel)
 	popup = dialog.NewCustomWithoutButtons("Check In / Out", body, a.win)
 	popup.Show()
 }

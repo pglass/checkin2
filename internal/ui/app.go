@@ -6,7 +6,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 
 	"github.com/pglass/checkin/internal/camera"
@@ -21,8 +20,11 @@ type App struct {
 	ctx     context.Context
 
 	table   *studentTable
-	preview *canvas.Image
 	cam     *camera.Camera
+
+	// Camera preview lives in its own window, created on demand.
+	preview    *canvas.Image
+	previewWin fyne.Window
 }
 
 // NewApp builds the main window (menubar + student list) but does not run it.
@@ -32,13 +34,11 @@ func NewApp(ctx context.Context, s *store.Store) *App {
 
 	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx}
 	a.table = newStudentTable(a)
-	a.preview = newPreview()
-	a.preview.Hide()
 
 	win.SetMainMenu(a.buildMenu())
-	// Camera preview sits to the right of the list (hidden until toggled).
-	win.SetContent(container.NewBorder(nil, nil, nil, a.preview, a.table.widget()))
-	win.Resize(fyne.NewSize(760, 480))
+	// Main view is the student list only; the camera feed opens in its own window.
+	win.SetContent(a.table.widget())
+	win.Resize(fyne.NewSize(640, 480))
 
 	a.refresh()
 	a.startCamera(ctx)
@@ -77,11 +77,30 @@ func (a *App) showError(err error) {
 	dialog.ShowError(err, a.win)
 }
 
-// toggleCamera shows or hides the camera preview pane.
+// toggleCamera opens the camera feed in its own window, or closes it if already
+// open. The window paints the latest cached frame immediately on open so there
+// is no wait for the next frame to arrive.
 func (a *App) toggleCamera() {
-	if a.preview.Visible() {
-		a.preview.Hide()
-	} else {
-		a.preview.Show()
+	if a.previewWin != nil {
+		a.previewWin.Close() // triggers SetOnClosed, which clears the fields
+		return
 	}
+
+	a.preview = newPreview()
+	if a.cam != nil {
+		if f := a.cam.LatestFrame(); f != nil {
+			a.preview.Image = f
+			a.preview.Refresh()
+		}
+	}
+
+	w := a.fyneApp.NewWindow("Camera")
+	w.SetContent(a.preview)
+	w.Resize(fyne.NewSize(480, 360))
+	w.SetOnClosed(func() {
+		a.previewWin = nil
+		a.preview = nil
+	})
+	a.previewWin = w
+	w.Show()
 }

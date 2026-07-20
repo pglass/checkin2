@@ -31,7 +31,9 @@ func newStudentTable(a *App) *studentTable {
 			r := t.rows[i]
 			row.update(r)
 			row.onDouble = func() { t.app.showCheckInOutDialog(r) }
-			row.onSecondary = func(pos fyne.Position) { t.app.showRowContextMenu(r, pos) }
+			row.onSecondary = func(pos fyne.Position, mod fyne.KeyModifier) {
+				t.app.showRowContextMenu(r, pos, mod)
+			}
 		},
 	)
 	return t
@@ -39,7 +41,7 @@ func newStudentTable(a *App) *studentTable {
 
 func (t *studentTable) widget() fyne.CanvasObject {
 	header := container.NewGridWithColumns(3,
-		boldLabel("Name"), boldLabel("Check In"), boldLabel("Check Out"),
+		boldText("Name"), boldText("Check In"), boldText("Check Out"),
 	)
 	return container.NewBorder(header, nil, nil, nil, t.list)
 }
@@ -49,43 +51,68 @@ func (t *studentTable) setRows(rows []store.StudentRow) {
 	t.list.Refresh()
 }
 
-func boldLabel(s string) *widget.Label {
-	l := widget.NewLabel(s)
-	l.TextStyle = fyne.TextStyle{Bold: true}
-	return l
+// boldText mirrors the row cells (unpadded canvas.Text) but bold, so the header
+// lines up with the compact rows.
+func boldText(s string) *canvas.Text {
+	t := canvas.NewText(s, theme.Color(theme.ColorNameForeground))
+	t.TextSize = theme.TextSize()
+	t.TextStyle = fyne.TextStyle{Bold: true}
+	return t
 }
 
-// studentRow is a custom list row supporting double-tap and secondary-tap.
+// rowHeight is the fixed height of a list row: text height plus a small gap.
+// Kept tight so the list is vertically compact, unlike the default widget.Label
+// padding on all sides. Computed lazily so it reflects the active theme.
+func rowHeight() float32 { return theme.TextSize() + 6 }
+
+// studentRow is a custom list row supporting double-tap and secondary-tap. It
+// uses unpadded canvas.Text (not widget.Label) to avoid the label's built-in
+// vertical padding, keeping rows compact.
 type studentRow struct {
 	widget.BaseWidget
-	name, in, out *widget.Label
+	name, in, out *canvas.Text
 
 	onDouble    func()
-	onSecondary func(fyne.Position)
+	onSecondary func(fyne.Position, fyne.KeyModifier)
 }
 
 func newStudentRow() *studentRow {
-	r := &studentRow{
-		name: widget.NewLabel(""),
-		in:   widget.NewLabel(""),
-		out:  widget.NewLabel(""),
+	mk := func() *canvas.Text {
+		t := canvas.NewText("", theme.Color(theme.ColorNameForeground))
+		t.TextSize = theme.TextSize()
+		return t
 	}
+	r := &studentRow{name: mk(), in: mk(), out: mk()}
 	r.ExtendBaseWidget(r)
 	return r
 }
 
 func (r *studentRow) update(row store.StudentRow) {
-	r.name.SetText(row.Name)
-	r.in.SetText(timeFmt(row.In))
-	r.out.SetText(timeFmt(row.Out))
+	r.name.Text = row.Name
+	r.in.Text = timeFmt(row.In)
+	r.out.Text = timeFmt(row.Out)
+	r.name.Refresh()
+	r.in.Refresh()
+	r.out.Refresh()
 }
 
 func (r *studentRow) CreateRenderer() fyne.WidgetRenderer {
 	bg := canvas.NewRectangle(color.Transparent)
 	grid := container.NewGridWithColumns(3, r.name, r.in, r.out)
 	c := container.NewStack(bg, grid)
-	return widget.NewSimpleRenderer(c)
+	return &rowRenderer{obj: c}
 }
+
+// rowRenderer forces a compact fixed height regardless of child min sizes.
+type rowRenderer struct {
+	obj fyne.CanvasObject
+}
+
+func (r *rowRenderer) Layout(size fyne.Size)        { r.obj.Resize(size) }
+func (r *rowRenderer) MinSize() fyne.Size           { return fyne.NewSize(r.obj.MinSize().Width, rowHeight()) }
+func (r *rowRenderer) Refresh()                     { r.obj.Refresh() }
+func (r *rowRenderer) Objects() []fyne.CanvasObject { return []fyne.CanvasObject{r.obj} }
+func (r *rowRenderer) Destroy()                     {}
 
 // DoubleTapped implements fyne.DoubleTappable.
 func (r *studentRow) DoubleTapped(_ *fyne.PointEvent) {
@@ -101,7 +128,7 @@ func (r *studentRow) Tapped(_ *fyne.PointEvent) {}
 // on press-down (matching platform conventions) rather than on release.
 func (r *studentRow) MouseDown(e *desktop.MouseEvent) {
 	if e.Button == desktop.MouseButtonSecondary && r.onSecondary != nil {
-		r.onSecondary(e.AbsolutePosition)
+		r.onSecondary(e.AbsolutePosition, e.Modifier)
 	}
 }
 

@@ -61,10 +61,11 @@ func (a *App) startCamera(ctx context.Context) {
 }
 
 func (a *App) updatePreview(img image.Image) {
-	if a.preview == nil {
-		return
-	}
 	fyne.Do(func() {
+		// preview is nil while the camera window is closed; frames are dropped.
+		if a.preview == nil {
+			return
+		}
 		a.preview.Image = img
 		a.preview.Refresh()
 	})
