@@ -24,6 +24,42 @@ go install fyne.io/tools/cmd/fyne@latest
 > at `$(brew --prefix opencv@4)` and does not shadow anything. The `Makefile`
 > points `PKG_CONFIG_PATH` at it automatically.
 
+## Prerequisites (Windows)
+
+gocv links OpenCV through **cgo**, which needs OpenCV built with the **same
+toolchain** (MinGW/GCC). So opencv.org's prebuilt binaries (MSVC) and scoop's
+`opencv` (v5) do **not** work. Use MSYS2's precompiled MinGW build of OpenCV 4:
+
+```powershell
+# 1. Install MSYS2 (via scoop; or from msys2.org)
+scoop install msys2
+
+# 2. In an MSYS2 shell, install the toolchain + OpenCV 4 + Qt6 + pkg-config.
+#    (Qt6 is needed because MSYS2's OpenCV highgui is built with a Qt backend,
+#     and gocv's main package always links highgui.)
+pacman -Syu   # run once; reopen the shell if it asks you to
+pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-opencv \
+          mingw-w64-x86_64-pkgconf   mingw-w64-x86_64-qt6-5compat
+```
+
+MSYS2's `mingw-w64-x86_64-opencv` is **4.13.0**, the exact version gocv v0.43.0
+targets. Then build with the helper script:
+
+```powershell
+.\build-windows.ps1          # -> .\checkin.exe
+.\build-windows.ps1 -Run     # build, then launch
+.\build-windows.ps1 -Gui     # no console window (for distribution)
+```
+
+> **How the Windows build differs.** On macOS gocv finds OpenCV via
+> `pkg-config` automatically; on Windows it doesn't. `build-windows.ps1` uses
+> gocv's **`customenv`** build tag and feeds cgo the flags from
+> `pkg-config opencv4` (from MSYS2's mingw64), with MSYS2's `mingw64\bin` on
+> `PATH` so `gcc` — and the OpenCV/Qt6/runtime DLLs at run time — resolve.
+> Because those DLLs are loaded from `mingw64\bin`, run the built `.exe` from a
+> shell that has that directory on `PATH` (as the script arranges), or copy the
+> required DLLs next to `checkin.exe` before distributing (see "Distribution").
+
 ## Develop
 
 ```sh

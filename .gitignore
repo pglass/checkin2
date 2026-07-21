@@ -2,6 +2,7 @@ Checkin.app/
 checkin
 main
 seed
+*.exe
 **/*.db
 **/*.db-*
 **/*.ini
