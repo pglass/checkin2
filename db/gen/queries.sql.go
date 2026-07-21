@@ -43,6 +43,25 @@ func (q *Queries) AppendLog(ctx context.Context, arg AppendLogParams) error {
 	return err
 }
 
+const countLogOlderThanCapped = `-- name: CountLogOlderThanCapped :one
+SELECT COUNT(*) FROM (SELECT 1 FROM Log WHERE Timestamp < ? LIMIT ?)
+`
+
+type CountLogOlderThanCappedParams struct {
+	Timestamp int64 `json:"timestamp"`
+	Limit     int64 `json:"limit"`
+}
+
+// Counts rows older than the cutoff but stops after the cap (second ?), so the
+// scan is bounded on huge backlogs. A result equal to the cap means "at least
+// this many" remain.
+func (q *Queries) CountLogOlderThanCapped(ctx context.Context, arg CountLogOlderThanCappedParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLogOlderThanCapped, arg.Timestamp, arg.Limit)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteLogByIDs = `-- name: DeleteLogByIDs :exec
 DELETE FROM Log WHERE ID IN (/*SLICE:ids*/?)
 `
@@ -171,11 +190,16 @@ func (q *Queries) LogSince(ctx context.Context, timestamp int64) ([]Log, error) 
 }
 
 const oldestLogIDs = `-- name: OldestLogIDs :many
-SELECT ID FROM Log WHERE Timestamp < ? ORDER BY Timestamp LIMIT 100
+SELECT ID FROM Log WHERE Timestamp < ? ORDER BY Timestamp LIMIT ?
 `
 
-func (q *Queries) OldestLogIDs(ctx context.Context, timestamp int64) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, oldestLogIDs, timestamp)
+type OldestLogIDsParams struct {
+	Timestamp int64 `json:"timestamp"`
+	Limit     int64 `json:"limit"`
+}
+
+func (q *Queries) OldestLogIDs(ctx context.Context, arg OldestLogIDsParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, oldestLogIDs, arg.Timestamp, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

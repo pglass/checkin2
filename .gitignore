@@ -3,4 +3,5 @@ checkin
 main
 seed
 **/*.db
+**/*.db-*
 **/*.ini

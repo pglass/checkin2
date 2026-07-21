@@ -196,6 +196,23 @@ func minf64(a, b float64) float64 {
 	return b
 }
 
+// sortSelectWidth returns a width for the sort dropdown that fits its widest
+// option plus the dropdown arrow and internal padding. widget.Select reserves
+// the arrow inside its content box and pads both sides, so its own MinSize
+// leaves too little for the text and clips it; we add generous room for the
+// arrow icon plus padding on both sides.
+func sortSelectWidth() float32 {
+	var widest float32
+	for _, l := range sortModeLabels {
+		w := fyne.MeasureText(l, theme.TextSize(), fyne.TextStyle{}).Width
+		if w > widest {
+			widest = w
+		}
+	}
+	// widest text + arrow icon + inner padding (both sides) + outer padding.
+	return widest + theme.IconInlineSize() + 4*theme.InnerPadding() + 2*theme.Padding()
+}
+
 // newPrimaryButton returns a high-importance button (used for the main action).
 func newPrimaryButton(label string, fn func()) *widget.Button {
 	b := widget.NewButton(label, fn)
@@ -384,11 +401,16 @@ func (s *studentSelect) header() fyne.CanvasObject {
 	})
 	s.updateHeader() // set initial arrow + dropdown selection
 
+	// widget.Select under-measures its width, clipping the longest option
+	// ("Recently Added"). Pin the width to the widest label plus room for the
+	// dropdown arrow and padding so nothing is cut off.
+	sortSized := container.NewGridWrap(fyne.NewSize(sortSelectWidth(), s.sortSel.MinSize().Height), s.sortSel)
+
 	// Mirror the row layout (check pinned left, name filling) so the header
 	// aligns with the columns below it.
 	headerRow := container.NewBorder(nil, nil, s.selectAll, nil, s.nameHeader)
 	sortBar := container.NewBorder(nil, nil, nil,
-		container.NewHBox(widget.NewLabel("Sort:"), s.sortSel), s.count)
+		container.NewHBox(widget.NewLabel("Sort:"), sortSized), s.count)
 
 	// A single separator under the header row gives it presence and divides it
 	// from the scrolling list. The list's own per-row dividers are turned off via

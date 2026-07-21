@@ -44,10 +44,29 @@ func TestPruneOnce(t *testing.T) {
 		t.Fatalf("seed count = %d, want 255", got)
 	}
 
-	s.pruneOnce(ctx)
+	// One pass deletes at most a single 100-row batch, never draining the whole
+	// backlog at once.
+	s.pruneOnce(ctx, 100)
+	if got := countLog(t, s); got != 155 {
+		t.Fatalf("after 1 pass count = %d, want 155 (255 - one 100-row batch)", got)
+	}
 
-	// Only the 5 recent rows should remain.
+	// Subsequent passes trickle the rest away, 100 at a time.
+	s.pruneOnce(ctx, 100)
+	if got := countLog(t, s); got != 55 {
+		t.Fatalf("after 2 passes count = %d, want 55", got)
+	}
+
+	// Third pass clears the remaining 50 old rows (partial batch); the 5 recent
+	// rows are within retention and must survive.
+	s.pruneOnce(ctx, 100)
 	if got := countLog(t, s); got != 5 {
-		t.Fatalf("after prune count = %d, want 5", got)
+		t.Fatalf("after 3 passes count = %d, want 5 (only recent rows remain)", got)
+	}
+
+	// A further pass with nothing old enough is a no-op.
+	s.pruneOnce(ctx, 100)
+	if got := countLog(t, s); got != 5 {
+		t.Fatalf("extra pass changed count to %d, want 5", got)
 	}
 }

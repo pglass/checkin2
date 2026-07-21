@@ -11,6 +11,10 @@ import (
 type Querier interface {
 	AddStudent(ctx context.Context, name string) (Student, error)
 	AppendLog(ctx context.Context, arg AppendLogParams) error
+	// Counts rows older than the cutoff but stops after the cap (second ?), so the
+	// scan is bounded on huge backlogs. A result equal to the cap means "at least
+	// this many" remain.
+	CountLogOlderThanCapped(ctx context.Context, arg CountLogOlderThanCappedParams) (int64, error)
 	DeleteLogByIDs(ctx context.Context, ids []int64) error
 	DeleteStudent(ctx context.Context, id int64) error
 	DeleteTodayCheckinsForStudent(ctx context.Context, arg DeleteTodayCheckinsForStudentParams) error
@@ -18,7 +22,7 @@ type Querier interface {
 	GetStudentByName(ctx context.Context, name string) (Student, error)
 	ListStudents(ctx context.Context) ([]Student, error)
 	LogSince(ctx context.Context, timestamp int64) ([]Log, error)
-	OldestLogIDs(ctx context.Context, timestamp int64) ([]int64, error)
+	OldestLogIDs(ctx context.Context, arg OldestLogIDsParams) ([]int64, error)
 }
 
 var _ Querier = (*Queries)(nil)

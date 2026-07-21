@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds user-tunable settings.
@@ -20,6 +21,13 @@ type Config struct {
 	// cuts CPU since QR detection cost scales with pixel count.
 	CameraRequestWidth  int
 	CameraRequestHeight int
+	// QRScanCooldown is how long a scanned code is ignored after a successful
+	// scan, so the same student's dialog is not re-triggered immediately.
+	QRScanCooldown time.Duration
+	// PruneInterval is how often the background pruner deletes old log rows.
+	PruneInterval time.Duration
+	// PruneBatchSize is the max number of rows the pruner deletes per wake-up.
+	PruneBatchSize int
 }
 
 // Default returns the built-in default settings.
@@ -28,6 +36,9 @@ func Default() Config {
 		CameraFPS:           6,
 		CameraRequestWidth:  640,
 		CameraRequestHeight: 480,
+		QRScanCooldown:      8 * time.Second,
+		PruneInterval:       5 * time.Minute,
+		PruneBatchSize:      100,
 	}
 }
 
@@ -85,6 +96,24 @@ func Load(path string) (Config, error) {
 				return cfg, fmt.Errorf("%s:%d: camera_request_height must be a positive integer, got %q", path, line, val)
 			}
 			cfg.CameraRequestHeight = n
+		case "qr_scan_cooldown":
+			d, err := time.ParseDuration(val)
+			if err != nil || d <= 0 {
+				return cfg, fmt.Errorf("%s:%d: qr_scan_cooldown must be a positive duration (e.g. 8s), got %q", path, line, val)
+			}
+			cfg.QRScanCooldown = d
+		case "prune_interval":
+			d, err := time.ParseDuration(val)
+			if err != nil || d <= 0 {
+				return cfg, fmt.Errorf("%s:%d: prune_interval must be a positive duration (e.g. 30m), got %q", path, line, val)
+			}
+			cfg.PruneInterval = d
+		case "prune_batch_size":
+			n, err := strconv.Atoi(val)
+			if err != nil || n <= 0 {
+				return cfg, fmt.Errorf("%s:%d: prune_batch_size must be a positive integer, got %q", path, line, val)
+			}
+			cfg.PruneBatchSize = n
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -104,5 +133,12 @@ func Write(path string, cfg Config) error {
 	b.WriteString("# resolution, so the actual frame size may not match exactly. Lower = less CPU.\n")
 	fmt.Fprintf(&b, "camera_request_width = %d\n", cfg.CameraRequestWidth)
 	fmt.Fprintf(&b, "camera_request_height = %d\n", cfg.CameraRequestHeight)
+	b.WriteString("# How long a scanned QR code is ignored after a scan (e.g. 8s, 500ms).\n")
+	fmt.Fprintf(&b, "qr_scan_cooldown = %s\n", cfg.QRScanCooldown)
+	b.WriteString("\n[database]\n")
+	b.WriteString("# How often old log rows are pruned in the background (e.g. 30m, 1h).\n")
+	fmt.Fprintf(&b, "prune_interval = %s\n", cfg.PruneInterval)
+	b.WriteString("# Max number of rows deleted per prune wake-up.\n")
+	fmt.Fprintf(&b, "prune_batch_size = %d\n", cfg.PruneBatchSize)
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }

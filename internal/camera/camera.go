@@ -67,16 +67,20 @@ func (c *Camera) Actual() Resolution {
 	return c.actual
 }
 
-// New creates a Camera running the loop at fps frames per second and requesting
-// the given capture resolution. Does not open the device yet. fps <= 0 falls
-// back to defaultFPS; a non-positive width or height requests no specific size
-// (the driver's default).
-func New(fps, reqWidth, reqHeight int) *Camera {
+// New creates a Camera running the loop at fps frames per second, requesting the
+// given capture resolution, and ignoring a repeated scan for cooldown. Does not
+// open the device yet. fps <= 0 falls back to defaultFPS; cooldown <= 0 falls
+// back to defaultCooldown; a non-positive width or height requests no specific
+// size (the driver's default).
+func New(fps, reqWidth, reqHeight int, cooldown time.Duration) *Camera {
 	if fps <= 0 {
 		fps = defaultFPS
 	}
+	if cooldown <= 0 {
+		cooldown = defaultCooldown
+	}
 	return &Camera{
-		cooldown: defaultCooldown,
+		cooldown: cooldown,
 		interval: time.Second / time.Duration(fps),
 		req:      Resolution{Width: reqWidth, Height: reqHeight},
 		lastSeen: map[string]time.Time{},

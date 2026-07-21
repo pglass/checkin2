@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -27,6 +28,7 @@ type App struct {
 	cameraFPS       int
 	cameraReqWidth  int
 	cameraReqHeight int
+	qrScanCooldown  time.Duration
 
 	// Camera preview lives in its own window, created on demand.
 	preview    *canvas.Image
@@ -39,14 +41,15 @@ type App struct {
 }
 
 // NewApp builds the main window (menubar + student list) but does not run it.
-func NewApp(ctx context.Context, s *store.Store, cameraFPS, cameraReqWidth, cameraReqHeight int) *App {
+func NewApp(ctx context.Context, s *store.Store, cameraFPS, cameraReqWidth, cameraReqHeight int, qrScanCooldown time.Duration) *App {
 	fa := app.NewWithID("com.pglass.checkin")
 	// Tight, consistent spacing across every window.
 	fa.Settings().SetTheme(newCompactTheme())
 	win := fa.NewWindow("Check-In")
 
 	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx,
-		cameraFPS: cameraFPS, cameraReqWidth: cameraReqWidth, cameraReqHeight: cameraReqHeight}
+		cameraFPS: cameraFPS, cameraReqWidth: cameraReqWidth, cameraReqHeight: cameraReqHeight,
+		qrScanCooldown: qrScanCooldown}
 	a.table = newStudentTable(a)
 
 	win.SetMainMenu(a.buildMenu())
