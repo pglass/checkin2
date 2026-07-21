@@ -38,6 +38,10 @@ type App struct {
 	// qrWin is the Generate QR PDF window; tracked so reopening raises the
 	// existing one instead of spawning a duplicate.
 	qrWin fyne.Window
+
+	// historyWin is the History window; tracked like qrWin so reopening raises
+	// the existing one instead of spawning a duplicate.
+	historyWin fyne.Window
 }
 
 // NewApp builds the main window (menubar + student list) but does not run it.
@@ -73,6 +77,7 @@ func (a *App) buildMenu() *fyne.MainMenu {
 	admin := fyne.NewMenu("Admin",
 		fyne.NewMenuItem("Add Student…", a.showAddStudentDialog),
 		fyne.NewMenuItem("Generate QR PDF…", a.showGenerateQRDialog),
+		fyne.NewMenuItem("History…", a.showHistoryWindow),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Show/Hide Camera", a.toggleCamera),
 	)

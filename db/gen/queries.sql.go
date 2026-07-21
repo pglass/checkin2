@@ -43,6 +43,37 @@ func (q *Queries) AppendLog(ctx context.Context, arg AppendLogParams) error {
 	return err
 }
 
+const countHistory = `-- name: CountHistory :one
+SELECT COUNT(*) FROM Log
+WHERE Action IN ('Checked In', 'Checked Out')
+  AND (?1 = 0 OR Timestamp >= ?2)
+  AND (?3 = 0 OR Timestamp <= ?4)
+  AND (?5 = 1 OR StudentName IN (SELECT value FROM json_each(?6)))
+`
+
+type CountHistoryParams struct {
+	HasStart    interface{} `json:"has_start"`
+	Start       int64       `json:"start"`
+	HasEnd      interface{} `json:"has_end"`
+	End         int64       `json:"end"`
+	AllStudents interface{} `json:"all_students"`
+	NamesJson   interface{} `json:"names_json"`
+}
+
+func (q *Queries) CountHistory(ctx context.Context, arg CountHistoryParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countHistory,
+		arg.HasStart,
+		arg.Start,
+		arg.HasEnd,
+		arg.End,
+		arg.AllStudents,
+		arg.NamesJson,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countLogOlderThanCapped = `-- name: CountLogOlderThanCapped :one
 SELECT COUNT(*) FROM (SELECT 1 FROM Log WHERE Timestamp < ? LIMIT ?)
 `
@@ -125,6 +156,120 @@ func (q *Queries) GetStudentByName(ctx context.Context, name string) (Student, e
 	var i Student
 	err := row.Scan(&i.ID, &i.Name)
 	return i, err
+}
+
+const historyByName = `-- name: HistoryByName :many
+SELECT StudentName, Action, Timestamp FROM Log
+WHERE Action IN ('Checked In', 'Checked Out')
+  AND (?1 = 0 OR Timestamp >= ?2)
+  AND (?3 = 0 OR Timestamp <= ?4)
+  AND (?5 = 1 OR StudentName IN (SELECT value FROM json_each(?6)))
+ORDER BY StudentName ASC, Timestamp ASC
+LIMIT ?7
+`
+
+type HistoryByNameParams struct {
+	HasStart    interface{} `json:"has_start"`
+	Start       int64       `json:"start"`
+	HasEnd      interface{} `json:"has_end"`
+	End         int64       `json:"end"`
+	AllStudents interface{} `json:"all_students"`
+	NamesJson   interface{} `json:"names_json"`
+	Lim         int64       `json:"lim"`
+}
+
+type HistoryByNameRow struct {
+	Studentname string `json:"studentname"`
+	Action      string `json:"action"`
+	Timestamp   int64  `json:"timestamp"`
+}
+
+func (q *Queries) HistoryByName(ctx context.Context, arg HistoryByNameParams) ([]HistoryByNameRow, error) {
+	rows, err := q.db.QueryContext(ctx, historyByName,
+		arg.HasStart,
+		arg.Start,
+		arg.HasEnd,
+		arg.End,
+		arg.AllStudents,
+		arg.NamesJson,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HistoryByNameRow
+	for rows.Next() {
+		var i HistoryByNameRow
+		if err := rows.Scan(&i.Studentname, &i.Action, &i.Timestamp); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const historyByTime = `-- name: HistoryByTime :many
+SELECT StudentName, Action, Timestamp FROM Log
+WHERE Action IN ('Checked In', 'Checked Out')
+  AND (?1 = 0 OR Timestamp >= ?2)
+  AND (?3 = 0 OR Timestamp <= ?4)
+  AND (?5 = 1 OR StudentName IN (SELECT value FROM json_each(?6)))
+ORDER BY Timestamp ASC
+LIMIT ?7
+`
+
+type HistoryByTimeParams struct {
+	HasStart    interface{} `json:"has_start"`
+	Start       int64       `json:"start"`
+	HasEnd      interface{} `json:"has_end"`
+	End         int64       `json:"end"`
+	AllStudents interface{} `json:"all_students"`
+	NamesJson   interface{} `json:"names_json"`
+	Lim         int64       `json:"lim"`
+}
+
+type HistoryByTimeRow struct {
+	Studentname string `json:"studentname"`
+	Action      string `json:"action"`
+	Timestamp   int64  `json:"timestamp"`
+}
+
+func (q *Queries) HistoryByTime(ctx context.Context, arg HistoryByTimeParams) ([]HistoryByTimeRow, error) {
+	rows, err := q.db.QueryContext(ctx, historyByTime,
+		arg.HasStart,
+		arg.Start,
+		arg.HasEnd,
+		arg.End,
+		arg.AllStudents,
+		arg.NamesJson,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HistoryByTimeRow
+	for rows.Next() {
+		var i HistoryByTimeRow
+		if err := rows.Scan(&i.Studentname, &i.Action, &i.Timestamp); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listStudents = `-- name: ListStudents :many

@@ -320,6 +320,10 @@ type studentSelect struct {
 	selected map[int64]bool     // student ID -> selected
 	sort     sortMode
 
+	maxSelected int    // 0 = unlimited; else cap the number selectable
+	onChange    func() // fired when the selection changes (may be nil)
+	onCapHit    func() // fired when a check is refused due to the cap (may be nil)
+
 	list       *widget.List
 	count      *widget.Label  // "N selected"
 	selectAll  *widget.Check  // header select-all
@@ -327,15 +331,28 @@ type studentSelect struct {
 	sortSel    *widget.Select // sort-mode dropdown (kept in sync with header)
 }
 
+// newStudentSelect builds the QR-style picker: all students selected by default,
+// no selection cap. Kept as the simple entry point for the QR window.
 func newStudentSelect(rows []store.StudentRow) *studentSelect {
+	return newStudentSelectWithOptions(rows, true, 0, nil)
+}
+
+// newStudentSelectWithOptions builds a picker with configurable defaults:
+//   - defaultAllSelected: start with every student selected (QR) vs none (History).
+//   - maxSelected: 0 = unlimited; else refuse to check beyond the cap.
+//   - onChange: called whenever the selection changes (nil = ignore).
+func newStudentSelectWithOptions(rows []store.StudentRow, defaultAllSelected bool, maxSelected int, onChange func()) *studentSelect {
 	s := &studentSelect{
-		rows:     append([]store.StudentRow(nil), rows...),
-		selected: make(map[int64]bool, len(rows)),
-		sort:     sortRecent,
+		rows:        append([]store.StudentRow(nil), rows...),
+		selected:    make(map[int64]bool, len(rows)),
+		sort:        sortRecent,
+		maxSelected: maxSelected,
+		onChange:    onChange,
 	}
-	// Default to all selected (matches the previous behavior).
-	for _, r := range rows {
-		s.selected[r.ID] = true
+	if defaultAllSelected {
+		for _, r := range rows {
+			s.selected[r.ID] = true
+		}
 	}
 	s.applySort()
 
@@ -358,9 +375,16 @@ func newStudentSelect(rows []store.StudentRow) *studentSelect {
 			check.OnChanged = nil // avoid firing while we set state
 			check.SetChecked(s.selected[r.ID])
 			check.OnChanged = func(v bool) {
+				// Enforce the selection cap: refuse to check beyond it.
+				if v && s.maxSelected > 0 && s.countSelected() >= s.maxSelected {
+					check.SetChecked(false)
+					s.notifyCap()
+					return
+				}
 				s.selected[r.ID] = v
 				s.updateCount()
 				s.refreshSelectAll()
+				s.fireChange()
 			}
 		},
 	)
@@ -375,10 +399,38 @@ func newStudentSelect(rows []store.StudentRow) *studentSelect {
 	return s
 }
 
+// countSelected returns the number of currently selected students.
+func (s *studentSelect) countSelected() int {
+	n := 0
+	for _, v := range s.selected {
+		if v {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *studentSelect) fireChange() {
+	if s.onChange != nil {
+		s.onChange()
+	}
+}
+
+// notifyCap fires the cap-hit hook (if set) so the host can show an inline note.
+func (s *studentSelect) notifyCap() {
+	if s.onCapHit != nil {
+		s.onCapHit()
+	}
+}
+
 // header builds the column header row: a select-all checkbox aligned over the
 // row checkboxes, and a clickable "Name" header that toggles name sort.
 func (s *studentSelect) header() fyne.CanvasObject {
 	s.selectAll = widget.NewCheck("", func(v bool) { s.setAll(v) })
+	// Select-all would blow a selection cap, so disable it when one is set.
+	if s.maxSelected > 0 {
+		s.selectAll.Disable()
+	}
 	s.refreshSelectAll()
 
 	s.nameHeader = newSortHeader("Name", func() {
@@ -491,6 +543,7 @@ func (s *studentSelect) setAll(v bool) {
 	s.list.Refresh()
 	s.updateCount()
 	s.refreshSelectAll()
+	s.fireChange()
 }
 
 func (s *studentSelect) updateCount() {
@@ -512,6 +565,17 @@ func (s *studentSelect) selectedNames() []string {
 		}
 	}
 	return names
+}
+
+// selectedIDs returns the IDs of selected students in current sort order.
+func (s *studentSelect) selectedIDs() []int64 {
+	var ids []int64
+	for _, r := range s.rows {
+		if s.selected[r.ID] {
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids
 }
 
 // openWithSystemViewer opens a file with the OS default application.

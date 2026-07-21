@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -116,9 +117,12 @@ func (a *App) showCheckInOutDialog(row store.StudentRow) {
 
 	var popup dialog.Dialog
 
+	now := time.Now().Format("3:04 PM")
+
 	var action fyne.CanvasObject
 	switch a.store.Status(row.ID) {
 	case store.StatusNotIn:
+		name.Text = "Check in " + row.Name + " at " + now
 		b := widget.NewButton("Check In", func() {
 			if err := a.store.CheckIn(a.ctx, row.ID, row.Name); err != nil {
 				dialog.ShowError(err, a.win)
@@ -130,6 +134,7 @@ func (a *App) showCheckInOutDialog(row store.StudentRow) {
 		b.Importance = widget.HighImportance
 		action = b
 	case store.StatusIn:
+		name.Text = "Check out " + row.Name + " at " + now
 		b := widget.NewButton("Check Out", func() {
 			if err := a.store.CheckOut(a.ctx, row.ID, row.Name); err != nil {
 				dialog.ShowError(err, a.win)

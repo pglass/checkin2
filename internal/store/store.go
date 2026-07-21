@@ -26,9 +26,9 @@ import (
 // connection would fail immediately instead of waiting. journal_mode=WAL is
 // stored in the database file, but is listed here so it is guaranteed set.
 var connPragmas = []string{
-	"busy_timeout(5000)",   // wait up to 5s for a lock instead of failing
-	"journal_mode(WAL)",    // readers don't block the single writer
-	"synchronous(NORMAL)",  // durable enough for WAL, faster than FULL
+	"busy_timeout(5000)",  // wait up to 5s for a lock instead of failing
+	"journal_mode(WAL)",   // readers don't block the single writer
+	"synchronous(NORMAL)", // durable enough for WAL, faster than FULL
 	"foreign_keys(ON)",
 }
 
