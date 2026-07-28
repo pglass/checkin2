@@ -16,7 +16,7 @@ TAGS := migrated_fynedo
 # All Go sources: the checkin binary rebuilds only when one of these changes.
 GO_SOURCES := $(shell find . -name '*.go')
 
-.PHONY: run test generate package check-opencv seed
+.PHONY: run test generate package package-windows package-windows-static opencv-static check-opencv seed
 
 # check-opencv is an order-only prerequisite (after the |) so it gates the build
 # without forcing a rebuild on every invocation.
@@ -40,6 +40,21 @@ generate:
 # links opencv@4 dylibs by absolute Homebrew path; see README "Distribution".
 package: check-opencv
 	fyne package --tags "$(TAGS)" --src ./cmd/checkin --name Checkin --app-id com.pglass.checkin --icon $(CURDIR)/Icon.png
+
+# Windows packaging: build checkin.exe and zip it with its MinGW DLLs.
+# These targets just shell out to the scripts; meant to be run from Git Bash on
+# Windows (needs MSYS2), not macOS. Kept here as a convenience.
+package-windows:
+	./package-windows.sh
+
+# One-time (per OpenCV version): build the slim static OpenCV the static exe links.
+opencv-static:
+	./build-opencv-static.sh
+
+# Single self-contained checkin.exe (no bundled DLLs). Requires `make opencv-static`
+# to have been run once first.
+package-windows-static:
+	./package-windows.sh --static
 
 check-opencv:
 	@if [ -z "$(OPENCV4_PREFIX)" ]; then \

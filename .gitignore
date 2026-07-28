@@ -3,6 +3,7 @@ checkin
 main
 seed
 *.exe
+dist/
 **/*.db
 **/*.db-*
 **/*.ini

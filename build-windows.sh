@@ -22,10 +22,12 @@ cd "$(dirname "$0")"
 
 RUN=0
 GUI=0
+STATIC=0
 for arg in "$@"; do
   case "$arg" in
     --run) RUN=1 ;;
     --gui) GUI=1 ;;
+    --static) STATIC=1 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -52,18 +54,56 @@ fi
 # Prepend mingw64/bin so cgo uses MSYS2's gcc AND the OpenCV/Qt6/runtime DLLs
 # are found at run time. pkg-config supplies the include + link flags.
 export PATH="$MINGW_UNIX/bin:$PATH"
-export PKG_CONFIG_PATH="$MINGW_UNIX/lib/pkgconfig"
 export CGO_ENABLED=1
-
-if ! pkg-config --exists opencv4; then
-  echo "pkg-config could not find opencv4. Install mingw-w64-x86_64-opencv in MSYS2 (see README)." >&2
-  exit 1
-fi
-export CGO_CPPFLAGS="$(pkg-config --cflags opencv4)"
 export CGO_CXXFLAGS="--std=c++11 -DNDEBUG"
-export CGO_LDFLAGS="$(pkg-config --libs opencv4)"
 
-echo "OpenCV: $(pkg-config --modversion opencv4)  |  gcc: $(gcc --version | head -1)"
+if [ "$STATIC" -eq 1 ]; then
+  # Static mode: link a custom slim static OpenCV (built by build-opencv-static.sh)
+  # into a single self-contained exe -- no OpenCV/MinGW DLLs bundled. Must match
+  # build-opencv-static.sh's PREFIX default.
+  OPENCV_STATIC_PREFIX="${OPENCV_STATIC_PREFIX:-$HOME/opencv-static/4.13.0}"
+  # opencv4.pc installs under x64/mingw/staticlib/pkgconfig on Windows; locate it.
+  PC_FILE="$(find "$OPENCV_STATIC_PREFIX" -name opencv4.pc 2>/dev/null | head -1)"
+  if [ -z "$PC_FILE" ]; then
+    echo "static opencv4.pc not found under $OPENCV_STATIC_PREFIX." >&2
+    echo "Build it first:  ./build-opencv-static.sh" >&2
+    exit 1
+  fi
+  export PKG_CONFIG_PATH="$(dirname "$PC_FILE")"
+  # --dont-define-prefix: honor the absolute prefix baked into opencv4.pc, else
+  # pkgconf recomputes a wrong one from the deep staticlib/pkgconfig nesting.
+  # --static-libgcc/-libstdc++ and -static pull the C/C++/pthread runtime into the
+  # exe too, so the only remaining imports are Windows system DLLs.
+  PKGCFG="pkg-config --dont-define-prefix"
+  export CGO_CPPFLAGS="$($PKGCFG --cflags opencv4)"
+  # OpenCV's generated opencv4.pc has two Windows/MSVC artifacts that break mingw
+  # linking, so sanitise the flags:
+  #   -lRunTmChk.a : an MSVC runtime-check lib absent in mingw -> drop it (OpenCV
+  #                  was built by this same gcc, so nothing actually needs it)
+  #   -lntdll.a    : the .a suffix is invalid in an -l name -> -lntdll (which exists)
+  OPENCV_LIBS="$($PKGCFG --static --libs opencv4 | sed -E 's/ -lRunTmChk(\.a)?//g; s/ -lntdll\.a/ -lntdll/g')"
+  # opencv4.pc omits several Win32 import libs the statically-linked OpenCV needs:
+  #   oleaut32  - cap_dshow.cpp (VariantInit/Clear, OleCreatePropertyFrame)
+  #   uuid      - cap_dshow.cpp COM IIDs (IID_IUnknown/IPropertyBag/IPersistStream/
+  #               ISpecifyPropertyPages). NOT strmiids: cap_dshow.cpp defines the
+  #               DirectShow-specific IIDs itself, so strmiids "multiple definition"s.
+  #   comdlg32  - highgui window_w32.cpp save/open dialogs (Get{Save,Open}FileNameA)
+  # highgui's Win32 code may or may not survive --gc-sections, so link comdlg32
+  # unconditionally. All of these import system DLLs, so the exe stays portable.
+  WIN32_LIBS="-loleaut32 -luuid -lcomdlg32"
+  export CGO_LDFLAGS="$OPENCV_LIBS $WIN32_LIBS -static -static-libgcc -static-libstdc++"
+  echo "OpenCV: $($PKGCFG --modversion opencv4) (STATIC)  |  gcc: $(gcc --version | head -1)"
+else
+  # Shared mode (default, for dev): link MSYS2's prebuilt OpenCV DLLs.
+  export PKG_CONFIG_PATH="$MINGW_UNIX/lib/pkgconfig"
+  if ! pkg-config --exists opencv4; then
+    echo "pkg-config could not find opencv4. Install mingw-w64-x86_64-opencv in MSYS2 (see README)." >&2
+    exit 1
+  fi
+  export CGO_CPPFLAGS="$(pkg-config --cflags opencv4)"
+  export CGO_LDFLAGS="$(pkg-config --libs opencv4)"
+  echo "OpenCV: $(pkg-config --modversion opencv4)  |  gcc: $(gcc --version | head -1)"
+fi
 
 # customenv: gocv takes all cgo flags from the CGO_* env above.
 # migrated_fynedo: opts into Fyne 2.8's future main-goroutine behaviour.
