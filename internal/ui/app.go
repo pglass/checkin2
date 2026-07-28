@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/pglass/checkin/internal/camera"
 	"github.com/pglass/checkin/internal/store"
+	"github.com/pglass/checkin/internal/version"
 )
 
 // App is the top-level GUI controller.
@@ -47,6 +49,11 @@ type App struct {
 // NewApp builds the main window (menubar + student list) but does not run it.
 func NewApp(ctx context.Context, s *store.Store, cameraFPS, cameraReqWidth, cameraReqHeight int, qrScanCooldown time.Duration) *App {
 	fa := app.NewWithID("com.pglass.checkin")
+	// On packaged builds (e.g. macOS `fyne package --appVersion`) the version
+	// lives in the Fyne app metadata rather than the ldflags var; feed it in so
+	// the About dialog and logs report the same value on every platform.
+	version.SetMetadataVersion(fa.Metadata().Version)
+	slog.Info("resolved app version", "version", version.Resolve())
 	// Tight, consistent spacing across every window.
 	fa.Settings().SetTheme(newCompactTheme())
 	win := fa.NewWindow("Check-In")
@@ -80,8 +87,18 @@ func (a *App) buildMenu() *fyne.MainMenu {
 		fyne.NewMenuItem("History…", a.showHistoryWindow),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Show/Hide Camera", a.toggleCamera),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("About Checkin…", a.showAboutDialog),
 	)
 	return fyne.NewMainMenu(admin)
+}
+
+// showAboutDialog reports the program version. This is the version surface for
+// Windows and Linux; on macOS the OS also provides a native "About" panel
+// populated from the app bundle's Info.plist (see the Makefile's --appVersion).
+func (a *App) showAboutDialog() {
+	dialog.ShowInformation("About Checkin",
+		fmt.Sprintf("Checkin\nVersion %s", version.Resolve()), a.win)
 }
 
 // refresh reloads rows from the store and repaints the table. Safe to call

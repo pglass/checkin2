@@ -13,6 +13,11 @@ export CGO_ENABLED := 1
 # Fyne 2.8's migration warning and opts into the future default behaviour.
 TAGS := migrated_fynedo
 
+# App version. Bump here (single source of truth); it is stamped into the binary
+# via -ldflags -X and into the macOS bundle's Info.plist via --appVersion.
+VERSION ?= 0.0.1
+VERSION_LDFLAGS := -X github.com/pglass/checkin/internal/version.Version=$(VERSION)
+
 # All Go sources: the checkin binary rebuilds only when one of these changes.
 GO_SOURCES := $(shell find . -name '*.go')
 
@@ -21,7 +26,7 @@ GO_SOURCES := $(shell find . -name '*.go')
 # check-opencv is an order-only prerequisite (after the |) so it gates the build
 # without forcing a rebuild on every invocation.
 checkin: $(GO_SOURCES) | check-opencv
-	go build -tags "$(TAGS)" -ldflags="-extldflags=-Wl,-no_warn_duplicate_libraries" -o checkin ./cmd/checkin/
+	go build -tags "$(TAGS)" -ldflags="$(VERSION_LDFLAGS) -extldflags=-Wl,-no_warn_duplicate_libraries" -o checkin ./cmd/checkin/
 
 run: checkin
 	./checkin -log-level DEBUG -log-file -
@@ -38,8 +43,12 @@ generate:
 
 # Package a distributable app bundle. NOTE: the resulting binary dynamically
 # links opencv@4 dylibs by absolute Homebrew path; see README "Distribution".
+# --appVersion stamps CFBundleShortVersionString in Info.plist (the macOS native
+# "About" panel) and makes fyne.CurrentApp().Metadata().Version return it at
+# runtime, which is what the in-app About dialog and --version read.
 package: check-opencv
-	fyne package --tags "$(TAGS)" --src ./cmd/checkin --name Checkin --app-id com.pglass.checkin --icon $(CURDIR)/Icon.png
+	fyne package --tags "$(TAGS)" --src ./cmd/checkin --name Checkin --app-id com.pglass.checkin --icon $(CURDIR)/Icon.png \
+		--appVersion $(VERSION)
 
 # Windows packaging: build checkin.exe and zip it with its MinGW DLLs.
 # These targets just shell out to the scripts; meant to be run from Git Bash on

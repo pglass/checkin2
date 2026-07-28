@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/pglass/checkin/internal/config"
 	"github.com/pglass/checkin/internal/logging"
 	"github.com/pglass/checkin/internal/store"
 	"github.com/pglass/checkin/internal/ui"
+	"github.com/pglass/checkin/internal/version"
 )
 
 func main() {
@@ -18,7 +21,13 @@ func main() {
 		`directory for the rotating log file (default: alongside the database); "-" logs to stdout only`)
 	logLevelFlag := flag.String("log-level", "INFO", "log level: DEBUG, INFO, WARN, or ERROR")
 	dbPathFlag := flag.String("db-path", "", "override the SQLite database path (default: per-OS app directory)")
+	versionFlag := flag.Bool("version", false, "print the program version and exit")
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Println(version.Version)
+		os.Exit(0)
+	}
 
 	level, err := logging.ParseLevel(*logLevelFlag)
 	if err != nil {
@@ -45,6 +54,10 @@ func main() {
 	if closer != nil {
 		defer closer.Close()
 	}
+	// version.Version is the ldflags/default value here; on packaged macOS
+	// builds the authoritative version comes from Fyne metadata, which the UI
+	// resolves and logs again once the app is constructed (see ui.NewApp).
+	slog.Info("starting checkin", "version", version.Version)
 
 	// Settings live alongside the database; created with defaults if absent.
 	cfgPath := filepath.Join(filepath.Dir(path), "settings.ini")

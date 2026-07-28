@@ -108,15 +108,51 @@ fi
 # customenv: gocv takes all cgo flags from the CGO_* env above.
 # migrated_fynedo: opts into Fyne 2.8's future main-goroutine behaviour.
 TAGS="customenv,migrated_fynedo"
-LDFLAGS=""
-[ "$GUI" -eq 1 ] && LDFLAGS="-H=windowsgui"
 
-if [ -n "$LDFLAGS" ]; then
-  go build -tags "$TAGS" -ldflags "$LDFLAGS" -o checkin.exe ./cmd/checkin/
+# App version. Single source of truth is the Makefile's VERSION; keep this
+# default in sync. Override with `VERSION=x.y.z ./build-windows.sh`.
+VERSION="${VERSION:-0.0.1}"
+# -X stamps the in-app version (the About dialog, --version, and startup log).
+LDFLAGS="-X github.com/pglass/checkin/internal/version.Version=$VERSION"
+[ "$GUI" -eq 1 ] && LDFLAGS="$LDFLAGS -H=windowsgui"
+
+# Generate a versioninfo resource (fyne.syso) so Windows Explorer's file
+# Properties -> Details shows a File/Product version. `go build` links any
+# *.syso in the main package dir automatically. This mirrors what `fyne
+# package` does internally (goversioninfo), but without triggering Fyne's own
+# build, which cannot use this project's hand-tuned OpenCV cgo env.
+SYSO="./cmd/checkin/fyne.syso"
+VI_JSON="$(mktemp)"
+# Clear any syso from a previous build so a failure below can't silently link a
+# stale version into this exe. Always clean both up on exit.
+rm -f "$SYSO"
+trap 'rm -f "$SYSO" "$VI_JSON"' EXIT
+# goversioninfo wants a four-part x.y.z.build FileVersion; pad missing parts.
+IFS='.' read -r VMAJ VMIN VPATCH _ <<<"$VERSION"
+cat >"$VI_JSON" <<JSON
+{
+  "FixedFileInfo": {
+    "FileVersion": {"Major": ${VMAJ:-0}, "Minor": ${VMIN:-0}, "Patch": ${VPATCH:-0}, "Build": 0},
+    "ProductVersion": {"Major": ${VMAJ:-0}, "Minor": ${VMIN:-0}, "Patch": ${VPATCH:-0}, "Build": 0}
+  },
+  "StringFileInfo": {
+    "ProductName": "Checkin",
+    "FileDescription": "Checkin",
+    "ProductVersion": "$VERSION",
+    "FileVersion": "$VERSION"
+  }
+}
+JSON
+if go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo \
+     -o "$SYSO" "$VI_JSON"; then
+  echo "Wrote versioninfo -> $SYSO (v$VERSION)"
 else
-  go build -tags "$TAGS" -o checkin.exe ./cmd/checkin/
+  echo "warning: goversioninfo failed; exe will lack File version metadata." >&2
+  rm -f "$SYSO"
 fi
-echo "Built ./checkin.exe"
+
+go build -tags "$TAGS" -ldflags "$LDFLAGS" -o checkin.exe ./cmd/checkin/
+echo "Built ./checkin.exe (v$VERSION)"
 
 if [ "$RUN" -eq 1 ]; then
   echo "Running..."
