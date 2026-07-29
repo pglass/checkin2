@@ -7,7 +7,7 @@
 # of third-party DLLs this app never uses (Qt6/ICU, ffmpeg codecs, OpenBLAS). This
 # build drops those but keeps every OpenCV *module* gocv's wrappers reference, so
 # vanilla (unmodified) gocv still links via its `customenv` build tag. See
-# build-windows.sh --static and the plan for the full rationale.
+# build-windows.sh and the plan for the full rationale.
 #
 # Pinned to the OpenCV version gocv v0.43.0 targets. To update: bump OPENCV_VERSION
 # to the version the installed gocv release targets (check its README), delete the
@@ -145,4 +145,4 @@ PC="$(find "$PREFIX" -name opencv4.pc 2>/dev/null | head -1)"
 echo
 echo "Static OpenCV $OPENCV_VERSION installed at: $PREFIX"
 echo "pkg-config file: $PC"
-echo "Next: build the single-exe with  ./build-windows.sh --static"
+echo "Next: build the single-exe with  ./build-windows.sh"

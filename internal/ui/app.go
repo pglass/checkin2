@@ -44,6 +44,10 @@ type App struct {
 	// historyWin is the History window; tracked like qrWin so reopening raises
 	// the existing one instead of spawning a duplicate.
 	historyWin fyne.Window
+
+	// licensesWin is the About -> Licenses window; tracked like qrWin so
+	// reopening raises the existing one instead of spawning a duplicate.
+	licensesWin fyne.Window
 }
 
 // NewApp builds the main window (menubar + student list) but does not run it.
@@ -79,7 +83,7 @@ func (a *App) Run() { a.win.ShowAndRun() }
 // Window exposes the main window for dialog parenting.
 func (a *App) Window() fyne.Window { return a.win }
 
-// buildMenu constructs the Admin menubar.
+// buildMenu constructs the Admin and About menubar menus.
 func (a *App) buildMenu() *fyne.MainMenu {
 	admin := fyne.NewMenu("Admin",
 		fyne.NewMenuItem("Add Student…", a.showAddStudentDialog),
@@ -87,18 +91,12 @@ func (a *App) buildMenu() *fyne.MainMenu {
 		fyne.NewMenuItem("History…", a.showHistoryWindow),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Show/Hide Camera", a.toggleCamera),
-		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("About Checkin…", a.showAboutDialog),
 	)
-	return fyne.NewMainMenu(admin)
-}
-
-// showAboutDialog reports the program version. This is the version surface for
-// Windows and Linux; on macOS the OS also provides a native "About" panel
-// populated from the app bundle's Info.plist (see the Makefile's --appVersion).
-func (a *App) showAboutDialog() {
-	dialog.ShowInformation("About Checkin",
-		fmt.Sprintf("Checkin\nVersion %s", version.Resolve()), a.win)
+	about := fyne.NewMenu("About",
+		fyne.NewMenuItem("Version…", a.showVersionDialog),
+		fyne.NewMenuItem("Licenses…", a.showLicensesWindow),
+	)
+	return fyne.NewMainMenu(admin, about)
 }
 
 // refresh reloads rows from the store and repaints the table. Safe to call

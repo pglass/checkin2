@@ -45,20 +45,20 @@ pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-opencv \
 MSYS2's `mingw-w64-x86_64-opencv` is **4.13.0**, the exact version gocv v0.43.0
 targets. Then build with the helper script:
 
-```powershell
-.\build-windows.ps1          # -> .\checkin.exe
-.\build-windows.ps1 -Run     # build, then launch
-.\build-windows.ps1 -Gui     # no console window (for distribution)
+```shell
+.\build-windows.sh          # -> .\checkin.exe
+.\build-windows.sh -Run     # build, then launch
+.\build-windows.sh -Gui     # no console window (for distribution)
 ```
 
 > **How the Windows build differs.** On macOS gocv finds OpenCV via
-> `pkg-config` automatically; on Windows it doesn't. `build-windows.ps1` uses
-> gocv's **`customenv`** build tag and feeds cgo the flags from
-> `pkg-config opencv4` (from MSYS2's mingw64), with MSYS2's `mingw64\bin` on
-> `PATH` so `gcc` — and the OpenCV/Qt6/runtime DLLs at run time — resolve.
-> Because those DLLs are loaded from `mingw64\bin`, run the built `.exe` from a
-> shell that has that directory on `PATH` (as the script arranges), or copy the
-> required DLLs next to `checkin.exe` before distributing (see "Distribution").
+> `pkg-config` automatically; on Windows it doesn't. The Windows build uses
+> gocv's **`customenv`** build tag and feeds cgo the flags for a slim **static**
+> OpenCV (built once by `build-opencv-static.sh`), with MSYS2's `mingw64\bin` on
+> `PATH` at build time so `gcc` resolves. The OpenCV, Qt, and MinGW runtime are
+> linked **into** the exe, so the resulting `checkin.exe` is a single
+> self-contained binary that depends only on Windows system DLLs — nothing to
+> bundle or copy alongside it (see "Distribution").
 
 ## Develop
 
@@ -122,5 +122,16 @@ will only launch if either:
    (e.g. with `dylibbundler` or `install_name_tool` + `@rpath`) — required for
    distributing to machines without Homebrew/OpenCV.
 
-Choose the approach before shipping. For Windows, ship the OpenCV runtime DLLs
-alongside the `.exe`.
+Choose the approach before shipping.
+
+**Windows** is simpler: it links a slim static OpenCV, so the build is a single
+self-contained `checkin.exe` with no DLLs to ship. One-time, build the static
+OpenCV, then package:
+
+```sh
+make opencv-static     # once per OpenCV version (slow; builds OpenCV 4.13.0)
+make package-windows   # -> dist/checkin.exe (single self-contained binary)
+```
+
+Third-party open-source license notices are embedded in the app itself under
+**About → Licenses**; no separate license file needs to ship alongside the exe.
