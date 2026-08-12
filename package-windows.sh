@@ -23,7 +23,14 @@ for arg in "$@"; do
 done
 
 OUT_DIR="dist"
-ZIP_PATH="$OUT_DIR/checkin-windows.zip"
+# Version the packaged artifacts (build-windows.sh builds a plain ./checkin.exe;
+# only the distributable copy carries the version). Single source of truth is the
+# Makefile / build-windows.sh default; keep this in sync. Exported below so the
+# build stamps the same version the file is named for. Override with VERSION=x.y.z.
+VERSION="${VERSION:-0.0.2}"
+export VERSION
+EXE_NAME="checkin-$VERSION.exe"
+ZIP_PATH="$OUT_DIR/checkin-$VERSION-windows.zip"
 
 # --- Locate MSYS2 / mingw64 (same discovery as build-windows.sh) ------------
 # Needed so ldd can resolve DLL references when verifying the exe is portable.
@@ -62,14 +69,14 @@ if ldd checkin.exe | grep -qiE '/mingw64/|=> not found'; then
 fi
 
 mkdir -p "$OUT_DIR"
-cp checkin.exe "$OUT_DIR/checkin.exe"
-echo "Single exe -> $OUT_DIR/checkin.exe ($(du -h checkin.exe | cut -f1))"
+cp checkin.exe "$OUT_DIR/$EXE_NAME"
+echo "Single exe -> $OUT_DIR/$EXE_NAME ($(du -h checkin.exe | cut -f1))"
 
 # --- Optionally zip it up (PowerShell's Compress-Archive; git bash has no zip) --
 if [ "$ZIP" -eq 1 ]; then
   rm -f "$ZIP_PATH"
   powershell.exe -NoProfile -NonInteractive -Command \
-    "Compress-Archive -Path '$(cygpath -w "$OUT_DIR/checkin.exe")' -DestinationPath '$(cygpath -w "$ZIP_PATH")' -Force" \
+    "Compress-Archive -Path '$(cygpath -w "$OUT_DIR/$EXE_NAME")' -DestinationPath '$(cygpath -w "$ZIP_PATH")' -Force" \
     || { echo "Compress-Archive failed." >&2; exit 1; }
   echo "Packaged $(du -h "$ZIP_PATH" | cut -f1) -> $ZIP_PATH"
 fi

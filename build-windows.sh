@@ -101,9 +101,12 @@ TAGS="customenv,migrated_fynedo"
 
 # App version. Single source of truth is the Makefile's VERSION; keep this
 # default in sync. Override with `VERSION=x.y.z ./build-windows.sh`.
-VERSION="${VERSION:-0.0.1}"
+VERSION="${VERSION:-0.0.2}"
 # -X stamps the in-app version (the About dialog, --version, and startup log).
-LDFLAGS="-X github.com/pglass/checkin/internal/version.Version=$VERSION"
+# -s -w drop the Go symbol table and DWARF debug info: this is a self-contained
+# distributable, not a debug target, and stripping them roughly halves the exe
+# (~100 MB -> ~56 MB) with no runtime effect. The Makefile's dev build keeps them.
+LDFLAGS="-s -w -X github.com/pglass/checkin/internal/version.Version=$VERSION"
 [ "$GUI" -eq 1 ] && LDFLAGS="$LDFLAGS -H=windowsgui"
 
 # Generate a versioninfo resource (fyne.syso) so Windows Explorer's file
