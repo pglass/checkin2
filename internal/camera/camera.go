@@ -1,9 +1,16 @@
 // Package camera captures webcam frames, detects QR codes, and emits scan
 // events. It runs a background goroutine and is safe to stop via context.
+//
+// Capture comes from pion/mediadevices, which enumerates devices by name and
+// hands back frames as image.Image. Detection uses OpenCV (via gocv): its QR
+// detector corrects perspective from the symbol contour, so codes held at an
+// angle still decode, which the pure-Go decoders do not manage.
 package camera
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"log/slog"
@@ -11,6 +18,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/mediadevices/pkg/driver"
+	_ "github.com/pion/mediadevices/pkg/driver/camera" // registers camera devices
+	"github.com/pion/mediadevices/pkg/prop"
 	"gocv.io/x/gocv"
 )
 
@@ -23,6 +33,15 @@ const defaultCooldown = 8 * time.Second
 // fast enough to catch a held-up QR code, cheap enough to idle quietly.
 const defaultFPS = 6
 
+// readRetryDelay is the pause after a failed frame read before trying again.
+const readRetryDelay = 30 * time.Millisecond
+
+// Appearance of the outline drawn around a detected QR code in the preview.
+var (
+	boxColor     = color.RGBA{R: 0, G: 255, B: 0, A: 255}
+	boxThickness = 3
+)
+
 // ScanEvent is emitted when a QR code is decoded (subject to cooldown).
 type ScanEvent struct {
 	Payload string
@@ -31,6 +50,28 @@ type ScanEvent struct {
 
 // Resolution is a frame width/height in pixels.
 type Resolution struct{ Width, Height int }
+
+// Device is a video capture device as reported by the OS.
+type Device struct {
+	Index int    // position in the list; what Run takes as deviceID
+	Name  string // human-readable, e.g. "MacBook Pro Camera"
+	Label string // stable unique ID, survives replug
+}
+
+// List enumerates the connected video capture devices.
+func List() []Device {
+	drivers := driver.GetManager().Query(driver.FilterVideoRecorder())
+	out := make([]Device, 0, len(drivers))
+	for i, d := range drivers {
+		info := d.Info()
+		name := info.Name
+		if name == "" {
+			name = fmt.Sprintf("Camera %d", i)
+		}
+		out = append(out, Device{Index: i, Name: name, Label: info.Label})
+	}
+	return out
+}
 
 // Camera manages a webcam capture + QR detection loop.
 type Camera struct {
@@ -44,8 +85,8 @@ type Camera struct {
 	actual   Resolution  // actual delivered frame size (0 until first read)
 
 	// previewing is set by the UI while the camera window is open. When false,
-	// the loop skips the frame->image.Image conversion and channel push (the
-	// main per-frame cost besides detection), since nobody is watching.
+	// the loop skips the mirrored copy and channel push (the main per-frame cost
+	// besides detection), since nobody is watching.
 	previewing atomic.Bool
 
 	Frames chan image.Image // latest-frame preview (buffered, size 1)
@@ -92,16 +133,24 @@ func New(fps, reqWidth, reqHeight int, cooldown time.Duration) *Camera {
 // Run opens the device and loops until ctx is cancelled. It returns an error
 // only if the camera cannot be opened; a missing camera is not fatal to the app.
 func (c *Camera) Run(ctx context.Context, deviceID int) error {
-	vc, err := gocv.OpenVideoCapture(deviceID)
+	d, err := openDevice(deviceID)
 	if err != nil {
 		return err
 	}
-	defer vc.Close()
-	c.applyResolution(vc)
-	slog.Info("webcam detected; camera started", "device", deviceID)
+	defer d.Close()
 
-	img := gocv.NewMat()
-	defer img.Close()
+	p, err := c.chooseFormat(d)
+	if err != nil {
+		return err
+	}
+	reader, err := d.(driver.VideoRecorder).VideoRecord(p)
+	if err != nil {
+		return err
+	}
+	slog.Info("webcam detected; camera started",
+		"device", deviceID, "name", d.Info().Name, "label", d.Info().Label,
+		"width", p.Width, "height", p.Height, "format", p.FrameFormat)
+
 	detector := gocv.NewQRCodeDetector()
 	defer detector.Close()
 	points := gocv.NewMat()
@@ -114,12 +163,14 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if ok := vc.Read(&img); !ok || img.Empty() {
+
+		src, release, err := reader.Read()
+		if err != nil {
 			// Transient read failure; brief pause and retry.
 			select {
 			case <-ctx.Done():
 				return nil
-			case <-time.After(30 * time.Millisecond):
+			case <-time.After(readRetryDelay):
 			}
 			continue
 		}
@@ -127,15 +178,19 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 		if !logged {
 			// Actual delivered size; drivers may snap to their nearest supported
 			// resolution and ignore the requested one.
-			w, h := img.Cols(), img.Rows()
+			b := src.Bounds()
 			c.mu.Lock()
-			c.actual = Resolution{Width: w, Height: h}
+			c.actual = Resolution{Width: b.Dx(), Height: b.Dy()}
 			c.mu.Unlock()
-			slog.Info("camera frame size", "width", w, "height", h)
+			slog.Info("camera frame size", "width", b.Dx(), "height", b.Dy())
 			logged = true
 		}
 
-		c.processFrame(&img, &points, &straight, &detector)
+		c.processFrame(src, &points, &straight, &detector)
+		// src's buffer belongs to the driver and is reused after release, so
+		// nothing may retain it past this point. processFrame copies what the
+		// preview needs.
+		release()
 
 		select {
 		case <-ctx.Done():
@@ -145,61 +200,171 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 	}
 }
 
-// applyResolution asks the driver for the requested capture resolution. Cutting
-// pixels is the biggest CPU win after fps, since QR detection cost scales with
-// pixel count. Drivers snap to their nearest supported size, so the delivered
-// frame may differ (logged from the first read in Run).
-func (c *Camera) applyResolution(vc *gocv.VideoCapture) {
-	if c.req.Width <= 0 || c.req.Height <= 0 {
-		return // no specific size requested; leave the driver default
+// openDevice resolves deviceID against the enumerated capture devices and opens
+// it. deviceID indexes the same list List returns.
+func openDevice(deviceID int) (driver.Driver, error) {
+	drivers := driver.GetManager().Query(driver.FilterVideoRecorder())
+	if len(drivers) == 0 {
+		return nil, errors.New("no video capture device found")
 	}
-	vc.Set(gocv.VideoCaptureFrameWidth, float64(c.req.Width))
-	vc.Set(gocv.VideoCaptureFrameHeight, float64(c.req.Height))
-	slog.Info("camera resolution requested", "width", c.req.Width, "height", c.req.Height)
+	if deviceID < 0 || deviceID >= len(drivers) {
+		return nil, fmt.Errorf("device %d out of range (%d connected)", deviceID, len(drivers))
+	}
+	d := drivers[deviceID]
+	if err := d.Open(); err != nil {
+		return nil, fmt.Errorf("opening device %d: %w", deviceID, err)
+	}
+	return d, nil
 }
 
-// processFrame detects a QR, draws its bounding box on the frame, publishes the
-// annotated frame for preview, and emits a ScanEvent if cooldown allows.
-func (c *Camera) processFrame(img, points, straight *gocv.Mat, detector *gocv.QRCodeDetector) {
-	payload := detector.DetectAndDecode(*img, points, straight)
-	previewing := c.previewing.Load()
-	if payload != "" && !points.Empty() {
-		if previewing {
-			drawBox(img, points)
+// chooseFormat picks one of the device's own advertised capture modes,
+// preferring the configured resolution. The mode must come from the device:
+// requesting a pixel format it does not produce (asking I420 of an NV12 camera,
+// say) makes mediadevices misread the chroma plane, which shows up as smeared
+// colour and a sheared frame rather than as an error.
+func (c *Camera) chooseFormat(d driver.Driver) (prop.Media, error) {
+	props := d.Properties()
+	if len(props) == 0 {
+		return prop.Media{}, errors.New("device advertises no capture properties")
+	}
+	if c.req.Width > 0 && c.req.Height > 0 {
+		for _, p := range props {
+			if p.Width == c.req.Width && p.Height == c.req.Height {
+				return p, nil
+			}
 		}
-		if c.allow(payload) {
-			c.emit(ScanEvent{Payload: payload, At: time.Now()})
-		}
+		slog.Info("requested capture size unavailable; using device default",
+			"width", c.req.Width, "height", c.req.Height)
 	}
-	// Frame->image conversion + push is only useful with a viewer. Skipping it
-	// when hidden avoids a full-frame alloc/copy every loop.
-	if previewing {
-		c.publishFrame(img)
-	}
+	return props[0], nil
 }
 
-// drawBox draws the detected QR polygon onto the frame for visual feedback.
-func drawBox(img, points *gocv.Mat) {
-	green := color.RGBA{0, 255, 0, 0}
-	n := points.Cols()
-	if points.Rows()*points.Cols() < 4 {
-		return
-	}
-	// points is a 1xN CV_32FC2 matrix of corner coords.
-	corner := func(i int) image.Point {
-		v := points.GetVecfAt(0, i)
-		return image.Pt(int(v[0]), int(v[1]))
-	}
-	for i := 0; i < n; i++ {
-		gocv.Line(img, corner(i), corner((i+1)%n), green, 3)
-	}
-}
-
-func (c *Camera) publishFrame(img *gocv.Mat) {
-	out, err := img.ToImage()
+// processFrame detects a QR code in src and, when the preview is open,
+// publishes a mirrored copy with the detected outline drawn on it. A decoded
+// payload is emitted as a ScanEvent if it passes the cooldown.
+//
+// src is only valid for the duration of the call; anything retained is copied.
+func (c *Camera) processFrame(src image.Image, points, straight *gocv.Mat, detector *gocv.QRCodeDetector) {
+	// OpenCV wants a Mat. The generic conversion path writes BGR, which is what
+	// the detector expects, and detection runs on the unmirrored frame so the
+	// coordinates it reports match the source.
+	mat, err := gocv.ImageToMatRGB(src)
 	if err != nil {
 		return
 	}
+	defer mat.Close()
+
+	payload := detector.DetectAndDecode(mat, points, straight)
+	found := payload != "" && !points.Empty()
+
+	if c.previewing.Load() {
+		// A preview that tracks the viewer's own movement is what people expect
+		// from a webcam, so the copy is mirrored left/right. The outline is
+		// drawn after mirroring, with its x coordinates flipped to match.
+		out := mirrorRGBA(src)
+		if found {
+			drawBox(out, corners(points))
+		}
+		c.publishImage(out)
+	}
+
+	if found && c.allow(payload) {
+		c.emit(ScanEvent{Payload: payload, At: time.Now()})
+	}
+}
+
+// corners reads the detected QR polygon out of OpenCV's point matrix, which is
+// a 1xN CV_32FC2 of corner coordinates in the source frame.
+func corners(points *gocv.Mat) []image.Point {
+	if points.Empty() || points.Rows()*points.Cols() < 4 {
+		return nil
+	}
+	out := make([]image.Point, 0, points.Cols())
+	for i := range points.Cols() {
+		v := points.GetVecfAt(0, i)
+		out = append(out, image.Pt(int(v[0]), int(v[1])))
+	}
+	return out
+}
+
+// drawBox outlines the detected QR polygon on the mirrored preview frame. The
+// corners are in source coordinates, so each x is flipped to match the mirror.
+func drawBox(dst *image.RGBA, pts []image.Point) {
+	if len(pts) < 2 {
+		return
+	}
+	w := dst.Bounds().Dx()
+	flip := func(p image.Point) image.Point { return image.Pt(w-1-p.X, p.Y) }
+	for i, p := range pts {
+		drawLine(dst, flip(p), flip(pts[(i+1)%len(pts)]), boxColor)
+	}
+}
+
+// drawLine plots a line with Bresenham's algorithm, thickened to boxThickness
+// so the outline stays visible when the preview is scaled down.
+func drawLine(dst *image.RGBA, a, b image.Point, col color.RGBA) {
+	dx := abs(b.X - a.X)
+	dy := -abs(b.Y - a.Y)
+	sx, sy := step(a.X, b.X), step(a.Y, b.Y)
+	err := dx + dy
+
+	for {
+		plot(dst, a.X, a.Y, col)
+		if a == b {
+			return
+		}
+		e2 := 2 * err
+		if e2 >= dy {
+			err += dy
+			a.X += sx
+		}
+		if e2 <= dx {
+			err += dx
+			a.Y += sy
+		}
+	}
+}
+
+// plot paints a boxThickness-square centred on (x, y), clipped to dst.
+func plot(dst *image.RGBA, x, y int, col color.RGBA) {
+	r := boxThickness / 2
+	for oy := -r; oy <= r; oy++ {
+		for ox := -r; ox <= r; ox++ {
+			px, py := x+ox, y+oy
+			if (image.Point{X: px, Y: py}).In(dst.Bounds()) {
+				dst.SetRGBA(px, py, col)
+			}
+		}
+	}
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func step(from, to int) int {
+	if from < to {
+		return 1
+	}
+	return -1
+}
+
+// mirrorRGBA copies img into a new RGBA, flipped left/right.
+func mirrorRGBA(img image.Image) *image.RGBA {
+	b := img.Bounds()
+	out := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	for y := range b.Dy() {
+		for x := range b.Dx() {
+			out.Set(b.Dx()-1-x, y, img.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
+}
+
+func (c *Camera) publishImage(out image.Image) {
 	c.mu.Lock()
 	c.frame = out
 	c.mu.Unlock()

@@ -6,6 +6,7 @@ require (
 	fyne.io/fyne/v2 v2.8.0
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/josephspurrier/goversioninfo v1.7.0
+	github.com/pion/mediadevices v0.10.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	gocv.io/x/gocv v0.43.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -18,6 +19,7 @@ require (
 	github.com/FyshOS/fancyfs v0.0.1 // indirect
 	github.com/akavel/rsrc v0.10.2 // indirect
 	github.com/anthonynsimon/bild v0.14.0 // indirect
+	github.com/blackjack/webcam v0.6.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
@@ -37,6 +39,7 @@ require (
 	github.com/hack-pad/safejs v0.1.0 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade // indirect
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
+	github.com/kr/pretty v0.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

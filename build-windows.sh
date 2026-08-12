@@ -81,15 +81,17 @@ export CGO_CPPFLAGS="$($PKGCFG --cflags opencv4)"
 #                  was built by this same gcc, so nothing actually needs it)
 #   -lntdll.a    : the .a suffix is invalid in an -l name -> -lntdll (which exists)
 OPENCV_LIBS="$($PKGCFG --static --libs opencv4 | sed -E 's/ -lRunTmChk(\.a)?//g; s/ -lntdll\.a/ -lntdll/g')"
-# opencv4.pc omits several Win32 import libs the statically-linked OpenCV needs:
-#   oleaut32  - cap_dshow.cpp (VariantInit/Clear, OleCreatePropertyFrame)
-#   uuid      - cap_dshow.cpp COM IIDs (IID_IUnknown/IPropertyBag/IPersistStream/
-#               ISpecifyPropertyPages). NOT strmiids: cap_dshow.cpp defines the
-#               DirectShow-specific IIDs itself, so strmiids "multiple definition"s.
+# opencv4.pc omits a Win32 import lib the statically-linked OpenCV needs:
 #   comdlg32  - highgui window_w32.cpp save/open dialogs (Get{Save,Open}FileNameA)
 # highgui's Win32 code may or may not survive --gc-sections, so link comdlg32
-# unconditionally. All of these import system DLLs, so the exe stays portable.
-WIN32_LIBS="-loleaut32 -luuid -lcomdlg32"
+# unconditionally. It imports a system DLL, so the exe stays portable.
+#
+# DirectShow libs are NOT listed here. Webcam capture is pion/mediadevices, whose
+# camera_windows.go declares its own `#cgo LDFLAGS: -lstrmiids -lole32 -loleaut32
+# -lquartz`. Note this only works because the OpenCV build now sets WITH_DSHOW=OFF:
+# OpenCV's cap_dshow.cpp defines the DirectShow IIDs itself and would collide with
+# strmiids ("multiple definition"). Turning DSHOW back on means that clash returns.
+WIN32_LIBS="-lcomdlg32"
 export CGO_LDFLAGS="$OPENCV_LIBS $WIN32_LIBS -static -static-libgcc -static-libstdc++"
 echo "OpenCV: $($PKGCFG --modversion opencv4) (STATIC)  |  gcc: $(gcc --version | head -1)"
 

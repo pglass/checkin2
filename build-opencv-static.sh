@@ -92,11 +92,19 @@ fi
 # gocv links with no undefined symbols. The WITH_*/BUILD_* toggles drop the three
 # heavy dependency groups (Qt/ICU, ffmpeg codecs, OpenBLAS).
 #
-# Two toggles match MSYS2's prebuilt OpenCV (so this static build behaves like the
-# shared build the app was validated against -- verified via its cvconfig.h):
+# The videoio MODULE must stay in BUILD_LIST even though the app no longer
+# captures with OpenCV: cgo compiles every .cpp in the gocv package directory,
+# so gocv's videoio.cpp references cv::VideoCapture/VideoWriter whether we call
+# them or not, and dropping the module breaks the link. What we can drop is the
+# camera BACKENDS inside it -- see WITH_DSHOW below.
+#
+# Camera/codec backend toggles:
+#   WITH_DSHOW=OFF: capture moved to pion/mediadevices, which talks to DirectShow
+#                   itself via its own cgo. OpenCV's copy of the DirectShow
+#                   backend is dead weight; videoio still builds without it (file
+#                   and synthetic captures remain, which is all the linker needs).
 #   WITH_MSMF=OFF : the MSMF camera backend does not compile with MinGW GCC (known
-#                   ComPtr/IID template error); MSYS2 disables it too. DSHOW is the
-#                   webcam backend in both builds.
+#                   ComPtr/IID template error); MSYS2 disables it too.
 #   WITH_IPP=OFF  : Intel ships IPPICV only as an MSVC .lib that mingw ld cannot
 #                   link; MSYS2's build has HAVE_IPP undefined as well, so there is
 #                   no acceleration difference vs the validated build.
@@ -110,7 +118,8 @@ cmake -S "$SRC" -B "$BUILD" -G "$GENERATOR" \
   -DWITH_FFMPEG=OFF \
   -DWITH_GSTREAMER=OFF -DWITH_GPHOTO2=OFF -DWITH_1394=OFF \
   -DWITH_FREETYPE=OFF -DWITH_GDAL=OFF -DWITH_GDCM=OFF -DWITH_VA=OFF -DWITH_VA_INTEL=OFF \
-  -DWITH_MSMF=OFF -DWITH_DSHOW=ON \
+  -DWITH_MSMF=OFF -DWITH_DSHOW=OFF \
+  -DWITH_V4L=OFF -DWITH_AVFOUNDATION=OFF \
   -DWITH_IPP=OFF \
   -DWITH_LAPACK=OFF \
   -DWITH_PROTOBUF=ON -DBUILD_PROTOBUF=ON \

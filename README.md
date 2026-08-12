@@ -7,7 +7,9 @@ that scans per-student QR codes. All data lives in a durable local SQLite file.
 ## Stack
 
 - **Go + Fyne** — GUI
-- **gocv (OpenCV 4)** — webcam capture + QR detection with bounding-box overlay
+- **pion/mediadevices** — webcam enumeration + capture (AVFoundation on macOS,
+  DirectShow on Windows)
+- **gocv (OpenCV 4)** — QR detection, with a bounding-box overlay drawn in Go
 - **sqlc + modernc.org/sqlite** — type-safe DB code, pure-Go SQLite driver
 - **skip2/go-qrcode + go-pdf/fpdf** — QR generation + printable PDF sheets
 

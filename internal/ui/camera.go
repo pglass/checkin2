@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"image"
 	"log/slog"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/camera"
 	"github.com/pglass/checkin/internal/qr"
@@ -20,13 +22,60 @@ import (
 // via fyne.Do. Opening a webcam can take seconds (OS init + permission), so it
 // must not run on the startup path or it stalls the first paint.
 func (a *App) startCamera(ctx context.Context) {
+	// Default to the first available camera; with none connected, stay stopped.
+	devices := camera.List()
+	if len(devices) == 0 {
+		slog.Info("no webcam detected; running without camera")
+		a.camDevice = deviceNone
+		return
+	}
+	a.startCameraDevice(ctx, devices[0].Index)
+}
+
+// deviceNone is the "no camera" selection: capture is stopped and no device is
+// held open.
+const deviceNone = -1
+
+// stopCamera cancels the running camera (if any) and releases the device. Safe
+// to call when nothing is running.
+func (a *App) stopCamera() {
+	if a.camCancel != nil {
+		a.camCancel()
+		a.camCancel = nil
+	}
+	a.cam = nil
+	a.camDevice = deviceNone
+	// Blank the preview so a stale last frame doesn't look like a live feed.
+	if a.preview != nil {
+		a.preview.Image = image.NewRGBA(image.Rect(0, 0, 1, 1))
+		a.preview.Refresh()
+	}
+	a.updateResLabel()
+}
+
+// startCameraDevice starts capture on the given device index. Calling it again
+// stops the previous camera first, so it doubles as the device switcher.
+// deviceNone stops capture entirely.
+func (a *App) startCameraDevice(parent context.Context, deviceID int) {
+	a.stopCamera()
+	if deviceID == deviceNone {
+		slog.Info("camera stopped")
+		return
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+	a.camCancel = cancel
+	a.camDevice = deviceID
+
 	cam := camera.New(a.cameraFPS, a.cameraReqWidth, a.cameraReqHeight, a.qrScanCooldown)
 	a.cam = cam
+	// The preview window may already be open when switching devices.
+	cam.SetPreviewing(a.preview != nil)
 
 	go func() {
 		// Run is the sole camera open; a prior Available() probe would open the
 		// device twice and block startup, so presence is reported from here.
-		err := cam.Run(ctx, 0)
+		err := cam.Run(ctx, deviceID)
 		switch {
 		case err == nil || ctx.Err() != nil:
 			// Clean stop (context cancelled on shutdown).
@@ -58,6 +107,50 @@ func (a *App) startCamera(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// cameraNoneLabel is the picker entry that stops capture.
+const cameraNoneLabel = "None"
+
+// newCameraPicker builds the device drop-down for the camera window. Always
+// shown, with "None" as an explicit way to stop capture and release the device.
+func (a *App) newCameraPicker() fyne.CanvasObject {
+	devices := camera.List()
+
+	// Label -> device index, with "None" first.
+	names := make([]string, 0, len(devices)+1)
+	byName := map[string]int{cameraNoneLabel: deviceNone}
+	names = append(names, cameraNoneLabel)
+	for _, d := range devices {
+		label := d.Name
+		// Distinct labels; two identical cameras would otherwise collide.
+		if _, taken := byName[label]; taken {
+			label = fmt.Sprintf("%s (%d)", d.Name, d.Index)
+		}
+		names = append(names, label)
+		byName[label] = d.Index
+	}
+
+	sel := widget.NewSelect(names, func(choice string) {
+		idx, ok := byName[choice]
+		if !ok || idx == a.camDevice {
+			return
+		}
+		slog.Info("camera selection changed", "device", idx, "label", choice)
+		a.startCameraDevice(a.ctx, idx)
+		a.updateResLabel()
+	})
+
+	// Reflect what is actually running: the current device, else "None".
+	selected := cameraNoneLabel
+	for label, idx := range byName {
+		if idx == a.camDevice && idx != deviceNone {
+			selected = label
+			break
+		}
+	}
+	sel.SetSelected(selected)
+	return sel
 }
 
 func (a *App) updatePreview(img image.Image) {

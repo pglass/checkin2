@@ -27,6 +27,8 @@ type App struct {
 
 	table           *studentTable
 	cam             *camera.Camera
+	camCancel       context.CancelFunc // stops the current camera; set per device
+	camDevice       int                // index of the running device
 	cameraFPS       int
 	cameraReqWidth  int
 	cameraReqHeight int
@@ -64,7 +66,9 @@ func NewApp(ctx context.Context, s *store.Store, cameraFPS, cameraReqWidth, came
 
 	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx,
 		cameraFPS: cameraFPS, cameraReqWidth: cameraReqWidth, cameraReqHeight: cameraReqHeight,
-		qrScanCooldown: qrScanCooldown}
+		qrScanCooldown: qrScanCooldown,
+		// No camera until startCamera picks one; 0 would mean "device 0 running".
+		camDevice: deviceNone}
 	a.table = newStudentTable(a)
 
 	win.SetMainMenu(a.buildMenu())
@@ -136,8 +140,10 @@ func (a *App) toggleCamera() {
 	}
 	a.updateResLabel()
 
-	// Preview fills the window; a thin status bar at the bottom shows resolution.
-	content := container.NewBorder(nil, a.resLabel, nil, nil, a.preview)
+	// Device picker across the top; preview fills the rest, with a thin status
+	// bar at the bottom showing resolution.
+	picker := a.newCameraPicker()
+	content := container.NewBorder(picker, a.resLabel, nil, nil, a.preview)
 
 	w := a.fyneApp.NewWindow("Camera")
 	w.SetContent(withWindowMargin(content))
@@ -157,7 +163,13 @@ func (a *App) toggleCamera() {
 // updateResLabel writes the actual capture resolution into the camera window's
 // status bar. Reads "pending" until the first frame arrives.
 func (a *App) updateResLabel() {
-	if a.resLabel == nil || a.cam == nil {
+	if a.resLabel == nil {
+		return
+	}
+	// No camera running (stopped, or none connected).
+	if a.cam == nil {
+		a.resLabel.Text = "camera off"
+		a.resLabel.Refresh()
 		return
 	}
 	act := a.cam.Actual()
