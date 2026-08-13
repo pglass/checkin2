@@ -15,7 +15,7 @@ Checkin itself:
 ================================================================================
 
 Apache License 2.0
-  gocv.io/x/gocv                          v0.43.0
+  gocv.io/x/gocv                          v0.43.0 (trimmed fork, third_party/gocv)
       Copyright (c) The Hybrid Group and friends
   fyne.io/systray                         v1.12.2
       Copyright (c) getlantern/systray authors and the Fyne.io developers
@@ -104,18 +104,18 @@ ISC License
 2. BUNDLED NATIVE LIBRARIES (statically linked into checkin.exe)
 ================================================================================
 
-The camera / QR-decoding features use OpenCV via gocv. The Windows build links
-a slimmed static OpenCV; the FFmpeg and GStreamer video backends and the Qt GUI
-are disabled and are NOT included. The native code linked into the executable
-is:
+The camera / QR-decoding features use OpenCV via gocv (a trimmed fork; see
+third_party/gocv). The Windows build links a slimmed static OpenCV cut down to
+the six modules QR detection needs: core, imgproc, calib3d, features2d, flann,
+objdetect. The FFmpeg/GStreamer backends, the Qt GUI, the dnn module, and the
+image-codec/highgui modules are NOT built, so their dependencies (protobuf,
+libpng, libjpeg) are not linked either. The native code linked into the
+executable is:
 
   OpenCV 4.13.0 — Apache License 2.0
       Copyright (c) 2000-2024, OpenCV team and contributors.
-      Includes these third-party libraries bundled with OpenCV:
+      Includes this third-party library bundled with OpenCV:
         - zlib      — zlib License   — (c) Jean-loup Gailly and Mark Adler
-        - libpng    — libpng License — (c) the PNG Reference Library authors
-        - libjpeg   — IJG License    — (c) the Independent JPEG Group
-        - protobuf  — BSD 3-Clause   — (c) Google Inc.
 
   GLFW (via github.com/go-gl/glfw, used by Fyne) — zlib/libpng License
       Copyright (c) 2002-2006 Marcus Geelnard; (c) 2006-2019 Camilla Lowy
@@ -127,16 +127,17 @@ is:
       into an executable distributed under any license terms, including
       proprietary ones, with no copyleft obligation on the executable.
 
-Required acknowledgment for libjpeg (IJG License):
-  "This software is based in part on the work of the Independent JPEG Group."
-
 ================================================================================
 3. FULL LICENSE TEXTS
 ================================================================================
 
+(Some texts below — libpng, IJG/libjpeg, and protobuf's BSD 3-Clause terms —
+cover libraries that OpenCV bundles but that this trimmed build does not link,
+per section 2. They are retained for reference and completeness.)
+
 --------------------------------------------------------------------------------
 Apache License 2.0
-  (applies to: gocv, fyne.io/systray, OpenCV, and OpenCV's bundled protobuf.)
+  (applies to: gocv, fyne.io/systray, and OpenCV.)
 --------------------------------------------------------------------------------
 
                                  Apache License
@@ -332,8 +333,8 @@ Apache License 2.0
 
 --------------------------------------------------------------------------------
 BSD 3-Clause License
-  (applies to every "BSD 3-Clause" component in section 1, and to OpenCV's
-   bundled protobuf. Copyright is held by the respective authors named above.)
+  (applies to every "BSD 3-Clause" component in section 1. Copyright is held by
+   the respective authors named above.)
 --------------------------------------------------------------------------------
 
 Redistribution and use in source and binary forms, with or without
@@ -449,7 +450,8 @@ the following restrictions:
 
 --------------------------------------------------------------------------------
 libpng License (PNG Reference Library License version 2)
-  (applies to libpng, bundled with OpenCV. Copyright held by the PNG authors.)
+  (ships with OpenCV's imgcodecs module, which this trimmed build omits; not
+   linked, retained for reference. Copyright held by the PNG authors.)
 --------------------------------------------------------------------------------
 
 Permission is hereby granted to use, copy, modify, and distribute this source
@@ -469,7 +471,8 @@ acknowledgment is not required but would be appreciated.
 
 --------------------------------------------------------------------------------
 Independent JPEG Group (IJG) License
-  (applies to libjpeg, bundled with OpenCV.)
+  (ships with OpenCV's imgcodecs module, which this trimmed build omits; not
+   linked, retained for reference.)
 --------------------------------------------------------------------------------
 
 This software is based in part on the work of the Independent JPEG Group.

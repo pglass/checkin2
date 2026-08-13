@@ -36,21 +36,23 @@ toolchain** (MinGW/GCC). So opencv.org's prebuilt binaries (MSVC) and scoop's
 # 1. Install MSYS2 (via scoop; or from msys2.org)
 scoop install msys2
 
-# 2. In an MSYS2 shell, install the toolchain + OpenCV 4 + Qt6 + pkg-config.
-#    (Qt6 is needed because MSYS2's OpenCV highgui is built with a Qt backend,
-#     and gocv's main package always links highgui.)
+# 2. In an MSYS2 shell, install the toolchain + CMake + Ninja + pkg-config.
+#    build-opencv-static.sh compiles OpenCV 4 from source, so no OpenCV (or Qt)
+#    package is needed: the trimmed static build links neither highgui nor a GUI
+#    backend (see third_party/gocv and build-opencv-static.sh's BUILD_LIST).
 pacman -Syu   # run once; reopen the shell if it asks you to
-pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-opencv \
-          mingw-w64-x86_64-pkgconf   mingw-w64-x86_64-qt6-5compat
+pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake \
+          mingw-w64-x86_64-ninja     mingw-w64-x86_64-pkgconf
 ```
 
-MSYS2's `mingw-w64-x86_64-opencv` is **4.13.0**, the exact version gocv v0.43.0
-targets. Then build with the helper script:
+The static build pins OpenCV **4.13.0**, the exact version gocv v0.43.0 targets.
+Build the OpenCV libs once, then the app:
 
 ```shell
-.\build-windows.sh          # -> .\checkin.exe
-.\build-windows.sh -Run     # build, then launch
-.\build-windows.sh -Gui     # no console window (for distribution)
+./build-opencv-static.sh    # one-time: compile the slim static OpenCV 4.13.0
+./build-windows.sh          # -> ./checkin.exe
+./build-windows.sh --run    # build, then launch
+./build-windows.sh --gui    # no console window (for distribution)
 ```
 
 > **How the Windows build differs.** On macOS gocv finds OpenCV via

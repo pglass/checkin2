@@ -88,32 +88,40 @@ fi
 [ -f "$SRC/CMakeLists.txt" ] || { echo "OpenCV source missing at $SRC" >&2; exit 1; }
 
 # --- Configure --------------------------------------------------------------
-# BUILD_LIST includes every module any gocv wrapper .cpp references, so vanilla
-# gocv links with no undefined symbols. The WITH_*/BUILD_* toggles drop the three
-# heavy dependency groups (Qt/ICU, ffmpeg codecs, OpenBLAS).
+# BUILD_LIST is the minimal set of OpenCV modules the app's (trimmed) gocv fork
+# links. The app only uses gocv's Mat/imgproc helpers and QRCodeDetector, so the
+# fork at third_party/gocv keeps just the core, imgproc and objdetect wrappers and
+# deletes the rest (dnn, video, photo, videoio, imgcodecs, highgui, calib3d,
+# features2d, aruco, svd, ...). With those wrappers gone, nothing references those
+# OpenCV modules, so they are dropped here too -- most importantly dnn (~20 MB) and
+# its protobuf dependency (~5 MB). The WITH_*/BUILD_* toggles drop the heavy
+# dependency groups (Qt/ICU, ffmpeg codecs, OpenBLAS).
 #
-# The videoio MODULE must stay in BUILD_LIST even though the app no longer
-# captures with OpenCV: cgo compiles every .cpp in the gocv package directory,
-# so gocv's videoio.cpp references cv::VideoCapture/VideoWriter whether we call
-# them or not, and dropping the module breaks the link. What we can drop is the
-# camera BACKENDS inside it -- see WITH_DSHOW below.
+# Why these six: objdetect (QRCodeDetector) requires core, imgproc and calib3d;
+# calib3d in turn requires features2d and flann. objdetect is OPTIONAL-linked
+# against dnn -- without it, cv::FaceDetectorYN::create is still defined but
+# CV_Error()s at runtime (see modules/objdetect/src/face_detect.cpp), so the
+# gocv objdetect wrapper still links even though we never call those APIs.
 #
-# Camera/codec backend toggles:
-#   WITH_DSHOW=OFF: capture moved to pion/mediadevices, which talks to DirectShow
-#                   itself via its own cgo. OpenCV's copy of the DirectShow
-#                   backend is dead weight; videoio still builds without it (file
-#                   and synthetic captures remain, which is all the linker needs).
-#   WITH_MSMF=OFF : the MSMF camera backend does not compile with MinGW GCC (known
-#                   ComPtr/IID template error); MSYS2 disables it too.
+# No videoio: capture moved to pion/mediadevices (its own DirectShow cgo), and the
+# gocv videoio wrapper is deleted, so OpenCV's videoio -- and its cap_dshow.cpp,
+# which used to collide with pion's DirectShow symbols -- is never built. That
+# retires the old WITH_DSHOW=OFF workaround entirely.
+#
+# Remaining backend/accel toggles:
 #   WITH_IPP=OFF  : Intel ships IPPICV only as an MSVC .lib that mingw ld cannot
 #                   link; MSYS2's build has HAVE_IPP undefined as well, so there is
 #                   no acceleration difference vs the validated build.
-[ "$CLEAN" -eq 1 ] && rm -rf "$BUILD"
+# --clean also wipes the install PREFIX, not just the build tree: when BUILD_LIST
+# shrinks, `install` adds the new modules but never removes the .a files from a
+# previous (larger) build, leaving stale libs (e.g. dnn) behind. Wiping the prefix
+# guarantees the install reflects exactly what was built this run.
+[ "$CLEAN" -eq 1 ] && rm -rf "$BUILD" "$PREFIX"
 cmake -S "$SRC" -B "$BUILD" -G "$GENERATOR" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$(cygpath -m "$PREFIX")" \
   -DBUILD_SHARED_LIBS=OFF \
-  -DBUILD_LIST=core,imgproc,imgcodecs,videoio,objdetect,dnn,calib3d,features2d,flann,photo,video,highgui \
+  -DBUILD_LIST=core,imgproc,calib3d,features2d,flann,objdetect \
   -DWITH_QT=OFF -DWITH_GTK=OFF -DWITH_WIN32UI=ON \
   -DWITH_FFMPEG=OFF \
   -DWITH_GSTREAMER=OFF -DWITH_GPHOTO2=OFF -DWITH_1394=OFF \
@@ -122,10 +130,9 @@ cmake -S "$SRC" -B "$BUILD" -G "$GENERATOR" \
   -DWITH_V4L=OFF -DWITH_AVFOUNDATION=OFF \
   -DWITH_IPP=OFF \
   -DWITH_LAPACK=OFF \
-  -DWITH_PROTOBUF=ON -DBUILD_PROTOBUF=ON \
-  -DWITH_PNG=ON -DBUILD_PNG=ON -DBUILD_ZLIB=ON \
-  -DWITH_JPEG=ON -DBUILD_JPEG=ON \
-  -DWITH_TIFF=OFF -DWITH_WEBP=OFF -DWITH_OPENJPEG=OFF -DWITH_JASPER=OFF -DWITH_OPENEXR=OFF \
+  -DWITH_PROTOBUF=OFF -DBUILD_PROTOBUF=OFF \
+  -DWITH_PNG=OFF -DWITH_JPEG=OFF -DWITH_TIFF=OFF -DWITH_WEBP=OFF \
+  -DWITH_OPENJPEG=OFF -DWITH_JASPER=OFF -DWITH_OPENEXR=OFF \
   -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF -DBUILD_DOCS=OFF \
   -DBUILD_opencv_apps=OFF -DBUILD_opencv_python3=OFF -DBUILD_opencv_java=OFF \
   -DENABLE_PRECOMPILED_HEADERS=OFF \
