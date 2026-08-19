@@ -50,6 +50,10 @@ type App struct {
 	// licensesWin is the About -> Licenses window; tracked like qrWin so
 	// reopening raises the existing one instead of spawning a duplicate.
 	licensesWin fyne.Window
+
+	// importWin is the Import window; tracked like qrWin so reopening raises
+	// the existing one instead of spawning a duplicate.
+	importWin fyne.Window
 }
 
 // NewApp builds the main window (menubar + student list) but does not run it.
@@ -91,6 +95,7 @@ func (a *App) Window() fyne.Window { return a.win }
 func (a *App) buildMenu() *fyne.MainMenu {
 	admin := fyne.NewMenu("Admin",
 		fyne.NewMenuItem("Add Student…", a.showAddStudentDialog),
+		fyne.NewMenuItem("Import…", a.showImportWindow),
 		fyne.NewMenuItem("Generate QR PDF…", a.showGenerateQRDialog),
 		fyne.NewMenuItem("History…", a.showHistoryWindow),
 		fyne.NewMenuItemSeparator(),
