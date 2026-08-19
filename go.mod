@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	fyne.io/fyne/v2 v2.8.0
 	github.com/go-pdf/fpdf v0.9.0
+	github.com/gofrs/flock v0.13.0
 	github.com/josephspurrier/goversioninfo v1.7.0
 	github.com/pion/mediadevices v0.10.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
@@ -40,7 +41,6 @@ require (
 	github.com/hack-pad/safejs v0.1.0 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade // indirect
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
-	github.com/kr/pretty v0.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
@@ -50,6 +50,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/richardlehane/mscfb v1.0.7 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
+	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/rymdport/portal v0.4.2 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect

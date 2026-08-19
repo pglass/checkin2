@@ -32,9 +32,11 @@ type startup struct {
 	openBtn *widget.Button
 	errLbl  *canvas.Text
 
-	// onOpen receives the chosen Center. The startup window is closed first, so
-	// the callback is free to open the main window.
-	onOpen func(center.Center)
+	// onOpen receives the chosen Center and opens it. It returns an error (e.g.
+	// store.ErrAlreadyOpen) when the Center cannot be opened, in which case the
+	// selection window stays up and shows the message; on success it has already
+	// opened the main window and the selection window is closed.
+	onOpen func(center.Center) error
 
 	// opened records that a Center was chosen, so closing the window afterwards
 	// is not treated as the user quitting.
@@ -42,10 +44,12 @@ type startup struct {
 }
 
 // ShowStartup displays the Center selection window. onOpen is called with the
-// chosen Center after the window closes; if the user closes the window without
-// choosing, onOpen is never called and the process should exit. The caller
-// drives the Fyne event loop.
-func ShowStartup(fa fyne.App, appDir string, onOpen func(center.Center)) {
+// chosen Center when the user opens it; on success it opens the main window and
+// the selection window closes, on failure (e.g. the Center is already open) the
+// selection window stays up. If the user closes the window without choosing,
+// onOpen is never called and the process should exit. The caller drives the
+// Fyne event loop.
+func ShowStartup(fa fyne.App, appDir string, onOpen func(center.Center) error) {
 	s := &startup{fyneApp: fa, appDir: appDir, selected: -1, onOpen: onOpen}
 	s.win = fa.NewWindow("Check-In — Select Center")
 	s.about = about{fyneApp: fa, parent: s.win}
@@ -132,10 +136,15 @@ func (s *startup) open() {
 		return
 	}
 	c := s.centers[s.selected]
-	s.opened = true
 	slog.Info("center selected", "name", c.Name, "dir", c.Dir)
+	if err := s.onOpen(c); err != nil {
+		// The Center could not be opened (already open in another instance):
+		// keep the selection window up and explain, rather than closing it.
+		s.showError(err)
+		return
+	}
+	s.opened = true
 	s.win.Close()
-	s.onOpen(c)
 }
 
 // showAddDialog prompts for a new Center name, creating its directory and
@@ -183,4 +192,28 @@ func (s *startup) showAddDialog() {
 func (s *startup) showError(err error) {
 	s.errLbl.Text = err.Error()
 	s.errLbl.Refresh()
+}
+
+// ShowFatalError displays a standalone message window with a Close button that
+// quits the app. It is used when a Center chosen directly via -center or
+// -db-path cannot be opened (e.g. it is already open in another instance) and
+// there is no selection window to fall back to. The caller drives the Fyne
+// event loop.
+func ShowFatalError(fa fyne.App, message string) {
+	w := fa.NewWindow("Check-In")
+
+	msg := widget.NewLabel(message)
+	msg.Wrapping = fyne.TextWrapWord
+
+	closeBtn := widget.NewButton("Close", func() { fa.Quit() })
+	closeBtn.Importance = widget.HighImportance
+
+	w.SetContent(withWindowMargin(container.NewVBox(
+		msg,
+		container.NewHBox(layout.NewSpacer(), closeBtn),
+	)))
+	w.SetOnClosed(func() { fa.Quit() })
+	w.Resize(fyne.NewSize(360, 160))
+	w.CenterOnScreen()
+	w.Show()
 }

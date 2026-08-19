@@ -81,9 +81,26 @@ func main() {
 		}
 	}()
 
-	// run opens the Center's log file and database, then shows the main window.
-	// It does not block: the caller drives the event loop via fa.Run().
-	run := func(c center.Center, dbPath string) {
+	// run opens the Center's database and log file, then shows the main window.
+	// It does not block: the caller drives the event loop via fa.Run(). It
+	// returns store.ErrAlreadyOpen (and opens nothing) when the Center is already
+	// held by another instance, so the caller can report that and stay running;
+	// any other failure is fatal.
+	run := func(c center.Center, dbPath string) error {
+		// Open (which takes the one-process-per-Center lock) before switching
+		// logging to the Center directory: if the Center is already open we don't
+		// want to have redirected this instance's log into it.
+		s, err := store.Open(dbPath)
+		if errors.Is(err, store.ErrAlreadyOpen) {
+			slog.Warn("center already open in another instance", "name", c.Name, "dir", c.Dir)
+			return err
+		}
+		if err != nil {
+			slog.Error("open database", "path", absPath(dbPath), "error", err)
+			log.Fatalf("open db: %v", err)
+		}
+		openStore = s
+
 		logDest := *logFileFlag
 		if logDest == "" {
 			logDest = c.LogDir()
@@ -94,13 +111,6 @@ func main() {
 		}
 		logCloser = closer // nil when logging to stdout
 		slog.Info("center opened", "name", c.Name, "dir", c.Dir)
-
-		s, err := store.Open(dbPath)
-		if err != nil {
-			slog.Error("open database", "path", absPath(dbPath), "error", err)
-			log.Fatalf("open db: %v", err)
-		}
-		openStore = s
 		slog.Info("database opened", "path", absPath(dbPath))
 
 		app := ui.NewApp(ctx, fa, s, c.Name, cfg.CameraFPS, cfg.CameraRequestWidth, cfg.CameraRequestHeight, cfg.QRScanCooldown)
@@ -111,16 +121,21 @@ func main() {
 		s.StartPruner(ctx, cfg.PruneInterval, cfg.PruneBatchSize)
 
 		app.Show()
+		return nil
 	}
 
-	// A direct -db-path or -center skips the selection window entirely.
+	// A direct -db-path or -center skips the selection window entirely. With no
+	// selection window to fall back to, an already-open Center shows a standalone
+	// message window instead.
 	switch {
 	case *dbPathFlag != "":
 		// Escape hatch for development: the database's parent directory stands in
 		// for the Center, so logs land next to the file.
 		dir := filepath.Dir(*dbPathFlag)
 		c := center.Center{Name: filepath.Base(dir), Dir: dir}
-		run(c, *dbPathFlag)
+		if err := run(c, *dbPathFlag); errors.Is(err, store.ErrAlreadyOpen) {
+			ui.ShowFatalError(fa, alreadyOpenMessage(c.Name))
+		}
 	case *centerFlag != "":
 		c, err := center.Create(appDir, *centerFlag)
 		if errors.Is(err, center.ErrExists) {
@@ -128,12 +143,21 @@ func main() {
 		} else if err != nil {
 			log.Fatalf("open center %q: %v", *centerFlag, err)
 		}
-		run(c, c.DBPath())
+		if err := run(c, c.DBPath()); errors.Is(err, store.ErrAlreadyOpen) {
+			ui.ShowFatalError(fa, alreadyOpenMessage(c.Name))
+		}
 	default:
-		ui.ShowStartup(fa, appDir, func(c center.Center) { run(c, c.DBPath()) })
+		ui.ShowStartup(fa, appDir, func(c center.Center) error { return run(c, c.DBPath()) })
 	}
 
 	fa.Run()
+}
+
+// alreadyOpenMessage is the user-facing text shown when a Center chosen via
+// -center or -db-path is already open in another instance.
+func alreadyOpenMessage(name string) string {
+	return fmt.Sprintf("The Center %q is already open in another window.\n\n"+
+		"Close that window first, or choose a different Center.", name)
 }
 
 // absPath returns the absolute form of p for logging, falling back to p itself

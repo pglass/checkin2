@@ -41,6 +41,8 @@ BSD 3-Clause License
       Copyright (c) 2021 The go-text authors
   github.com/go-text/typesetting          v0.3.4
       Copyright (c) 2021 The go-text authors
+  github.com/gofrs/flock                  v0.13.0
+      Copyright (c) 2018-2025 The Gofrs; (c) 2015-2020 Tim Heckman
   github.com/google/uuid                  v1.6.0
       Copyright (c) 2009,2014 Google Inc.
   github.com/pmezard/go-difflib           v1.0.0

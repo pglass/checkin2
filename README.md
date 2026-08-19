@@ -107,6 +107,17 @@ next launch. Deleting a Center means deleting its directory by hand.
 `settings.ini` stays at the top level of the application directory and is shared
 by every Center. Background pruning only touches the open Center's database.
 
+**One process per Center.** Each instance holds today's check-in/out state in
+memory, so two instances open on the same Center would show divergent state and
+double-log actions. To prevent this, opening a Center takes an exclusive lock on
+a `checkin.db.lock` file in the Center directory; a second attempt to open the
+same Center is refused with a message (the selection window stays up so you can
+pick another). The lock is an OS advisory lock (`flock` on macOS/Linux,
+`LockFileEx` on Windows) released automatically when the process exits, so a
+crash leaves nothing to clean up. Different Centers can still be open at once in
+separate instances. This assumes the Center lives on a local disk — advisory
+locking is unreliable over network shares (SMB/NFS).
+
 ```sh
 checkin -center "Fall 2026"   # skip the selection window (creates it if absent)
 checkin -db-path /tmp/x/checkin.db   # dev escape hatch: open a database directly

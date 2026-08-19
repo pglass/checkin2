@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	dbpkg "github.com/pglass/checkin/db"
 	"github.com/pglass/checkin/db/gen"
 	_ "modernc.org/sqlite"
@@ -52,6 +53,14 @@ const (
 // ErrDuplicateName is returned by AddStudent when the name already exists.
 var ErrDuplicateName = errors.New("a student with that name already exists")
 
+// ErrAlreadyOpen is returned by Open when another process already holds this
+// Center's lock, i.e. a second instance is trying to open the same database.
+var ErrAlreadyOpen = errors.New("this Center is already open in another window")
+
+// lockSuffix is appended to the database path to name the sidecar lock file
+// that carries the exclusive advisory lock enforcing one process per Center.
+const lockSuffix = ".lock"
+
 // Status describes a student's check-in/out state for the current day.
 type Status int
 
@@ -71,41 +80,70 @@ type StudentRow struct {
 
 // Store wraps the database connection, generated queries, and day state.
 type Store struct {
-	db  *sql.DB
-	q   *gen.Queries
-	day *DayState
+	db   *sql.DB
+	q    *gen.Queries
+	day  *DayState
+	lock *flock.Flock
 }
 
 // Open opens (or creates) the database at path, applies pragmas and schema,
 // and rebuilds the in-memory "today" state from the Log.
+//
+// Open first takes an exclusive OS advisory lock on a sidecar "<path>.lock"
+// file, enforcing one process per Center: if another instance already holds it,
+// Open returns ErrAlreadyOpen without touching the database. The lock is an
+// flock(2) lock on macOS/Linux and a LockFileEx lock on Windows; either way the
+// OS releases it automatically if this process dies, so there is no stale lock
+// to clean up (unlike a PID file). See Close for release on normal shutdown.
 func Open(path string) (*Store, error) {
+	lock := flock.New(path + lockSuffix)
+	locked, err := lock.TryLock()
+	if err != nil {
+		return nil, fmt.Errorf("acquire center lock: %w", err)
+	}
+	if !locked {
+		return nil, ErrAlreadyOpen
+	}
+
 	// Pragmas are carried in the DSN so they apply to every pooled connection,
 	// not just the first (see connPragmas). The UI and the background pruner can
 	// each hold their own connection, and both must have busy_timeout set.
 	database, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
+		_ = lock.Unlock()
 		return nil, err
 	}
 
 	if _, err := database.Exec(dbpkg.Schema); err != nil {
 		database.Close()
+		_ = lock.Unlock()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 
 	s := &Store{
-		db:  database,
-		q:   gen.New(database),
-		day: newDayState(),
+		db:   database,
+		q:    gen.New(database),
+		day:  newDayState(),
+		lock: lock,
 	}
 	if err := s.day.rebuild(context.Background(), s.q); err != nil {
 		database.Close()
+		_ = lock.Unlock()
 		return nil, err
 	}
 	return s, nil
 }
 
-// Close closes the underlying database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close closes the underlying database and releases the Center lock.
+func (s *Store) Close() error {
+	err := s.db.Close()
+	if s.lock != nil {
+		if uerr := s.lock.Unlock(); uerr != nil && err == nil {
+			err = uerr
+		}
+	}
+	return err
+}
 
 // AddStudent inserts a new student and appends an "Added" log entry.
 // Returns ErrDuplicateName if the name is already taken.
