@@ -56,8 +56,10 @@ type App struct {
 	importWin fyne.Window
 }
 
-// NewApp builds the main window (menubar + student list) but does not run it.
-func NewApp(ctx context.Context, s *store.Store, cameraFPS, cameraReqWidth, cameraReqHeight int, qrScanCooldown time.Duration) *App {
+// NewFyneApp creates the Fyne application shared by every window (the startup
+// Center selector and, afterwards, the main window). Only one of these exists
+// per process, and exactly one Run drives it.
+func NewFyneApp() fyne.App {
 	fa := app.NewWithID("com.pglass.checkin")
 	// On packaged builds (e.g. macOS `fyne package --appVersion`) the version
 	// lives in the Fyne app metadata rather than the ldflags var; feed it in so
@@ -66,7 +68,13 @@ func NewApp(ctx context.Context, s *store.Store, cameraFPS, cameraReqWidth, came
 	slog.Info("resolved app version", "version", version.Resolve())
 	// Tight, consistent spacing across every window.
 	fa.Settings().SetTheme(newCompactTheme())
-	win := fa.NewWindow("Check-In")
+	return fa
+}
+
+// NewApp builds the main window (menubar + student list) but does not run it.
+// centerName is shown in the title bar so the open Center is always visible.
+func NewApp(ctx context.Context, fa fyne.App, s *store.Store, centerName string, cameraFPS, cameraReqWidth, cameraReqHeight int, qrScanCooldown time.Duration) *App {
+	win := fa.NewWindow("Check-In — " + centerName)
 
 	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx,
 		cameraFPS: cameraFPS, cameraReqWidth: cameraReqWidth, cameraReqHeight: cameraReqHeight,
@@ -84,6 +92,9 @@ func NewApp(ctx context.Context, s *store.Store, cameraFPS, cameraReqWidth, came
 	a.startCamera(ctx)
 	return a
 }
+
+// Show displays the main window. The caller drives the event loop.
+func (a *App) Show() { a.win.Show() }
 
 // Run shows the window and blocks until it is closed.
 func (a *App) Run() { a.win.ShowAndRun() }

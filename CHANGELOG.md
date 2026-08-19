@@ -1,3 +1,8 @@
+# Unreleased
+
+* Added Centers: separate databases and log files per Center, selected at
+  startup. Shared `settings.ini` stays at the top of the app directory.
+
 # 0.0.2
 
 Webcam enumeration and selection

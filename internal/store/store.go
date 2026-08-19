@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -76,20 +74,6 @@ type Store struct {
 	db  *sql.DB
 	q   *gen.Queries
 	day *DayState
-}
-
-// DefaultDBPath returns the durable per-OS location for the database file,
-// creating the parent directory if needed.
-func DefaultDBPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	appDir := filepath.Join(dir, "checkin")
-	if err := os.MkdirAll(appDir, 0o755); err != nil {
-		return "", err
-	}
-	return filepath.Join(appDir, "checkin.db"), nil
 }
 
 // Open opens (or creates) the database at path, applies pragmas and schema,

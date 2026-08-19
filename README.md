@@ -75,12 +75,13 @@ make generate   # regenerate db/gen from db/schema.sql + db/queries.sql
 
 ## Logging
 
-By default the app logs at **INFO** to a rotating file `checkin.log` in the same
-directory as the database. Rotation keeps disk usage bounded (10 MB per file, up
-to 5 compressed backups, 90-day max age).
+By default the app logs at **INFO** to a rotating file `checkin.log` inside the
+open Center's directory (before a Center is selected, startup logs to stdout).
+Rotation keeps disk usage bounded (10 MB per file, up to 5 compressed backups,
+90-day max age).
 
 ```sh
-checkin                       # INFO -> checkin.log next to the DB (rotated)
+checkin                       # INFO -> checkin.log in the Center dir (rotated)
 checkin -log-level DEBUG      # more verbose
 checkin -log-file -           # log to stdout only, no file, no rotation
 checkin -log-file /var/log/checkin -log-level WARN   # custom directory
@@ -91,10 +92,31 @@ check-in/out/add/remove, each QR detection (with the decoded JSON), and the raw
 string of any QR code that failed to parse. Webcam presence is logged at startup
 (INFO if found, WARN if not).
 
+## Centers
+
+A **Center** is an independent data set — one laptop can serve different groups
+of students at different times. Each Center is a sub-directory of the
+application directory and owns its own database and log files. Only one Center
+is open at a time.
+
+At startup a window lists the Centers found on disk (discovered by listing
+sub-directories) and offers **Add Center…** to create a new one; the name you
+type becomes the directory name. To switch Centers, quit and pick another at the
+next launch. Deleting a Center means deleting its directory by hand.
+
+`settings.ini` stays at the top level of the application directory and is shared
+by every Center. Background pruning only touches the open Center's database.
+
+```sh
+checkin -center "Fall 2026"   # skip the selection window (creates it if absent)
+checkin -db-path /tmp/x/checkin.db   # dev escape hatch: open a database directly
+```
+
 ## Data
 
-- **Location:** `~/Library/Application Support/checkin/checkin.db` (macOS),
-  `%AppData%\checkin\checkin.db` (Windows). Created on first run.
+- **Location:** `~/Library/Application Support/checkin/<Center>/checkin.db`
+  (macOS), `%AppData%\checkin\<Center>\checkin.db` (Windows). Created when the
+  Center is first opened.
 - **Schema:** `Student(ID, Name unique)` and an append-only
   `Log(ID, StudentID, StudentName, Action, Timestamp)` where `Action` is
   `Added | Checked In | Checked Out | Deleted` and `Timestamp` is unix epoch

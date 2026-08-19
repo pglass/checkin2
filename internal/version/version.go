@@ -1,22 +1,31 @@
 // Package version exposes the application's build version.
 package version
 
-// Version is the program version. It defaults to "dev" for local/unstamped
+// devVersion is the placeholder for builds that were not stamped with ldflags
+// (a bare `go build`, `go test`, or `fyne package`, which compiles the binary
+// itself). It is the signal that Version carries nothing authoritative.
+const devVersion = "dev"
+
+// Version is the program version. It defaults to devVersion for local/unstamped
 // builds and is overridden at build time via
 //
 //	-ldflags "-X github.com/pglass/checkin/internal/version.Version=x.y.z"
 //
 // See the Makefile (macOS) and build-windows.sh (Windows) for the injection.
+// The Makefile's VERSION is the single source of truth, so a stamped value
+// always wins in Resolve().
 //
 // On a macOS bundle built with `fyne package --appVersion`, the ldflags value
-// is NOT set (fyne builds the binary itself); instead the version lives in the
-// app's Fyne metadata. Resolve() prefers that metadata when present, so the
-// same value shows up everywhere regardless of which build path produced it.
-var Version = "dev"
+// is NOT set; instead the version lives in the app's Fyne metadata, and
+// Resolve() falls back to that.
+var Version = devVersion
 
 // metadataVersion is the version reported by the Fyne app metadata, if any.
-// The UI layer sets it once the Fyne app is constructed (see ui.NewApp); it is
-// empty for bare `go build` and non-Fyne callers.
+// The UI layer sets it once the Fyne app is constructed (see ui.NewFyneApp).
+//
+// Note this is never empty in a Fyne app: with no bundle Info.plist and no
+// FyneApp.toml, Fyne reports its own placeholder ("0.0.1"), which looks like a
+// real version but is not ours. That is why a stamped Version takes precedence.
 var metadataVersion string
 
 // SetMetadataVersion records the version from the Fyne app metadata. Empty
@@ -27,9 +36,13 @@ func SetMetadataVersion(v string) {
 	}
 }
 
-// Resolve returns the best-known version: the Fyne metadata value if set
-// (populated on packaged macOS builds), otherwise the ldflags/default Version.
+// Resolve returns the best-known version: the ldflags-stamped Version when the
+// build set one, otherwise the Fyne app metadata (populated on packaged macOS
+// builds), otherwise the "dev" placeholder.
 func Resolve() string {
+	if Version != devVersion {
+		return Version
+	}
 	if metadataVersion != "" {
 		return metadataVersion
 	}
