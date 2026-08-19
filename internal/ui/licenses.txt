@@ -19,6 +19,10 @@ Apache License 2.0
       Copyright (c) The Hybrid Group and friends
   fyne.io/systray                         v1.12.2
       Copyright (c) getlantern/systray authors and the Fyne.io developers
+  github.com/richardlehane/mscfb          v1.0.7
+      Copyright (c) 2019 Richard Lehane
+  github.com/richardlehane/msoleps        v1.0.6
+      Copyright (c) 2017 Richard Lehane
 
 BSD 3-Clause License
   fyne.io/fyne/v2                         v2.8.0
@@ -27,6 +31,12 @@ BSD 3-Clause License
       Copyright (c) 2025 FyshOS developers (see AUTHORS)
   github.com/fsnotify/fsnotify            v1.9.0
       Copyright (c) 2012 The Go Authors; Copyright (c) fsnotify Authors
+  github.com/fyne-io/image                v0.1.1
+      Copyright (c) 2022 Fyne.io
+  github.com/fyne-io/oksvg                v0.2.0
+      Copyright (c) 2018 Steven R Wiley
+  github.com/go-gl/glfw/v3.4/glfw         v0.1.0-pre.1.0.20260707082822-2a407d02d01a
+      Copyright (c) 2012 The glfw3-go Authors
   github.com/go-text/render               v0.2.1
       Copyright (c) 2021 The go-text authors
   github.com/go-text/typesetting          v0.3.4
@@ -43,6 +53,22 @@ BSD 3-Clause License
       Copyright (c) 2018 Steven R Wiley
   github.com/srwiley/rasterx              v0.0.0-20220730225603-2ab79fcdd4ef
       Copyright (c) 2018 Steven R Wiley
+  github.com/xuri/efp                     v0.0.1
+      Copyright (c) 2017-2025 Ri Xu
+  github.com/xuri/excelize/v2             v2.11.0
+      Copyright (c) 2016-2026 The excelize Authors; (c) 2011-2017 Geoffrey J. Teale
+  github.com/xuri/nfp                     v0.0.2-0.20250530014748-2ddeb826f9a9
+      Copyright (c) 2022-2025 Ri Xu
+  golang.org/x/crypto                     v0.53.0
+      Copyright (c) 2009 The Go Authors
+  golang.org/x/image                      v0.38.0
+      Copyright (c) 2009 The Go Authors
+  golang.org/x/net                        v0.56.0
+      Copyright (c) 2009 The Go Authors
+  golang.org/x/sys                        v0.46.0
+      Copyright (c) 2009 The Go Authors
+  golang.org/x/text                       v0.38.0
+      Copyright (c) 2009 The Go Authors
   modernc.org/libc                        v1.74.1
       Copyright (c) 2017 The Libc Authors
   modernc.org/mathutil                    v1.7.1
@@ -85,8 +111,12 @@ MIT License
       Copyright (c) 2022 Nuno Cruces
   github.com/nicksnyder/go-i18n/v2        v2.5.1
       Copyright (c) 2014 Nick Snyder
+  github.com/pion/mediadevices            v0.10.0
+      Copyright (c) 2019-2020 Pion
   github.com/skip2/go-qrcode              v0.0.0-20200617195104-da1b6568686e
       Copyright (c) 2014 Tom Harwood
+  github.com/tiendc/go-deepcopy           v1.7.2
+      Copyright (c) 2023 tiendc
   github.com/yuin/goldmark                v1.8.2
       Copyright (c) 2019 Yusuke Inuzuka
   gopkg.in/natefinch/lumberjack.v2        v2.2.1

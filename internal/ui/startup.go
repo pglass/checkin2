@@ -21,6 +21,10 @@ type startup struct {
 	win     fyne.Window
 	appDir  string
 
+	// about supplies the About menu, so version and license information is
+	// reachable before any Center is open.
+	about about
+
 	centers  []center.Center
 	list     *widget.List
 	selected int // index into centers, or -1 when nothing is selected
@@ -44,6 +48,8 @@ type startup struct {
 func ShowStartup(fa fyne.App, appDir string, onOpen func(center.Center)) {
 	s := &startup{fyneApp: fa, appDir: appDir, selected: -1, onOpen: onOpen}
 	s.win = fa.NewWindow("Check-In — Select Center")
+	s.about = about{fyneApp: fa, parent: s.win}
+	s.win.SetMainMenu(fyne.NewMainMenu(s.about.menu()))
 	s.build()
 	s.reload("")
 	s.win.Resize(fyne.NewSize(360, 320))

@@ -25,6 +25,10 @@ type App struct {
 	store   *store.Store
 	ctx     context.Context
 
+	// about supplies the About menu and its windows, shared with the startup
+	// window so the menu exists before a Center is open.
+	about about
+
 	table           *studentTable
 	cam             *camera.Camera
 	camCancel       context.CancelFunc // stops the current camera; set per device
@@ -46,10 +50,6 @@ type App struct {
 	// historyWin is the History window; tracked like qrWin so reopening raises
 	// the existing one instead of spawning a duplicate.
 	historyWin fyne.Window
-
-	// licensesWin is the About -> Licenses window; tracked like qrWin so
-	// reopening raises the existing one instead of spawning a duplicate.
-	licensesWin fyne.Window
 
 	// importWin is the Import window; tracked like qrWin so reopening raises
 	// the existing one instead of spawning a duplicate.
@@ -77,6 +77,7 @@ func NewApp(ctx context.Context, fa fyne.App, s *store.Store, centerName string,
 	win := fa.NewWindow("Check-In — " + centerName)
 
 	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx,
+		about:     about{fyneApp: fa, parent: win},
 		cameraFPS: cameraFPS, cameraReqWidth: cameraReqWidth, cameraReqHeight: cameraReqHeight,
 		qrScanCooldown: qrScanCooldown,
 		// No camera until startCamera picks one; 0 would mean "device 0 running".
@@ -112,11 +113,7 @@ func (a *App) buildMenu() *fyne.MainMenu {
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Show/Hide Camera", a.toggleCamera),
 	)
-	about := fyne.NewMenu("About",
-		fyne.NewMenuItem("Version…", a.showVersionDialog),
-		fyne.NewMenuItem("Licenses…", a.showLicensesWindow),
-	)
-	return fyne.NewMainMenu(admin, about)
+	return fyne.NewMainMenu(admin, a.about.menu())
 }
 
 // refresh reloads rows from the store and repaints the table. Safe to call
