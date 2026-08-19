@@ -27,7 +27,7 @@ OUT_DIR="dist"
 # only the distributable copy carries the version). Single source of truth is the
 # Makefile / build-windows.sh default; keep this in sync. Exported below so the
 # build stamps the same version the file is named for. Override with VERSION=x.y.z.
-VERSION="${VERSION:-0.0.2}"
+VERSION="${VERSION:-0.0.3}"
 export VERSION
 EXE_NAME="checkin-$VERSION.exe"
 ZIP_PATH="$OUT_DIR/checkin-$VERSION-windows.zip"

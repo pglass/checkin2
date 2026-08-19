@@ -1,7 +1,11 @@
-# Unreleased
+# 0.0.3
+
+Centers
 
 * Added Centers: separate databases and log files per Center, selected at
   startup. Shared `settings.ini` stays at the top of the app directory.
+* Enforce one process per Center via an exclusive lock file, so a second
+  instance can't open the same database and diverge its check-in state.
 
 # 0.0.2
 
