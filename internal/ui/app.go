@@ -33,6 +33,10 @@ type App struct {
 	cam       *camera.Camera
 	camCancel context.CancelFunc // stops the current camera; set per device
 	camDevice int                // index of the running device
+	// camMenuItems maps a device index (deviceNone for "off") to its Camera >
+	// Select Camera item, so the checkmark can be moved without rebuilding the
+	// menubar.
+	camMenuItems map[int]*fyne.MenuItem
 
 	// cfg is the live settings, seeded at startup and replaced when the
 	// Settings window saves. Camera restarts and pruner restarts read from it,
@@ -105,6 +109,9 @@ func NewApp(ctx context.Context, fa fyne.App, s *store.Store, centerName string,
 
 	a.refresh()
 	a.startCamera(ctx)
+	// The menu was built before a device was chosen, so its checkmark still says
+	// "off"; move it now that startCamera has picked one.
+	a.markCameraMenuItem()
 	return a
 }
 
@@ -117,8 +124,8 @@ func (a *App) Run() { a.win.ShowAndRun() }
 // Window exposes the main window for dialog parenting.
 func (a *App) Window() fyne.Window { return a.win }
 
-// buildMenu constructs the File menubar menu. About sits at the bottom, after a
-// separator, matching the startup window's menu.
+// buildMenu constructs the File and Camera menubar menus. About sits at the
+// bottom of File, after a separator, matching the startup window's menu.
 func (a *App) buildMenu() *fyne.MainMenu {
 	file := fyne.NewMenu("File",
 		fyne.NewMenuItem("Add Student…", a.showAddStudentDialog),
@@ -126,12 +133,73 @@ func (a *App) buildMenu() *fyne.MainMenu {
 		fyne.NewMenuItem("Generate QR PDF…", a.showGenerateQRDialog),
 		fyne.NewMenuItem("History…", a.showHistoryWindow),
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Show/Hide Camera", a.toggleCamera),
 		fyne.NewMenuItem("Settings…", a.showSettingsWindow),
 		fyne.NewMenuItemSeparator(),
 		a.about.menuItem(),
 	)
-	return fyne.NewMainMenu(file)
+	return fyne.NewMainMenu(file, a.cameraMenu())
+}
+
+// cameraMenu builds the Camera menu: the preview window, then the off switch
+// and every connected device, all at the top level.
+//
+// The device items are retained in camMenuItems so a selection can move the
+// checkmark by mutating them in place. Rebuilding the menubar from a menu
+// item's own callback is NOT safe: fyne's SetMainMenu tears down and rebuilds
+// the menu widgets while the click that triggered it is still being dispatched,
+// after which the driver dereferences the destroyed window and panics inside
+// processMouseClicked.
+func (a *App) cameraMenu() *fyne.Menu {
+	off := fyne.NewMenuItem("Turn Off Camera", func() { a.selectCameraDevice(deviceNone) })
+	off.Checked = a.camDevice == deviceNone
+
+	items := []*fyne.MenuItem{
+		fyne.NewMenuItem("Show Camera Window", a.showCameraWindow),
+		fyne.NewMenuItemSeparator(),
+		off,
+	}
+
+	// deviceNone keys the off switch so one map covers every choice.
+	a.camMenuItems = map[int]*fyne.MenuItem{deviceNone: off}
+
+	for _, d := range camera.List() {
+		idx, label := d.Index, d.Name
+		item := fyne.NewMenuItem(label, func() { a.selectCameraDevice(idx) })
+		item.Checked = a.camDevice == idx
+		items = append(items, item)
+		a.camMenuItems[idx] = item
+	}
+
+	return fyne.NewMenu("Camera", items...)
+}
+
+// selectCameraDevice switches capture to deviceID (deviceNone stops it) and
+// moves the checkmark to match.
+func (a *App) selectCameraDevice(deviceID int) {
+	if deviceID != a.camDevice {
+		slog.Info("camera selection changed", "device", deviceID)
+		a.startCameraDevice(a.ctx, deviceID)
+	}
+	// Turning the camera off leaves nothing to preview, so the window goes with
+	// it. Closed before updateResLabel so that runs against the cleared
+	// preview/resLabel fields rather than widgets of a window on its way out.
+	if deviceID == deviceNone && a.previewWin != nil {
+		a.previewWin.Close() // SetOnClosed clears previewWin, preview, resLabel
+	}
+	a.updateResLabel()
+	a.markCameraMenuItem()
+}
+
+// markCameraMenuItem checks the running device's item and clears the rest,
+// mutating the existing items rather than rebuilding the menubar (see
+// cameraMenu for why a rebuild from a menu callback crashes).
+func (a *App) markCameraMenuItem() {
+	for idx, item := range a.camMenuItems {
+		item.Checked = idx == a.camDevice
+	}
+	// No SetMainMenu here on purpose: fyne reads item.Checked when it next
+	// renders the menu, and re-setting the menubar from inside a menu callback
+	// destroys the window mid-click (see cameraMenu).
 }
 
 // refresh reloads rows from the store and repaints the table. Safe to call
@@ -149,12 +217,12 @@ func (a *App) showError(err error) {
 	dialog.ShowError(err, a.win)
 }
 
-// toggleCamera opens the camera feed in its own window, or closes it if already
-// open. The first live frame arrives within about one capture frame of opening,
-// so the preview starts blank only momentarily.
-func (a *App) toggleCamera() {
+// showCameraWindow opens the camera feed in its own window, raising the
+// existing one if it is already open. The first live frame arrives within about
+// one capture frame of opening, so the preview starts blank only momentarily.
+func (a *App) showCameraWindow() {
 	if a.previewWin != nil {
-		a.previewWin.Close() // triggers SetOnClosed, which clears the fields
+		a.previewWin.RequestFocus()
 		return
 	}
 
@@ -167,10 +235,9 @@ func (a *App) toggleCamera() {
 	}
 	a.updateResLabel()
 
-	// Device picker across the top; preview fills the rest, with a thin status
-	// bar at the bottom showing resolution.
-	picker := a.newCameraPicker()
-	content := container.NewBorder(picker, a.resLabel, nil, nil, a.preview)
+	// Preview fills the window, with a thin status bar at the bottom showing
+	// resolution. The device is chosen from the Camera menu, not from here.
+	content := container.NewBorder(nil, a.resLabel, nil, nil, a.preview)
 
 	w := a.fyneApp.NewWindow("Camera")
 	w.SetContent(withWindowMargin(content))

@@ -21,17 +21,14 @@ func TestMainMenuHasAboutAtBottomOfFile(t *testing.T) {
 	a.about = about{fyneApp: fa, parent: a.win}
 
 	m := a.buildMenu()
-	if len(m.Items) != 1 {
-		var names []string
-		for _, menu := range m.Items {
-			names = append(names, menu.Label)
-		}
-		t.Fatalf("menus = %v, want only [File]", names)
+	var names []string
+	for _, menu := range m.Items {
+		names = append(names, menu.Label)
+	}
+	if len(m.Items) != 2 || names[0] != "File" || names[1] != "Camera" {
+		t.Fatalf("menus = %v, want [File Camera]", names)
 	}
 	file := m.Items[0]
-	if file.Label != "File" {
-		t.Fatalf("menu label = %q, want File", file.Label)
-	}
 
 	last := file.Items[len(file.Items)-1]
 	if last.Label != "About" {

@@ -4,13 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"image"
 	"log/slog"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/camera"
 	"github.com/pglass/checkin/internal/qr"
@@ -112,50 +110,6 @@ func (a *App) startCameraDevice(parent context.Context, deviceID int) {
 			}
 		}
 	}()
-}
-
-// cameraNoneLabel is the picker entry that stops capture.
-const cameraNoneLabel = "None"
-
-// newCameraPicker builds the device drop-down for the camera window. Always
-// shown, with "None" as an explicit way to stop capture and release the device.
-func (a *App) newCameraPicker() fyne.CanvasObject {
-	devices := camera.List()
-
-	// Label -> device index, with "None" first.
-	names := make([]string, 0, len(devices)+1)
-	byName := map[string]int{cameraNoneLabel: deviceNone}
-	names = append(names, cameraNoneLabel)
-	for _, d := range devices {
-		label := d.Name
-		// Distinct labels; two identical cameras would otherwise collide.
-		if _, taken := byName[label]; taken {
-			label = fmt.Sprintf("%s (%d)", d.Name, d.Index)
-		}
-		names = append(names, label)
-		byName[label] = d.Index
-	}
-
-	sel := widget.NewSelect(names, func(choice string) {
-		idx, ok := byName[choice]
-		if !ok || idx == a.camDevice {
-			return
-		}
-		slog.Info("camera selection changed", "device", idx, "label", choice)
-		a.startCameraDevice(a.ctx, idx)
-		a.updateResLabel()
-	})
-
-	// Reflect what is actually running: the current device, else "None".
-	selected := cameraNoneLabel
-	for label, idx := range byName {
-		if idx == a.camDevice && idx != deviceNone {
-			selected = label
-			break
-		}
-	}
-	sel.SetSelected(selected)
-	return sel
 }
 
 func (a *App) updatePreview(img image.Image) {

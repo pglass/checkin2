@@ -18,6 +18,15 @@ import (
 // key so every input in the window starts at the same x position.
 const settingsKeyWidth = 190
 
+// Vertical margins around a setting's description: tight above so it reads as
+// belonging to the input it follows, looser below to separate one setting from
+// the next. RichText carries its own internal padding, so the top margin is
+// negative to pull it back up under the input.
+const (
+	settingsDescTopMargin    = -6
+	settingsDescBottomMargin = 8
+)
+
 // settingsRow is one editable setting: the key label, its input, the small
 // description below, and the red error shown while the input is invalid.
 type settingsRow struct {
@@ -86,8 +95,24 @@ func (s *settings) build() fyne.CanvasObject {
 		key := canvas.NewText(f.Key, theme.Color(theme.ColorNameForeground))
 		key.TextSize = theme.TextSize()
 
-		desc := canvas.NewText(f.Desc, theme.Color(theme.ColorNamePlaceHolder))
-		desc.TextSize = theme.CaptionTextSize()
+		// A wrapping RichText, not canvas.Text: canvas.Text is single-line and
+		// reports its full string width as its minimum size, so a long
+		// description forced the whole window wide. RichText wraps, and unlike
+		// widget.Label it takes an exact theme colour, so the description keeps
+		// the placeholder grey and caption size it has always had.
+		desc := widget.NewRichText(&widget.TextSegment{
+			Text: f.Desc,
+			Style: widget.RichTextStyle{
+				ColorName: theme.ColorNamePlaceHolder,
+				SizeName:  theme.SizeNameCaptionText,
+			},
+		})
+		desc.Wrapping = fyne.TextWrapWord
+
+		// Sits tight under the input it describes, with clear space before the
+		// next setting.
+		descBlock := container.New(
+			marginLayout{top: settingsDescTopMargin, bottom: settingsDescBottomMargin}, desc)
 
 		row.errLb = canvas.NewText("", theme.Color(theme.ColorNameError))
 		row.errLb.TextSize = theme.CaptionTextSize()
@@ -105,7 +130,7 @@ func (s *settings) build() fyne.CanvasObject {
 		// pays the container's padding twice between settings, which is what made
 		// the gaps look large. The row keeps its own widgets so an advanced
 		// setting can be hidden and shown as a unit.
-		row.block = []fyne.CanvasObject{top, desc, row.errLb}
+		row.block = []fyne.CanvasObject{top, descBlock, row.errLb}
 		blocks = append(blocks, row.block...)
 		s.rows = append(s.rows, row)
 	}

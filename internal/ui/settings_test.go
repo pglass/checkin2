@@ -5,7 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"fyne.io/fyne/v2"
+
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/config"
 )
@@ -307,5 +311,96 @@ func TestSettingsSaveRevealsHiddenAdvancedError(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Error("settings.ini written despite an invalid advanced value")
+	}
+}
+
+// descRichText digs the description widget out of row i's margin wrapper.
+func descRichText(t *testing.T, row *settingsRow) *widget.RichText {
+	t.Helper()
+	// block[1] is the description, wrapped in its margin container; see build().
+	wrapper, ok := row.block[1].(*fyne.Container)
+	if !ok {
+		t.Fatalf("%s: description block is %T, want a container", row.field.Key, row.block[1])
+	}
+	rt, ok := wrapper.Objects[0].(*widget.RichText)
+	if !ok {
+		t.Fatalf("%s: description is %T, want *widget.RichText", row.field.Key, wrapper.Objects[0])
+	}
+	return rt
+}
+
+// Descriptions wrap rather than forcing the window wide. A canvas.Text reports
+// its whole string width as its minimum size, so a long description used to
+// push the settings window out to fit it on one line.
+func TestSettingsDescriptionsWrap(t *testing.T) {
+	s, _ := newTestSettings(t)
+
+	longest := ""
+	for _, f := range config.Fields {
+		if len(f.Desc) > len(longest) {
+			longest = f.Desc
+		}
+	}
+	if len(longest) < 60 {
+		t.Skipf("no description long enough to be a useful check (%d chars)", len(longest))
+	}
+
+	var desc *widget.RichText
+	for _, row := range s.rows {
+		if row.field.Desc == longest {
+			desc = descRichText(t, row)
+		}
+	}
+	if desc == nil {
+		t.Fatal("longest description not found among the rows")
+	}
+
+	if desc.Wrapping != fyne.TextWrapWord {
+		t.Errorf("Wrapping = %v, want TextWrapWord", desc.Wrapping)
+	}
+	// The whole point: it must not demand the full one-line width.
+	oneLine := widget.NewRichText(&widget.TextSegment{
+		Text:  longest,
+		Style: widget.RichTextStyle{SizeName: theme.SizeNameCaptionText},
+	})
+	if desc.MinSize().Width >= oneLine.MinSize().Width {
+		t.Errorf("wrapped description min width %v is not smaller than unwrapped %v",
+			desc.MinSize().Width, oneLine.MinSize().Width)
+	}
+}
+
+// The description keeps the exact caption size and placeholder colour it had as
+// a canvas.Text.
+func TestSettingsDescriptionStyle(t *testing.T) {
+	s, _ := newTestSettings(t)
+	for _, row := range s.rows {
+		seg, ok := descRichText(t, row).Segments[0].(*widget.TextSegment)
+		if !ok {
+			t.Fatalf("%s: segment is %T, want *widget.TextSegment", row.field.Key, seg)
+		}
+		if seg.Style.SizeName != theme.SizeNameCaptionText {
+			t.Errorf("%s: SizeName = %q, want caption", row.field.Key, seg.Style.SizeName)
+		}
+		if seg.Style.ColorName != theme.ColorNamePlaceHolder {
+			t.Errorf("%s: ColorName = %q, want placeholder", row.field.Key, seg.Style.ColorName)
+		}
+	}
+}
+
+// The description hugs the input above it and leaves more space below, so
+// settings read as blocks rather than an even column of lines.
+func TestSettingsDescriptionMargins(t *testing.T) {
+	s, _ := newTestSettings(t)
+
+	wrapper, ok := s.rows[0].block[1].(*fyne.Container)
+	if !ok {
+		t.Fatalf("description block is %T, want a container", s.rows[0].block[1])
+	}
+	m, ok := wrapper.Layout.(marginLayout)
+	if !ok {
+		t.Fatalf("description layout is %T, want marginLayout", wrapper.Layout)
+	}
+	if m.bottom <= m.top {
+		t.Errorf("bottom margin %v should exceed top margin %v", m.bottom, m.top)
 	}
 }

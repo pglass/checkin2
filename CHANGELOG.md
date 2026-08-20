@@ -7,6 +7,7 @@
 * Fixed camera lag by decoupling capture from QR detection
 * Open a Center by clicking its name in the startup window (no Open button)
 * Rename Admin menu to File and combine version and license into About menu
+* Add Camera menu for camera management
 
 # 0.0.3
 
