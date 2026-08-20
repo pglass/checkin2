@@ -35,6 +35,10 @@ type Field struct {
 	// StructField is the name of the Config struct field this maps to, used
 	// only by the test that checks every field is covered.
 	StructField string
+	// Advanced marks a setting most users never need. The settings UI hides
+	// these behind a toggle; settings.ini is unaffected, so an advanced setting
+	// is still written to the file and still editable by hand.
+	Advanced bool
 }
 
 // Fields lists every user-editable setting, in the order they appear both in
@@ -51,9 +55,9 @@ var Fields = []Field{
 	{
 		Key:     "camera_request_width",
 		Section: "camera",
-		Desc: "Requested capture width in pixels. The camera chooses the closest " +
+		Desc: "Requested camera resolution width, in pixels. The camera chooses the closest " +
 			"supported resolution, so the actual frame size may not match exactly. " +
-			"Lower = less CPU.",
+			"Reduce for less CPU. Raise if QR code scans are unreliable.",
 		StructField: "CameraRequestWidth",
 		Get:         func(c Config) string { return strconv.Itoa(c.CameraRequestWidth) },
 		Set: func(c *Config, s string) error {
@@ -63,7 +67,7 @@ var Fields = []Field{
 	{
 		Key:         "camera_request_height",
 		Section:     "camera",
-		Desc:        "Requested capture height in pixels. See camera_request_width.",
+		Desc:        "Requested camera resolution height, in pixels. See camera_request_width.",
 		StructField: "CameraRequestHeight",
 		Get:         func(c Config) string { return strconv.Itoa(c.CameraRequestHeight) },
 		Set: func(c *Config, s string) error {
@@ -73,7 +77,7 @@ var Fields = []Field{
 	{
 		Key:         "qr_scan_cooldown",
 		Section:     "camera",
-		Desc:        "How long a scanned QR code is ignored after a scan (e.g. 8s, 500ms).",
+		Desc:        "Time before the same QR code scans again (e.g. 8s, 500ms). Setting this to at least a few seconds helps prevent a student from scanning in and then immediately scanning out because they held the QR code to the camera for too long.",
 		StructField: "QRScanCooldown",
 		Get:         func(c Config) string { return c.QRScanCooldown.String() },
 		Set: func(c *Config, s string) error {
@@ -83,8 +87,9 @@ var Fields = []Field{
 	{
 		Key:         "prune_interval",
 		Section:     "database",
-		Desc:        "How often old log rows are pruned in the background (e.g. 30m, 1h).",
+		Desc:        "Controls how often database pruning is run in the background (e.g. 30m, 1h).",
 		StructField: "PruneInterval",
+		Advanced:    true,
 		Get:         func(c Config) string { return c.PruneInterval.String() },
 		Set: func(c *Config, s string) error {
 			return setPositiveDuration(&c.PruneInterval, "prune_interval", "30m", s)
@@ -93,8 +98,9 @@ var Fields = []Field{
 	{
 		Key:         "prune_batch_size",
 		Section:     "database",
-		Desc:        "Max number of log rows deleted per prune wake-up.",
+		Desc:        "Max number of old database rows pruned per run.",
 		StructField: "PruneBatchSize",
+		Advanced:    true,
 		Get:         func(c Config) string { return strconv.Itoa(c.PruneBatchSize) },
 		Set:         func(c *Config, s string) error { return setPositiveInt(&c.PruneBatchSize, "prune_batch_size", s) },
 	},

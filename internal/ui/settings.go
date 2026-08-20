@@ -24,6 +24,12 @@ type settingsRow struct {
 	field config.Field
 	entry *widget.Entry
 	errLb *canvas.Text
+	// orig is the value the entry was built with, so an edit that is undone
+	// counts as unchanged again.
+	orig string
+	// block holds every widget of this setting (key + input, description, and
+	// error), so an advanced row can be hidden and shown as a unit.
+	block []fyne.CanvasObject
 }
 
 // settings holds the widgets for one Settings window. Rows are generated from
@@ -33,6 +39,13 @@ type settings struct {
 	app  *App
 	win  fyne.Window
 	rows []*settingsRow
+	// restartNote warns that saved settings only take effect at the next
+	// startup. Shown only once a value actually differs from what was loaded.
+	restartNote *canvas.Text
+	// showAdvanced reflects the "Show advanced settings" toggle, and advancedChk
+	// is the toggle itself, so a hidden invalid value can force it open.
+	showAdvanced bool
+	advancedChk  *widget.Check
 }
 
 // showSettingsWindow opens the Settings window, or raises the existing one.
@@ -59,11 +72,16 @@ func (s *settings) build() fyne.CanvasObject {
 	for _, f := range config.Fields {
 		row := &settingsRow{field: f}
 
+		row.orig = f.Get(cfg)
 		row.entry = widget.NewEntry()
-		row.entry.SetText(f.Get(cfg))
+		row.entry.SetText(row.orig)
 		// Validate as the user types so the error appears next to the offending
-		// value rather than only after pressing Save.
-		row.entry.OnChanged = func(string) { s.validateRow(row) }
+		// value rather than only after pressing Save, and re-check whether the
+		// restart warning still applies.
+		row.entry.OnChanged = func(string) {
+			s.validateRow(row)
+			s.updateRestartNote()
+		}
 
 		key := canvas.NewText(f.Key, theme.Color(theme.ColorNameForeground))
 		key.TextSize = theme.TextSize()
@@ -78,11 +96,26 @@ func (s *settings) build() fyne.CanvasObject {
 		keyCol := container.New(fixedWidthLayout{w: settingsKeyWidth}, key)
 		top := container.NewBorder(nil, nil, keyCol, nil, row.entry)
 
-		blocks = append(blocks, container.NewVBox(top, desc, row.errLb))
+		// The error is hidden until it has text: a shown-but-empty canvas.Text
+		// still occupies a line, which would space every setting apart even when
+		// nothing is wrong.
+		row.errLb.Hide()
+
+		// Appended flat rather than wrapped in a per-setting VBox: nesting VBoxes
+		// pays the container's padding twice between settings, which is what made
+		// the gaps look large. The row keeps its own widgets so an advanced
+		// setting can be hidden and shown as a unit.
+		row.block = []fyne.CanvasObject{top, desc, row.errLb}
+		blocks = append(blocks, row.block...)
 		s.rows = append(s.rows, row)
 	}
 
 	form := container.NewVBox(blocks...)
+
+	s.advancedChk = widget.NewCheck("Show advanced settings", func(on bool) {
+		s.showAdvanced = on
+		s.applyAdvancedVisibility()
+	})
 
 	saveBtn := widget.NewButton("Save", s.save)
 	saveBtn.Importance = widget.HighImportance
@@ -93,16 +126,45 @@ func (s *settings) build() fyne.CanvasObject {
 	// about to save rather than letting a changed value appear to do nothing.
 	// Red and bold rather than a quiet caption: this is the one thing in the
 	// window a user must not miss.
-	restartNote := canvas.NewText(
+	s.restartNote = canvas.NewText(
 		"You must close and re-open the application for changed settings to take effect",
 		theme.Color(theme.ColorNameError))
-	restartNote.TextSize = theme.CaptionTextSize()
-	restartNote.TextStyle = fyne.TextStyle{Bold: true}
+	s.restartNote.TextSize = theme.CaptionTextSize()
+	s.restartNote.TextStyle = fyne.TextStyle{Bold: true}
+	// Nothing has been edited yet, so there is nothing to warn about.
+	s.restartNote.Hide()
 
-	bottom := container.NewVBox(widget.NewSeparator(), restartNote, buttons)
+	bottom := container.NewVBox(widget.NewSeparator(), s.advancedChk, s.restartNote, buttons)
+
+	// Advanced settings start hidden; the checkbox above reveals them.
+	s.applyAdvancedVisibility()
 
 	// The form scrolls so the window stays usable as settings are added.
 	return container.NewBorder(nil, bottom, nil, nil, container.NewVScroll(form))
+}
+
+// applyAdvancedVisibility hides or shows every advanced setting's widgets to
+// match the toggle. A hidden row's error stays hidden regardless, since it is
+// only shown while it has text (see validateRow).
+func (s *settings) applyAdvancedVisibility() {
+	for _, row := range s.rows {
+		if !row.field.Advanced {
+			continue
+		}
+		for _, o := range row.block {
+			switch {
+			case !s.showAdvanced:
+				o.Hide()
+			case o == fyne.CanvasObject(row.errLb):
+				// Restore only if it has something to say.
+				if row.errLb.Text != "" {
+					o.Show()
+				}
+			default:
+				o.Show()
+			}
+		}
+	}
 }
 
 // validateRow parses one row's input, showing or clearing its error message.
@@ -112,11 +174,37 @@ func (s *settings) validateRow(row *settingsRow) bool {
 	if err := row.field.Set(&probe, row.entry.Text); err != nil {
 		row.errLb.Text = err.Error()
 		row.errLb.Refresh()
+		row.errLb.Show() // takes a line only while there is something to say
 		return false
 	}
 	row.errLb.Text = ""
 	row.errLb.Refresh()
+	row.errLb.Hide()
 	return true
+}
+
+// updateRestartNote shows the restart warning only while some value differs
+// from the one the window was opened with, so a user who opens Settings and
+// changes nothing (or undoes an edit) is not told to restart.
+func (s *settings) updateRestartNote() {
+	if s.restartNote == nil {
+		return
+	}
+	if s.dirty() {
+		s.restartNote.Show()
+	} else {
+		s.restartNote.Hide()
+	}
+}
+
+// dirty reports whether any input differs from the value it was built with.
+func (s *settings) dirty() bool {
+	for _, row := range s.rows {
+		if row.entry.Text != row.orig {
+			return true
+		}
+	}
+	return false
 }
 
 // save validates every row and, on success, writes settings.ini. Nothing is
@@ -125,6 +213,7 @@ func (s *settings) validateRow(row *settingsRow) bool {
 func (s *settings) save() {
 	cfg := s.app.cfg
 	ok := true
+	badAdvanced := false
 	for _, row := range s.rows {
 		// Validate into the real config so valid rows carry their new value,
 		// and re-check every row so all errors are shown at once, not just the
@@ -134,9 +223,19 @@ func (s *settings) save() {
 		}
 		if !s.validateRow(row) {
 			ok = false
+			if row.field.Advanced {
+				badAdvanced = true
+			}
 		}
 	}
 	if !ok {
+		// An invalid advanced value would otherwise block the save with its
+		// error hidden behind the toggle, making Save look like it did nothing.
+		if badAdvanced && !s.showAdvanced {
+			s.showAdvanced = true
+			s.advancedChk.SetChecked(true)
+			s.applyAdvancedVisibility()
+		}
 		return // errors are already displayed under the offending inputs
 	}
 
