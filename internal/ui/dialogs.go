@@ -27,9 +27,16 @@ const addStudentWidthFraction = 0.85
 
 // showAddStudentDialog presents the Add Student popup. On duplicate name it
 // shows a red message and keeps the dialog open (prefill optionally set for QR).
-func (a *App) showAddStudentDialog() { a.showAddStudentDialogPrefill("", "") }
+func (a *App) showAddStudentDialog() { a.showAddStudentDialogPrefill("", "", "") }
 
-func (a *App) showAddStudentDialogPrefill(prefill, notice string) {
+// showAddStudentDialogPrefill opens the Add Student dialog with the name box
+// prefilled and an explanatory notice above it.
+//
+// scanPayload is the raw QR payload that triggered the dialog, or "" when it
+// was opened from the menu. On a successful add it is cleared from the camera's
+// cooldown, so the same code can immediately check the new student in rather
+// than being ignored as a repeat scan.
+func (a *App) showAddStudentDialogPrefill(prefill, notice, scanPayload string) {
 	a.popupOpen = true
 
 	entry := widget.NewEntry()
@@ -58,6 +65,12 @@ func (a *App) showAddStudentDialogPrefill(prefill, notice string) {
 			}
 			errLabel.Refresh()
 			return
+		}
+		// The scan that opened this dialog already started the code's cooldown.
+		// Clear it so the operator can scan again straight away to check the
+		// newly added student in.
+		if scanPayload != "" && a.cam != nil {
+			a.cam.ForgetScan(scanPayload)
 		}
 		a.refresh()
 		popup.Hide()
@@ -154,9 +167,14 @@ func (a *App) showRemoveDialog(row store.StudentRow) {
 // (the scan path falls back to showing the dialog, which explains the state).
 func (a *App) applyCheckInOut(row store.StudentRow) bool {
 	var err error
+	// checkedIn records which transition happened, so the feedback bar can be
+	// told after the store call succeeds rather than guessing from the status
+	// afterwards (which has changed by then).
+	var checkedIn bool
 	switch a.store.Status(row.ID) {
 	case store.StatusNotIn:
 		err = a.store.CheckIn(a.ctx, row.ID, row.Name)
+		checkedIn = true
 	case store.StatusIn:
 		err = a.store.CheckOut(a.ctx, row.ID, row.Name)
 	default: // StatusOut: nothing left to do today
@@ -167,6 +185,17 @@ func (a *App) applyCheckInOut(row store.StudentRow) bool {
 		return true // handled: the error is on screen, do not fall back
 	}
 	a.refresh()
+
+	// Every check-in/out funnels through here -- scans with and without
+	// confirmation, and the dialog's buttons -- so the bar reports them all.
+	if a.feedback != nil {
+		now := time.Now()
+		if checkedIn {
+			a.feedback.showCheckIn(row.Name, now)
+		} else {
+			a.feedback.showCheckOut(row.Name, now)
+		}
+	}
 	return true
 }
 

@@ -70,6 +70,10 @@ func (a *App) startCameraDevice(parent context.Context, deviceID int) {
 	ctx, cancel := context.WithCancel(parent)
 	a.camCancel = cancel
 	a.camDevice = deviceID
+	// The only other updateResLabel on this path is inside stopCamera above,
+	// which runs while camDevice is still deviceNone -- so without this the
+	// status bar would keep saying "Camera Off" with a camera running.
+	a.updateResLabel()
 
 	cam := camera.New(a.cfg.CameraFPS, a.cfg.CameraRequestWidth, a.cfg.CameraRequestHeight, a.cfg.QRScanCooldown)
 	a.cam = cam
@@ -157,7 +161,8 @@ func (a *App) routeScan(ev camera.ScanEvent) {
 				// there is no student to check in, and silently dropping the
 				// scan would look like the camera failed to read the code.
 				a.showAddStudentDialogPrefill(p.Name,
-					fmt.Sprintf("Scanned %q but student is not found in this center. Add them?", p.Name))
+					fmt.Sprintf("Scanned %q but student is not found in this center. Add them?", p.Name),
+					ev.Payload)
 			}
 			return
 		}
@@ -167,13 +172,18 @@ func (a *App) routeScan(ev camera.ScanEvent) {
 
 		// With confirmation off, apply the scan immediately. applyCheckInOut
 		// returns false only when the student has already checked in and out
-		// today, which has no next action -- fall back to the dialog, which
-		// says so, rather than leaving the scan with no visible effect.
+		// today, which has no next action -- report that on the feedback bar
+		// rather than interrupting an unattended kiosk with a pop-up.
 		if !a.cfg.ConfirmScan {
 			if a.applyCheckInOut(row) {
 				slog.Info("scan applied without confirmation", "name", row.Name)
 				return
 			}
+			slog.Info("scan ignored; student already checked out", "name", row.Name)
+			if a.feedback != nil {
+				a.feedback.showAlreadyOut(row.Name)
+			}
+			return
 		}
 		a.showCheckInOutDialog(row)
 	})

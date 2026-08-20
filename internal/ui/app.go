@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -30,6 +31,8 @@ type App struct {
 	about about
 
 	table     *studentTable
+	status    *statusBar
+	feedback  *feedbackBar
 	cam       *camera.Camera
 	camCancel context.CancelFunc // stops the current camera; set per device
 	camDevice int                // index of the running device
@@ -115,10 +118,15 @@ func NewAppInWindow(ctx context.Context, fa fyne.App, win fyne.Window, s *store.
 		// No camera until startCamera picks one; 0 would mean "device 0 running".
 		camDevice: deviceNone}
 	a.table = newStudentTable(a)
+	a.status = newStatusBar()
+	a.feedback = newFeedbackBar()
 
 	win.SetMainMenu(a.buildMenu())
-	// Main view is the student list only; the camera feed opens in its own window.
-	win.SetContent(withWindowMargin(a.table.widget()))
+	// Student list, then the scan feedback bar, then the status bar along the
+	// bottom; the camera feed opens in its own window.
+	bottom := container.NewVBox(a.feedback.widget(), a.status.widget())
+	win.SetContent(withWindowMargin(
+		container.NewBorder(nil, bottom, nil, nil, a.table.widget())))
 	win.Resize(fyne.NewSize(640, 480))
 	win.CenterOnScreen()
 	// The selection window installed a SetOnClosed that quits the app when no
@@ -128,6 +136,7 @@ func NewAppInWindow(ctx context.Context, fa fyne.App, win fyne.Window, s *store.
 	win.SetOnClosed(func() { fa.Quit() })
 
 	a.refresh()
+	a.startStatusClock(ctx)
 	a.startCamera(ctx)
 	// The menu was built before a device was chosen, so its checkmark still says
 	// "off"; move it now that startCamera has picked one.
@@ -242,6 +251,38 @@ func (a *App) refresh() {
 		return
 	}
 	a.table.setRows(rows)
+	a.updateStatus(rows)
+}
+
+// updateStatus refreshes the status bar from the rows just loaded, plus the
+// live camera state. The clock is driven separately by startStatusClock.
+func (a *App) updateStatus(rows []store.StudentRow) {
+	if a.status == nil {
+		return // tests may build an App without the main view
+	}
+	a.status.setRows(rows)
+	a.status.setClock(time.Now())
+	a.status.setCamera(a.camDevice != deviceNone)
+}
+
+// startStatusClock ticks the status bar's clock once a second until ctx is
+// cancelled. Only the clock cell is touched; the counts change on refresh.
+func (a *App) startStatusClock(ctx context.Context) {
+	if a.status == nil {
+		return
+	}
+	go func() {
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-tick.C:
+				fyne.Do(func() { a.status.setClock(now) })
+			}
+		}
+	}()
 }
 
 func (a *App) showError(err error) {
@@ -288,6 +329,12 @@ func (a *App) showCameraWindow() {
 // updateResLabel writes the actual capture resolution into the camera window's
 // status bar. Reads "pending" until the first frame arrives.
 func (a *App) updateResLabel() {
+	// The status bar's camera cell tracks the same transitions, and this runs on
+	// every one of them (start, stop, device switch), so it is updated here
+	// rather than from each call site.
+	if a.status != nil {
+		a.status.setCamera(a.camDevice != deviceNone)
+	}
 	if a.resLabel == nil {
 		return
 	}

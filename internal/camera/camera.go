@@ -573,6 +573,36 @@ func (c *Camera) emit(e ScanEvent) {
 	}
 }
 
+// RecordScan starts payload's cooldown as though it had just been scanned.
+// Exposed for tests that need to set up cooldown state without a real capture.
+func (c *Camera) RecordScan(payload string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastSeen[payload] = time.Now()
+}
+
+// InCooldown reports whether payload would currently be swallowed as a repeat
+// scan. Exposed so callers (and tests) can observe cooldown state without
+// consuming it the way allow does.
+func (c *Camera) InCooldown(payload string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	last, ok := c.lastSeen[payload]
+	return ok && time.Since(last) < c.cooldown
+}
+
+// ForgetScan clears payload's cooldown, so the very next scan of that code is
+// accepted instead of being swallowed as a repeat.
+//
+// Used after a student is added from a scanned code: the scan that opened the
+// Add dialog already started the cooldown, so without this the operator would
+// have to wait it out before the same code could check the new student in.
+func (c *Camera) ForgetScan(payload string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.lastSeen, payload)
+}
+
 // allow reports whether payload is outside its cooldown window, recording the
 // time if so.
 func (c *Camera) allow(payload string) bool {

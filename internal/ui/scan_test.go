@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
@@ -95,11 +96,13 @@ func TestScanWithConfirmationShowsPopup(t *testing.T) {
 	}
 }
 
-// A student who has already checked in and out has no next action, so the scan
-// falls back to the pop-up (which explains the state) even with confirmation
-// off -- rather than silently doing nothing.
-func TestScanAlreadyOutFallsBackToPopup(t *testing.T) {
-	a := newScanApp(t, false)
+// A student who has already checked in and out has no next action. With
+// confirmation off this is reported on the feedback bar rather than by a
+// pop-up, so an unattended kiosk is never left waiting for a click -- see
+// TestScanAlreadyOutUsesFeedbackBarNotPopup. With confirmation on, the dialog
+// still opens and explains the state.
+func TestScanAlreadyOutWithConfirmationShowsPopup(t *testing.T) {
+	a := newScanApp(t, true)
 	st, err := a.store.AddStudent(a.ctx, "Alice")
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +117,7 @@ func TestScanAlreadyOutFallsBackToPopup(t *testing.T) {
 	scan(t, a, "Alice")
 
 	if !a.popupOpen {
-		t.Error("no pop-up for an already-checked-out student; the scan would have no visible effect")
+		t.Error("no pop-up for an already-checked-out student with confirm_scan on")
 	}
 }
 
@@ -178,7 +181,7 @@ func TestScanUnknownStudentNoticeText(t *testing.T) {
 func TestAddStudentDialogNameRow(t *testing.T) {
 	a := newScanApp(t, false)
 
-	a.showAddStudentDialogPrefill("Alice", "")
+	a.showAddStudentDialogPrefill("Alice", "", "")
 
 	var names []string
 	for _, lbl := range dialogLabels(a) {
@@ -218,7 +221,7 @@ func TestAddStudentDialogIsWide(t *testing.T) {
 	a.win.Resize(fyne.NewSize(640, 480))
 
 	a.showAddStudentDialogPrefill("Alice",
-		`Scanned "Bobby Tables" but student is not found in this center. Add them?`)
+		`Scanned "Bobby Tables" but student is not found in this center. Add them?`, "")
 
 	canvasW := a.win.Canvas().Size().Width
 	// The notice label stretches with the dialog, so its width stands in for
@@ -242,7 +245,7 @@ func TestAddStudentDialogButtonsCentred(t *testing.T) {
 	a := newScanApp(t, false)
 	a.win.Resize(fyne.NewSize(640, 480))
 	a.showAddStudentDialogPrefill("Alice",
-		`Scanned "Bobby Tables" but student is not found in this center. Add them?`)
+		`Scanned "Bobby Tables" but student is not found in this center. Add them?`, "")
 
 	drv := fyne.CurrentApp().Driver()
 
@@ -287,4 +290,71 @@ func TestAddStudentDialogButtonsCentred(t *testing.T) {
 		t.Errorf("buttons centred at %.1f, dialog centred at %.1f (off by %.1f)",
 			buttonCentre, dialogCentre, diff)
 	}
+}
+
+// Adding a student from a scanned code clears that code's cooldown, so the
+// operator can scan again immediately to check the new student in rather than
+// waiting out qr_scan_cooldown.
+func TestAddFromScanClearsCooldown(t *testing.T) {
+	a := newScanApp(t, false)
+	a.cam = camera.New(6, 640, 480, time.Minute)
+
+	payload, err := qr.NewPayload("Alice").Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Stand in for the scan that opened the dialog: it started the cooldown.
+	a.cam.RecordScan(string(payload))
+	if !a.cam.InCooldown(string(payload)) {
+		t.Fatal("the opening scan should have started a cooldown")
+	}
+
+	a.showAddStudentDialogPrefill("Alice",
+		`Scanned "Alice" but student is not found in this center. Add them?`,
+		string(payload))
+
+	// Confirm the add the way the Add button does.
+	dialogConfirm(t, a)
+
+	if _, err := a.store.StudentByName(a.ctx, "Alice"); err != nil {
+		t.Fatalf("student was not added: %v", err)
+	}
+	if a.cam.InCooldown(string(payload)) {
+		t.Error("cooldown was not cleared; the new student cannot be scanned in immediately")
+	}
+}
+
+// Opening the dialog from the menu (no scan payload) must not disturb any
+// cooldown.
+func TestAddFromMenuLeavesCooldownAlone(t *testing.T) {
+	a := newScanApp(t, false)
+	a.cam = camera.New(6, 640, 480, time.Minute)
+
+	payload, err := qr.NewPayload("Alice").Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.cam.RecordScan(string(payload))
+
+	a.showAddStudentDialogPrefill("Alice", "", "")
+	dialogConfirm(t, a)
+
+	if !a.cam.InCooldown(string(payload)) {
+		t.Error("a menu-opened add cleared a scan cooldown it should not know about")
+	}
+}
+
+// dialogConfirm taps the "Add" button of the open dialog.
+func dialogConfirm(t *testing.T, a *App) {
+	t.Helper()
+	for _, top := range a.win.Canvas().Overlays().List() {
+		for _, o := range test.LaidOutObjects(top) {
+			if btn, ok := o.(*widget.Button); ok && btn.Text == "Add" {
+				btn.OnTapped()
+				return
+			}
+		}
+	}
+	t.Fatal("no Add button found in the open dialog")
 }
