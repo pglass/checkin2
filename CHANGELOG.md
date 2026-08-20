@@ -1,4 +1,4 @@
-# Unreleased
+# 0.0.4
 
 * Added status bar and feedback bar to main view
 * Added `confirm_scan` setting to toggle the scan confirmation pop-up
