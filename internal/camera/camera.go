@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/pion/mediadevices/pkg/driver"
 	_ "github.com/pion/mediadevices/pkg/driver/camera" // registers camera devices
+	"github.com/pion/mediadevices/pkg/io/video"
 	"github.com/pion/mediadevices/pkg/prop"
 	"gocv.io/x/gocv"
 )
@@ -79,15 +81,21 @@ type Camera struct {
 	interval time.Duration // time between loop iterations (derived from fps)
 	req      Resolution    // capture resolution requested from the driver
 
-	mu       sync.Mutex
-	lastSeen map[string]time.Time
-	frame    image.Image // latest annotated frame for preview
-	actual   Resolution  // actual delivered frame size (0 until first read)
+	mu        sync.Mutex
+	lastSeen  map[string]time.Time
+	actual    Resolution    // actual delivered frame size (0 until first read)
+	lastBox   []image.Point // corners of the most recent detection (source coords)
+	lastBoxAt time.Time     // when lastBox was recorded; preview draws it while fresh
 
 	// previewing is set by the UI while the camera window is open. When false,
-	// the loop skips the mirrored copy and channel push (the main per-frame cost
-	// besides detection), since nobody is watching.
+	// the drainer skips the mirrored copy and channel push (the main per-frame
+	// cost besides detection), since nobody is watching.
 	previewing atomic.Bool
+
+	// bufPool recycles frame buffers so the full-rate drainer and preview do not
+	// allocate a new image per frame. Buffers are owned by exactly one goroutine
+	// at a time and returned here when done. See getBuf/putBuf.
+	bufPool chan *image.RGBA
 
 	Frames chan image.Image // latest-frame preview (buffered, size 1)
 	Scans  chan ScanEvent   // decoded payloads passing cooldown
@@ -125,6 +133,7 @@ func New(fps, reqWidth, reqHeight int, cooldown time.Duration) *Camera {
 		interval: time.Second / time.Duration(fps),
 		req:      Resolution{Width: reqWidth, Height: reqHeight},
 		lastSeen: map[string]time.Time{},
+		bufPool:  make(chan *image.RGBA, poolSize),
 		Frames:   make(chan image.Image, 1),
 		Scans:    make(chan ScanEvent, 8),
 	}
@@ -158,10 +167,53 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 	straight := gocv.NewMat()
 	defer straight.Close()
 
-	logged := false // log the actual delivered frame size once
+	// Decoupled capture with two roles:
+	//   - drain (below): reads frames as fast as the driver delivers, never
+	//     sleeping, so the driver's upstream queue stays empty and every frame is
+	//     live. It hands the newest frame to the detector and produces the preview
+	//     (throttled to the detection rate).
+	//   - this goroutine (detect loop): pulls the newest frame at its own paced
+	//     rate and runs QR detection, so heavy detection costs frame rate, not
+	//     latency.
+	// Buffers move by ownership through channels and the pool; no frame is
+	// touched by two goroutines at once.
+	detCh := make(chan *image.RGBA, 1) // newest frame awaiting detection (drop-old)
+	go c.drain(ctx, reader, detCh)
+
+	for {
+		var buf *image.RGBA
+		select {
+		case <-ctx.Done():
+			return nil
+		case buf = <-detCh:
+		}
+
+		c.detect(buf, &points, &straight, &detector)
+		c.putBuf(buf) // done reading; return for reuse
+
+		// Pace detection to cap CPU. The drainer keeps detCh fresh in the
+		// meantime, so the next frame we pull is still current.
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(c.interval):
+		}
+	}
+}
+
+// drain reads frames from the driver as fast as they arrive (never sleeping, so
+// the driver's upstream queue stays empty and every frame is live). It hands the
+// newest frame to the detector, dropping any the detector hasn't consumed, and
+// builds the preview at the detection rate — rendering faster than we detect
+// would only burn CPU on the mirror and UI upload. Every frame handed on is
+// copied into a pooled buffer before the driver buffer is released, so nothing
+// retains the driver's reused memory.
+func (c *Camera) drain(ctx context.Context, reader video.Reader, detCh chan *image.RGBA) {
+	logged := false           // log the actual delivered frame size once
+	var lastPreview time.Time // throttles preview production to c.interval
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return
 		}
 
 		src, release, err := reader.Read()
@@ -169,16 +221,16 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 			// Transient read failure; brief pause and retry.
 			select {
 			case <-ctx.Done():
-				return nil
+				return
 			case <-time.After(readRetryDelay):
 			}
 			continue
 		}
 
+		b := src.Bounds()
 		if !logged {
 			// Actual delivered size; drivers may snap to their nearest supported
 			// resolution and ignore the requested one.
-			b := src.Bounds()
 			c.mu.Lock()
 			c.actual = Resolution{Width: b.Dx(), Height: b.Dy()}
 			c.mu.Unlock()
@@ -186,18 +238,61 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 			logged = true
 		}
 
-		c.processFrame(src, &points, &straight, &detector)
-		// src's buffer belongs to the driver and is reused after release, so
-		// nothing may retain it past this point. processFrame copies what the
-		// preview needs.
+		// Detection copy (pooled), kept full-rate so the detector always pulls the
+		// freshest frame. Copy before release: the driver reuses src immediately.
+		det := c.getBuf(b.Dx(), b.Dy())
+		draw.Draw(det, det.Bounds(), src, b.Min, draw.Src)
+
+		// Preview (pooled), throttled to the detection rate while a window is open.
+		if c.previewing.Load() && time.Since(lastPreview) >= c.interval {
+			c.publishPreview(c.buildPreview(src))
+			lastPreview = time.Now()
+		}
 		release()
 
+		c.pushDetection(detCh, det)
+	}
+}
+
+// pushDetection places buf as the newest frame for the detector, dropping and
+// recycling any frame the detector hasn't picked up yet.
+func (c *Camera) pushDetection(detCh chan *image.RGBA, buf *image.RGBA) {
+	select {
+	case detCh <- buf:
+	default:
 		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(c.interval):
+		case old := <-detCh:
+			c.putBuf(old)
+		default:
+		}
+		select {
+		case detCh <- buf:
+		default:
+			c.putBuf(buf) // detector took one meanwhile; recycle ours
 		}
 	}
+}
+
+// previewBoxTTL is how long a detected outline keeps being drawn on the preview
+// after its last sighting. Detection runs slower than the preview, so the box
+// must persist between detections; the TTL clears it soon after a code leaves.
+const previewBoxTTL = 300 * time.Millisecond
+
+// buildPreview returns a pooled, mirrored copy of src with the most recent
+// detection outline drawn on it while that outline is still fresh.
+func (c *Camera) buildPreview(src image.Image) *image.RGBA {
+	b := src.Bounds()
+	out := c.getBuf(b.Dx(), b.Dy())
+	mirrorInto(out, src)
+
+	c.mu.Lock()
+	box := c.lastBox
+	fresh := !c.lastBoxAt.IsZero() && time.Since(c.lastBoxAt) < previewBoxTTL
+	c.mu.Unlock()
+	if fresh {
+		drawBox(out, box)
+	}
+	return out
 }
 
 // openDevice resolves deviceID against the enumerated capture devices and opens
@@ -239,12 +334,11 @@ func (c *Camera) chooseFormat(d driver.Driver) (prop.Media, error) {
 	return props[0], nil
 }
 
-// processFrame detects a QR code in src and, when the preview is open,
-// publishes a mirrored copy with the detected outline drawn on it. A decoded
-// payload is emitted as a ScanEvent if it passes the cooldown.
-//
-// src is only valid for the duration of the call; anything retained is copied.
-func (c *Camera) processFrame(src image.Image, points, straight *gocv.Mat, detector *gocv.QRCodeDetector) {
+// detect runs QR detection on src (an unmirrored frame). It records the
+// detected outline for the preview to draw and emits a ScanEvent for a decoded
+// payload that passes the cooldown. The preview is produced separately by the
+// drainer, so detection speed does not affect preview smoothness.
+func (c *Camera) detect(src image.Image, points, straight *gocv.Mat, detector *gocv.QRCodeDetector) {
 	// OpenCV wants a Mat. The generic conversion path writes BGR, which is what
 	// the detector expects, and detection runs on the unmirrored frame so the
 	// coordinates it reports match the source.
@@ -257,16 +351,15 @@ func (c *Camera) processFrame(src image.Image, points, straight *gocv.Mat, detec
 	payload := detector.DetectAndDecode(mat, points, straight)
 	found := payload != "" && !points.Empty()
 
-	if c.previewing.Load() {
-		// A preview that tracks the viewer's own movement is what people expect
-		// from a webcam, so the copy is mirrored left/right. The outline is
-		// drawn after mirroring, with its x coordinates flipped to match.
-		out := mirrorRGBA(src)
-		if found {
-			drawBox(out, corners(points))
-		}
-		c.publishImage(out)
+	// Publish the outline (in source coords) for the preview goroutine to draw.
+	c.mu.Lock()
+	if found {
+		c.lastBox = corners(points)
+		c.lastBoxAt = time.Now()
+	} else {
+		c.lastBoxAt = time.Time{} // clear stale outline once the code is gone
 	}
+	c.mu.Unlock()
 
 	if found && c.allow(payload) {
 		c.emit(ScanEvent{Payload: payload, At: time.Now()})
@@ -352,44 +445,88 @@ func step(from, to int) int {
 	return -1
 }
 
+// mirrorInto writes img into dst flipped left/right. dst must already be sized
+// to img's bounds (getBuf ensures this); it reuses dst rather than allocating.
+func mirrorInto(dst *image.RGBA, img image.Image) {
+	b := img.Bounds()
+	w := b.Dx()
+	for y := range b.Dy() {
+		for x := range w {
+			dst.Set(w-1-x, y, img.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+}
+
 // mirrorRGBA copies img into a new RGBA, flipped left/right.
 func mirrorRGBA(img image.Image) *image.RGBA {
 	b := img.Bounds()
 	out := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	for y := range b.Dy() {
-		for x := range b.Dx() {
-			out.Set(b.Dx()-1-x, y, img.At(b.Min.X+x, b.Min.Y+y))
-		}
-	}
+	mirrorInto(out, img)
 	return out
 }
 
-func (c *Camera) publishImage(out image.Image) {
-	c.mu.Lock()
-	c.frame = out
-	c.mu.Unlock()
-	// Non-blocking latest-frame delivery.
+// publishPreview delivers buf as the newest preview frame, recycling any frame
+// the UI has not yet consumed. Frames the UI does display are returned later via
+// RecyclePreview.
+func (c *Camera) publishPreview(buf *image.RGBA) {
 	select {
-	case c.Frames <- out:
+	case c.Frames <- buf:
 	default:
 		select {
-		case <-c.Frames:
+		case old := <-c.Frames:
+			if o, ok := old.(*image.RGBA); ok {
+				c.putBuf(o)
+			}
 		default:
 		}
 		select {
-		case c.Frames <- out:
+		case c.Frames <- buf:
 		default:
+			c.putBuf(buf) // UI took the slot meanwhile; recycle ours
 		}
 	}
 }
 
-// LatestFrame returns the most recent annotated frame, or nil if none yet.
-// Used to paint the preview immediately when its window opens, rather than
-// waiting for the next frame to arrive on the channel.
-func (c *Camera) LatestFrame() image.Image {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.frame
+// poolSize bounds the frame buffers kept for reuse: enough for the few in flight
+// at once (being filled, queued for detection, queued for preview, held by the
+// UI). Buffers beyond this are left to the garbage collector.
+const poolSize = 8
+
+// getBuf returns a w×h RGBA, reused from the pool when one of the right size is
+// free, otherwise freshly allocated. Buffers of a stale size (after a resolution
+// change) are discarded.
+func (c *Camera) getBuf(w, h int) *image.RGBA {
+	for {
+		select {
+		case b := <-c.bufPool:
+			if b != nil && b.Rect.Dx() == w && b.Rect.Dy() == h {
+				return b
+			}
+			// Wrong size or nil: drop it and try the next / allocate.
+		default:
+			return image.NewRGBA(image.Rect(0, 0, w, h))
+		}
+	}
+}
+
+// putBuf returns a buffer to the pool, or drops it if the pool is full.
+func (c *Camera) putBuf(b *image.RGBA) {
+	if b == nil {
+		return
+	}
+	select {
+	case c.bufPool <- b:
+	default: // pool full; let the GC reclaim it
+	}
+}
+
+// RecyclePreview returns a preview frame the UI has finished displaying to the
+// buffer pool. Call it on the UI thread after the frame has been replaced on
+// screen, so the buffer is guaranteed no longer to be rendered.
+func (c *Camera) RecyclePreview(img image.Image) {
+	if b, ok := img.(*image.RGBA); ok {
+		c.putBuf(b)
+	}
 }
 
 func (c *Camera) emit(e ScanEvent) {

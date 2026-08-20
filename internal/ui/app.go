@@ -132,8 +132,8 @@ func (a *App) showError(err error) {
 }
 
 // toggleCamera opens the camera feed in its own window, or closes it if already
-// open. The window paints the latest cached frame immediately on open so there
-// is no wait for the next frame to arrive.
+// open. The first live frame arrives within about one capture frame of opening,
+// so the preview starts blank only momentarily.
 func (a *App) toggleCamera() {
 	if a.previewWin != nil {
 		a.previewWin.Close() // triggers SetOnClosed, which clears the fields
@@ -144,12 +144,8 @@ func (a *App) toggleCamera() {
 	a.resLabel = canvas.NewText("", theme.Color(theme.ColorNameForeground))
 	a.resLabel.TextSize = theme.CaptionTextSize()
 	if a.cam != nil {
-		// Resume frame production; the loop skips it while nobody is watching.
+		// Resume frame production; the drainer skips it while nobody is watching.
 		a.cam.SetPreviewing(true)
-		if f := a.cam.LatestFrame(); f != nil {
-			a.preview.Image = f
-			a.preview.Refresh()
-		}
 	}
 	a.updateResLabel()
 

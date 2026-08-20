@@ -1,3 +1,10 @@
+# Unreleased
+
+Webcam latency
+
+* Fixed multi-second webcam lag by reading frames flat-out and decoupling
+  capture from QR detection.
+
 # 0.0.3
 
 Centers

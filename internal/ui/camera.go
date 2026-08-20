@@ -159,8 +159,14 @@ func (a *App) updatePreview(img image.Image) {
 		if a.preview == nil {
 			return
 		}
+		// Return the frame we're replacing to the camera's buffer pool. This runs
+		// on the UI thread after the swap, so the old frame is no longer rendered.
+		old := a.preview.Image
 		a.preview.Image = img
 		a.preview.Refresh()
+		if a.cam != nil {
+			a.cam.RecyclePreview(old)
+		}
 		// Actual resolution is known once frames arrive; keep the status bar current.
 		a.updateResLabel()
 	})
