@@ -54,6 +54,12 @@ type App struct {
 	// importWin is the Import window; tracked like qrWin so reopening raises
 	// the existing one instead of spawning a duplicate.
 	importWin fyne.Window
+
+	// popupOpen is true while a scan-triggered popup (check-in/out, or the
+	// "student not found" Add dialog) is showing. QR scans are ignored while
+	// it is set, so a second scan can't stack another popup on top.
+	// Only touched on the UI thread.
+	popupOpen bool
 }
 
 // NewFyneApp creates the Fyne application shared by every window (the startup

@@ -19,6 +19,8 @@ import (
 func (a *App) showAddStudentDialog() { a.showAddStudentDialogPrefill("", "") }
 
 func (a *App) showAddStudentDialogPrefill(prefill, notice string) {
+	a.popupOpen = true
+
 	entry := widget.NewEntry()
 	entry.SetText(prefill)
 
@@ -52,6 +54,7 @@ func (a *App) showAddStudentDialogPrefill(prefill, notice string) {
 		container.NewHBox(cancelBtn, addBtn),
 	)
 	popup = dialog.NewCustomWithoutButtons("Add Student", body, a.win)
+	popup.SetOnClosed(func() { a.popupOpen = false })
 	entry.OnSubmitted = func(string) { confirm() }
 	popup.Show()
 	a.win.Canvas().Focus(entry)
@@ -111,6 +114,8 @@ func (a *App) showRemoveDialog(row store.StudentRow) {
 // showCheckInOutDialog presents the check-in/out popup (shared by double-click
 // and QR scan). The middle button depends on the student's current status.
 func (a *App) showCheckInOutDialog(row store.StudentRow) {
+	a.popupOpen = true
+
 	name := canvas.NewText(row.Name, theme.Color(theme.ColorNameForeground))
 	name.TextSize = theme.TextSize() * 2
 	name.Alignment = fyne.TextAlignCenter
@@ -153,6 +158,7 @@ func (a *App) showCheckInOutDialog(row store.StudentRow) {
 
 	body := container.NewVBox(name, action, widget.NewSeparator(), cancel)
 	popup = dialog.NewCustomWithoutButtons("Check In / Out", body, a.win)
+	popup.SetOnClosed(func() { a.popupOpen = false })
 	popup.Show()
 }
 

@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -142,5 +144,43 @@ func TestRemoveStudent(t *testing.T) {
 	_ = logs // LogSince only returns Checked In/Out; Deleted history verified indirectly.
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Students orders by today's most recent check-in/out (newest first), with
+// students who have no activity today following, alphabetically.
+func TestStudents_SortByRecentActivityThenName(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	names := []string{"Bob", "Alice", "Carol", "Dave"}
+	ids := map[string]int64{}
+	for _, n := range names {
+		st, err := s.AddStudent(ctx, n)
+		if err != nil {
+			t.Fatalf("AddStudent %s: %v", n, err)
+		}
+		ids[n] = st.ID
+	}
+
+	now := time.Now()
+	// Bob checked in early; Dave checked in later then out later still, so
+	// Dave's check-out is the most recent event of the day.
+	s.day.setIn(ids["Bob"], now.Add(-3*time.Hour))
+	s.day.setIn(ids["Dave"], now.Add(-2*time.Hour))
+	s.day.setOut(ids["Dave"], now.Add(-time.Minute))
+	// Alice and Carol have nothing today.
+
+	rows, err := s.Students(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.Name)
+	}
+	want := []string{"Dave", "Bob", "Alice", "Carol"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
 	}
 }

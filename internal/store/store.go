@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -214,7 +215,46 @@ func (s *Store) Reset(ctx context.Context, id int64) error {
 	return nil
 }
 
+// lastActivity returns the row's most recent check-in/out time for today, or
+// nil if the student has neither.
+func lastActivity(r StudentRow) *time.Time {
+	switch {
+	case r.Out != nil && r.In != nil:
+		if r.Out.After(*r.In) {
+			return r.Out
+		}
+		return r.In
+	case r.Out != nil:
+		return r.Out
+	default:
+		return r.In
+	}
+}
+
 // Students returns the main-list rows, merging the student table with today's state.
+//
+// Rows are ordered by today's most recent check-in/out (newest first), then by
+// name for students with no activity today, so the list surfaces who just
+// scanned while keeping the rest alphabetical.
+//
+// The UI calls this on every refresh (each check-in/out, add, remove, reset)
+// rather than caching and mutating a row slice. That is deliberate: the only
+// database work here is ListStudents, a name lookup against a local WAL-mode
+// file, and the times come from the in-memory DayState, so a refresh costs
+// well under a millisecond even at a thousand students and happens once per
+// user action, never per camera frame. Keeping one path that builds the list
+// means the view cannot drift from the data -- a cache would have to be
+// invalidated correctly on add, remove, reset, check-in, check-out, bulk
+// import, and day rollover, and a stale list is a worse bug than a slow one.
+// If the list ever does feel slow, narrow ListStudents (it selects every
+// column for a view that needs only ID and Name) before reaching for a cache.
+// Sorting in SQL is not the cheaper option either: the sort key lives in
+// DayState, so SQL would have to re-derive today's state from the Log.
+//
+// Caveat: DayState holds times at one-second resolution (the Log stores unix
+// seconds), so two students scanned within the same second fall back to name
+// order rather than scan order. Fine for a kiosk; preserving exact scan order
+// would need millisecond timestamps or a sequence column, i.e. a schema change.
 func (s *Store) Students(ctx context.Context) ([]StudentRow, error) {
 	s.day.maybeRollover(ctx, s.q)
 	students, err := s.q.ListStudents(ctx)
@@ -226,6 +266,15 @@ func (s *Store) Students(ctx context.Context) ([]StudentRow, error) {
 		in, out := s.day.get(st.ID)
 		rows = append(rows, StudentRow{ID: st.ID, Name: st.Name, In: in, Out: out})
 	}
+	// ListStudents already returns rows by name, so a stable sort keeps the
+	// no-activity rows alphabetical.
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := lastActivity(rows[i]), lastActivity(rows[j])
+		if a == nil || b == nil {
+			return a != nil // rows with activity today come first
+		}
+		return a.After(*b)
+	})
 	return rows, nil
 }
 

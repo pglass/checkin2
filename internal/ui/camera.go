@@ -185,6 +185,12 @@ func (a *App) routeScan(ev camera.ScanEvent) {
 
 	st, err := a.store.StudentByName(a.ctx, p.Name)
 	fyne.Do(func() {
+		// At most one scan-triggered popup at a time: ignore scans that arrive
+		// while one is still showing.
+		if a.popupOpen {
+			slog.Debug("QR code ignored; popup already showing", "name", p.Name)
+			return
+		}
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				a.showAddStudentDialogPrefill(p.Name, "Student not found. Add them?")

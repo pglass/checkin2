@@ -1,5 +1,16 @@
 # Unreleased
 
+Main list ordering
+
+* Sorted the main list by today's most recent check-in or check-out, newest
+  first, with students who have no activity today following alphabetically.
+  The list re-sorts after every check-in, check-out, and student added.
+
+Check-in/out pop-ups
+
+* Show at most one scan pop-up at a time: a QR code scanned while a pop-up is
+  already showing is ignored instead of stacking a second one.
+
 Webcam latency
 
 * Fixed multi-second webcam lag by reading frames flat-out and decoupling
