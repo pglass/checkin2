@@ -7,3 +7,7 @@ dist/
 **/*.db
 **/*.db-*
 **/*.ini
+# Cross-built macOS binaries from build-darwin.sh (ARCH=...).
+checkin-x86_64
+checkin-arm64
+.DS_Store

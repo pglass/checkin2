@@ -16,15 +16,31 @@ that scans per-student QR codes. All data lives in a durable local SQLite file.
 ## Prerequisites (macOS)
 
 ```sh
-brew install opencv@4 pkg-config
+brew install cmake pkg-config
 go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 go install fyne.io/tools/cmd/fyne@latest
+
+make opencv-static-darwin   # one-time: compile the slim static OpenCV 4.13.0
 ```
 
-> **Why `opencv@4` and not `opencv`?** Homebrew's default `opencv` formula is now
-> OpenCV **5**, which gocv does not support. `opencv@4` is keg-only, so it lives
-> at `$(brew --prefix opencv@4)` and does not shadow anything. The `Makefile`
-> points `PKG_CONFIG_PATH` at it automatically.
+That last step compiles OpenCV from source (20–40 min) and installs it to
+`~/opencv-static/4.13.0-<arch>`, outside the repo. Everything afterwards —
+`make checkin`, `make test`, `make package` — links it, so builds are
+self-contained and **no Homebrew OpenCV is needed**.
+
+> **Why not `brew install opencv@4`?** It works for compiling, but produces a
+> binary that dynamically links Homebrew dylibs by absolute path, so it only
+> runs on machines with the same install. The static build removes that
+> constraint, and pins OpenCV **4.13.0** — the exact version gocv v0.43.0
+> targets. (Homebrew's default `opencv` formula is OpenCV **5**, which gocv does
+> not support at all.)
+>
+> The Makefile sets `PKG_CONFIG_LIBDIR` rather than `PKG_CONFIG_PATH`, which
+> *replaces* pkg-config's search path instead of prepending to it — so an
+> `opencv@4` you happen to have installed can never be picked up by accident.
+
+Rebuilding OpenCV is only needed once per architecture. `ARCH=x86_64` builds for
+Intel Macs from an Apple Silicon machine; see "Distribution".
 
 ## Prerequisites (Windows)
 
@@ -55,23 +71,26 @@ Build the OpenCV libs once, then the app:
 ./build-windows.sh --gui    # no console window (for distribution)
 ```
 
-> **How the Windows build differs.** On macOS gocv finds OpenCV via
-> `pkg-config` automatically; on Windows it doesn't. The Windows build uses
-> gocv's **`customenv`** build tag and feeds cgo the flags for a slim **static**
-> OpenCV (built once by `build-opencv-static.sh`), with MSYS2's `mingw64\bin` on
-> `PATH` at build time so `gcc` resolves. The OpenCV, Qt, and MinGW runtime are
-> linked **into** the exe, so the resulting `checkin.exe` is a single
-> self-contained binary that depends only on Windows system DLLs — nothing to
-> bundle or copy alongside it (see "Distribution").
+> **How the Windows build differs.** Both platforms link a slim static OpenCV,
+> but they feed cgo differently. macOS uses gocv's **`opencvstatic`** tag, which
+> resolves everything through `pkg-config --static opencv4`; Windows uses the
+> **`customenv`** tag and sets the `CGO_*` flags explicitly, because pkg-config
+> discovery does not work there. The Windows build also needs MSYS2's
+> `mingw64\bin` on `PATH` so `gcc` resolves, and links the MinGW runtime into
+> the exe. Either way the result is one self-contained binary that depends only
+> on OS libraries (see "Distribution").
 
 ## Develop
 
 ```sh
-make build      # compile everything
-make run        # run the app
+make checkin    # compile the app        -> ./checkin
+make run        # compile, then run it
 make test       # run unit tests (DB, state, pruner, QR/PDF)
 make generate   # regenerate db/gen from db/schema.sql + db/queries.sql
 ```
+
+These link the static OpenCV built by `make opencv-static-darwin`; if it is
+missing, the build stops with the command to build it.
 
 ## Logging
 
@@ -146,24 +165,35 @@ checkin -db-path /tmp/x/checkin.db   # dev escape hatch: open a database directl
   double-click; an unknown code opens the Add-student dialog prefilled. Each
   student has an 8s scan cooldown.
 
-## Distribution ⚠️
+## Distribution
 
-`make package` builds a Fyne app bundle, **but the binary is not
-self-contained.** It dynamically links OpenCV dylibs by absolute Homebrew path
-(e.g. `/opt/homebrew/opt/opencv@4/lib/libopencv_*.dylib`). On another machine it
-will only launch if either:
+Every macOS build links the slim static OpenCV, so the binary's only dynamic
+dependencies are macOS system frameworks — it runs on a stock Mac with no
+Homebrew and no OpenCV installed.
 
-1. **The target has `opencv@4` installed** at the same prefix
-   (`brew install opencv@4`) — simplest for internal/known machines; or
-2. **The dylibs are bundled** into the `.app` and their load paths rewritten
-   (e.g. with `dylibbundler` or `install_name_tool` + `@rpath`) — required for
-   distributing to machines without Homebrew/OpenCV.
+```sh
+make opencv-static-darwin   # once per arch (slow; builds OpenCV 4.13.0)
+make package-darwin         # -> ./checkin      (stripped, self-contained)
+make package                # -> ./Checkin.app  (bundle with icon + Info.plist)
+```
 
-Choose the approach before shipping.
+`package-darwin` produces a bare binary and strips debug symbols; `package`
+produces a proper `.app` via Fyne. Both are self-contained.
 
-**Windows** is simpler: it links a slim static OpenCV, so the build is a single
-self-contained `checkin.exe` with no DLLs to ship. One-time, build the static
-OpenCV, then package:
+Cross-build for Intel Macs from an Apple Silicon machine (clang cross-compiles
+natively, so this is not a Rosetta build):
+
+```sh
+ARCH=x86_64 make opencv-static-darwin   # once
+ARCH=x86_64 make package-darwin         # -> ./checkin-x86_64
+```
+
+Verify with `otool -L ./checkin` — every entry should be under `/usr/lib` or
+`/System/Library`. `build-darwin.sh` checks this for you and warns otherwise.
+
+**Windows** works the same way: it links a slim static OpenCV, so the build is a
+single self-contained `checkin.exe` with no DLLs to ship. One-time, build the
+static OpenCV, then package:
 
 ```sh
 make opencv-static     # once per OpenCV version (slow; builds OpenCV 4.13.0)

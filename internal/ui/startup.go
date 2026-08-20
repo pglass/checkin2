@@ -29,24 +29,30 @@ type startup struct {
 	list    *widget.List
 	errLbl  *canvas.Text
 
-	// onOpen receives the chosen Center and opens it. It returns an error (e.g.
+	// onOpen receives the chosen Center and this window, and replaces the
+	// window's content with the main view. It returns an error (e.g.
 	// store.ErrAlreadyOpen) when the Center cannot be opened, in which case the
-	// selection window stays up and shows the message; on success it has already
-	// opened the main window and the selection window is closed.
-	onOpen func(center.Center) error
+	// selection view stays up and shows the message.
+	onOpen func(center.Center, fyne.Window) error
 
-	// opened records that a Center was chosen, so closing the window afterwards
-	// is not treated as the user quitting.
+	// opened records that a Center was chosen, so the window's close handler is
+	// not the selection window's "user quit without choosing" one any more.
 	opened bool
 }
 
 // ShowStartup displays the Center selection window. onOpen is called with the
-// chosen Center when the user opens it; on success it opens the main window and
-// the selection window closes, on failure (e.g. the Center is already open) the
-// selection window stays up. If the user closes the window without choosing,
-// onOpen is never called and the process should exit. The caller drives the
-// Fyne event loop.
-func ShowStartup(fa fyne.App, appDir string, onOpen func(center.Center) error) {
+// chosen Center and this window, and is expected to take the window over,
+// replacing its content with the main view; on failure (e.g. the Center is
+// already open) the selection view stays up and shows the message. If the user
+// closes the window without choosing, onOpen is never called and the process
+// should exit. The caller drives the Fyne event loop.
+//
+// Handing the window over rather than opening a second one and closing this one
+// is deliberate: destroying a window from inside the click that asked for it
+// frees the GLFW handle while fyne's processMouseClicked is still using it, and
+// the driver then panics on a nil view. With one window for the lifetime of the
+// process, that class of crash cannot occur here.
+func ShowStartup(fa fyne.App, appDir string, onOpen func(center.Center, fyne.Window) error) {
 	s := &startup{fyneApp: fa, appDir: appDir, onOpen: onOpen}
 	s.win = fa.NewWindow("Check-In")
 	s.about = about{fyneApp: fa, parent: s.win}
@@ -96,9 +102,10 @@ func (s *startup) build() {
 	s.win.SetContent(withWindowMargin(
 		container.NewBorder(header, bottom, nil, nil, s.list),
 	))
+	// No Center chosen: nothing else will run, so quit the app. Once a Center is
+	// opened, NewAppInWindow replaces this handler with the main window's.
 	s.win.SetOnClosed(func() {
 		if !s.opened {
-			// No Center chosen: nothing else will run, so quit the app.
 			s.fyneApp.Quit()
 		}
 	})
@@ -115,18 +122,22 @@ func (s *startup) reload() {
 	s.list.Refresh()
 }
 
-// open opens c, keeping the selection window up with a message if it cannot be
+// open opens c, keeping the selection view up with a message if it cannot be
 // opened (e.g. it is already open in another instance).
+//
+// On success onOpen has replaced this window's content with the main view, so
+// there is nothing to close here: the window continues as the main window. That
+// is what keeps this path free of the destroy-during-click crash described on
+// ShowStartup.
 func (s *startup) open(c center.Center) {
 	slog.Info("center selected", "name", c.Name, "dir", c.Dir)
-	if err := s.onOpen(c); err != nil {
+	if err := s.onOpen(c, s.win); err != nil {
 		// The Center could not be opened (already open in another instance):
-		// keep the selection window up and explain, rather than closing it.
+		// keep the selection view up and explain, rather than replacing it.
 		s.showError(err)
 		return
 	}
 	s.opened = true
-	s.win.Close()
 }
 
 // showAddDialog prompts for a new Center name, creating its directory and

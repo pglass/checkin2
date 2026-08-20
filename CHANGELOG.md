@@ -1,13 +1,16 @@
 # Unreleased
 
 * Added settings window. Changed settings take effect on next startup.
+* Added static macOS build (`make package-darwin`) linking slim OpenCV
+* Support cross-build for Intel Macs with `ARCH=x86_64`.
 * Fixed camera reopen failure due to ignored error from the device
 * Sort main list by today's most recent check in/out and then by name
 * Show at most one scan pop-up at a time (no stacked pop-ups)
 * Fixed camera lag by decoupling capture from QR detection
-* Open a Center by clicking its name in the startup window (no Open button)
 * Rename Admin menu to File and combine version and license into About menu
 * Add Camera menu for camera management
+* Open a Center by clicking its name in the startup window (no Open button)
+* Fix intermittent crash on click by resuing startup window for main view
 
 # 0.0.3
 

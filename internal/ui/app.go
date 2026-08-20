@@ -88,11 +88,25 @@ func NewFyneApp() fyne.App {
 	return fa
 }
 
-// NewApp builds the main window (menubar + student list) but does not run it.
-// centerName is shown in the title bar so the open Center is always visible.
-// cfg is the loaded settings and cfgPath the file the Settings window saves to.
+// NewApp creates a new window and builds the main view in it. Used by the
+// -center / -db-path flags, which skip the Center selection window entirely so
+// there is no existing window to take over.
 func NewApp(ctx context.Context, fa fyne.App, s *store.Store, centerName string, cfg config.Config, cfgPath string) *App {
-	win := fa.NewWindow("Check-In — " + centerName)
+	return NewAppInWindow(ctx, fa, fa.NewWindow(""), s, centerName, cfg, cfgPath)
+}
+
+// NewAppInWindow builds the main view (menubar + student list) inside win,
+// replacing whatever it was showing, but does not run it. centerName is shown
+// in the title bar so the open Center is always visible. cfg is the loaded
+// settings and cfgPath the file the Settings window saves to.
+//
+// Taking over an existing window is what lets the Center selection window
+// become the main window in place. Closing a window from inside the click that
+// asked for it destroys the GLFW handle while fyne's processMouseClicked is
+// still using it, which panics in the driver -- reusing the window means there
+// is no window destruction on that path at all.
+func NewAppInWindow(ctx context.Context, fa fyne.App, win fyne.Window, s *store.Store, centerName string, cfg config.Config, cfgPath string) *App {
+	win.SetTitle("Check-In — " + centerName)
 
 	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx,
 		about:   about{fyneApp: fa, parent: win},
@@ -106,6 +120,12 @@ func NewApp(ctx context.Context, fa fyne.App, s *store.Store, centerName string,
 	// Main view is the student list only; the camera feed opens in its own window.
 	win.SetContent(withWindowMargin(a.table.widget()))
 	win.Resize(fyne.NewSize(640, 480))
+	win.CenterOnScreen()
+	// The selection window installed a SetOnClosed that quits the app when no
+	// Center was chosen. This window is now the main window, so closing it
+	// should quit unconditionally -- and the old handler's "did the user pick a
+	// Center" logic no longer applies.
+	win.SetOnClosed(func() { fa.Quit() })
 
 	a.refresh()
 	a.startCamera(ctx)
@@ -184,7 +204,18 @@ func (a *App) selectCameraDevice(deviceID int) {
 	// it. Closed before updateResLabel so that runs against the cleared
 	// preview/resLabel fields rather than widgets of a window on its way out.
 	if deviceID == deviceNone && a.previewWin != nil {
-		a.previewWin.Close() // SetOnClosed clears previewWin, preview, resLabel
+		// Deferred, not called directly: this runs from the Camera menu item's
+		// own dispatch, and destroying a window frees the GLFW handle that the
+		// driver still dereferences once the handler returns (panic: nil
+		// pointer in glfw.(*Window).GetCursorPos). fyne.Do queues it onto the
+		// main loop, which drains after the current event.
+		//
+		// Unlike the main window -- which the selection window hands over
+		// rather than closing, so no destroy happens there at all -- the camera
+		// window genuinely has to be destroyed here, so the deferral is the
+		// protection.
+		win := a.previewWin
+		fyne.Do(func() { win.Close() }) // SetOnClosed clears previewWin, preview, resLabel
 	}
 	a.updateResLabel()
 	a.markCameraMenuItem()

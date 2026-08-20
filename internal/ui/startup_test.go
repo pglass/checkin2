@@ -27,7 +27,7 @@ func newTestStartup(t *testing.T, names ...string) (*startup, *center.Center) {
 
 	var opened center.Center
 	s := &startup{fyneApp: fa, appDir: dir,
-		onOpen: func(c center.Center) error { opened = c; return nil }}
+		onOpen: func(c center.Center, _ fyne.Window) error { opened = c; return nil }}
 	s.win = fa.NewWindow("startup")
 	s.build()
 	s.reload()
@@ -95,7 +95,7 @@ func TestStartupOpenFailureKeepsWindow(t *testing.T) {
 	}
 
 	s := &startup{fyneApp: fa, appDir: dir,
-		onOpen: func(center.Center) error { return errAlreadyOpenStub{} }}
+		onOpen: func(center.Center, fyne.Window) error { return errAlreadyOpenStub{} }}
 	s.win = fa.NewWindow("startup")
 	s.build()
 	s.reload()
@@ -128,5 +128,77 @@ func TestStartupReloadPicksUpNewCenter(t *testing.T) {
 	}
 	if _, err := filepath.Abs(s.centers[1].Dir); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The selection window becomes the main window in place: opening a Center must
+// hand the existing window to onOpen and leave it open. Closing a window from
+// inside the click that asked for it frees the GLFW handle while fyne's
+// processMouseClicked is still using it, and the driver panics on the nil view
+// -- reusing the window removes that path entirely.
+func TestStartupOpenReusesWindowWithoutClosing(t *testing.T) {
+	fa := test.NewApp()
+	defer fa.Quit()
+
+	dir := t.TempDir()
+	if _, err := center.Create(dir, "Alpha"); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotWin fyne.Window
+	s := &startup{fyneApp: fa, appDir: dir,
+		onOpen: func(_ center.Center, win fyne.Window) error { gotWin = win; return nil }}
+	s.win = fa.NewWindow("startup")
+	s.build()
+	s.reload()
+
+	closed := false
+	s.win.SetOnClosed(func() { closed = true })
+
+	rowButton(t, s, 0).OnTapped()
+
+	if gotWin != s.win {
+		t.Error("onOpen was not handed the selection window to take over")
+	}
+	if closed {
+		t.Error("selection window was closed; it must be reused as the main window")
+	}
+	if !s.opened {
+		t.Error("opened flag not set after a successful open")
+	}
+}
+
+// A failed open leaves the window showing the selection view with the error,
+// and does not hand the window over.
+func TestStartupFailedOpenKeepsSelectionView(t *testing.T) {
+	fa := test.NewApp()
+	defer fa.Quit()
+
+	dir := t.TempDir()
+	c, err := center.Create(dir, "Alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handedOver := false
+	s := &startup{fyneApp: fa, appDir: dir,
+		onOpen: func(center.Center, fyne.Window) error {
+			handedOver = true
+			return errAlreadyOpenStub{}
+		}}
+	s.win = fa.NewWindow("startup")
+	s.build()
+	s.reload()
+
+	s.open(c)
+
+	if !handedOver {
+		t.Error("onOpen should still be called on the failing path")
+	}
+	if s.opened {
+		t.Error("opened flag set despite the open failing")
+	}
+	if s.errLbl.Text == "" {
+		t.Error("no error shown after a failed open")
 	}
 }

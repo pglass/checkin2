@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"fyne.io/fyne/v2"
+
 	"github.com/pglass/checkin/internal/center"
 	"github.com/pglass/checkin/internal/config"
 	"github.com/pglass/checkin/internal/logging"
@@ -81,12 +83,18 @@ func main() {
 		}
 	}()
 
-	// run opens the Center's database and log file, then shows the main window.
+	// run opens the Center's database and log file, then shows the main view.
 	// It does not block: the caller drives the event loop via fa.Run(). It
 	// returns store.ErrAlreadyOpen (and opens nothing) when the Center is already
 	// held by another instance, so the caller can report that and stay running;
 	// any other failure is fatal.
-	run := func(c center.Center, dbPath string) error {
+	//
+	// win is the window to build the main view in. The selection window passes
+	// its own window so it becomes the main window in place -- never closing a
+	// window from inside the click that asked for it, which crashes the glfw
+	// driver. A nil win means there is no selection window (-center / -db-path),
+	// so one is created.
+	run := func(c center.Center, dbPath string, win fyne.Window) error {
 		// Open (which takes the one-process-per-Center lock) before switching
 		// logging to the Center directory: if the Center is already open we don't
 		// want to have redirected this instance's log into it.
@@ -113,7 +121,12 @@ func main() {
 		slog.Info("center opened", "name", c.Name, "dir", c.Dir)
 		slog.Info("database opened", "path", absPath(dbPath))
 
-		app := ui.NewApp(ctx, fa, s, c.Name, cfg, cfgPath)
+		var app *ui.App
+		if win != nil {
+			app = ui.NewAppInWindow(ctx, fa, win, s, c.Name, cfg, cfgPath)
+		} else {
+			app = ui.NewApp(ctx, fa, s, c.Name, cfg, cfgPath)
+		}
 
 		// Start background pruning after the UI is constructed; first pass fires
 		// after the configured interval so startup stays fast. The pruner only
@@ -133,7 +146,7 @@ func main() {
 		// for the Center, so logs land next to the file.
 		dir := filepath.Dir(*dbPathFlag)
 		c := center.Center{Name: filepath.Base(dir), Dir: dir}
-		if err := run(c, *dbPathFlag); errors.Is(err, store.ErrAlreadyOpen) {
+		if err := run(c, *dbPathFlag, nil); errors.Is(err, store.ErrAlreadyOpen) {
 			ui.ShowFatalError(fa, alreadyOpenMessage(c.Name))
 		}
 	case *centerFlag != "":
@@ -143,11 +156,13 @@ func main() {
 		} else if err != nil {
 			log.Fatalf("open center %q: %v", *centerFlag, err)
 		}
-		if err := run(c, c.DBPath()); errors.Is(err, store.ErrAlreadyOpen) {
+		if err := run(c, c.DBPath(), nil); errors.Is(err, store.ErrAlreadyOpen) {
 			ui.ShowFatalError(fa, alreadyOpenMessage(c.Name))
 		}
 	default:
-		ui.ShowStartup(fa, appDir, func(c center.Center) error { return run(c, c.DBPath()) })
+		ui.ShowStartup(fa, appDir, func(c center.Center, win fyne.Window) error {
+			return run(c, c.DBPath(), win)
+		})
 	}
 
 	fa.Run()
