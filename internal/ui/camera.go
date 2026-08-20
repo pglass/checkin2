@@ -38,6 +38,11 @@ const deviceNone = -1
 
 // stopCamera cancels the running camera (if any) and releases the device. Safe
 // to call when nothing is running.
+//
+// Cancelling only starts the release: Camera.Run closes the device in a defer
+// that runs after its loop observes the cancellation, so the driver may still
+// be held briefly after this returns. Reopening the same device immediately can
+// therefore fail with "driver is already opened" -- see startCameraDevice.
 func (a *App) stopCamera() {
 	if a.camCancel != nil {
 		a.camCancel()
@@ -67,7 +72,7 @@ func (a *App) startCameraDevice(parent context.Context, deviceID int) {
 	a.camCancel = cancel
 	a.camDevice = deviceID
 
-	cam := camera.New(a.cameraFPS, a.cameraReqWidth, a.cameraReqHeight, a.qrScanCooldown)
+	cam := camera.New(a.cfg.CameraFPS, a.cfg.CameraRequestWidth, a.cfg.CameraRequestHeight, a.cfg.QRScanCooldown)
 	a.cam = cam
 	// The preview window may already be open when switching devices.
 	cam.SetPreviewing(a.preview != nil)

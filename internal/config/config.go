@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -77,43 +76,12 @@ func Load(path string) (Config, error) {
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
 
-		switch strings.ToLower(key) {
-		case "camera_fps":
-			n, err := strconv.Atoi(val)
-			if err != nil || n <= 0 {
-				return cfg, fmt.Errorf("%s:%d: camera_fps must be a positive integer, got %q", path, line, val)
-			}
-			cfg.CameraFPS = n
-		case "camera_request_width":
-			n, err := strconv.Atoi(val)
-			if err != nil || n <= 0 {
-				return cfg, fmt.Errorf("%s:%d: camera_request_width must be a positive integer, got %q", path, line, val)
-			}
-			cfg.CameraRequestWidth = n
-		case "camera_request_height":
-			n, err := strconv.Atoi(val)
-			if err != nil || n <= 0 {
-				return cfg, fmt.Errorf("%s:%d: camera_request_height must be a positive integer, got %q", path, line, val)
-			}
-			cfg.CameraRequestHeight = n
-		case "qr_scan_cooldown":
-			d, err := time.ParseDuration(val)
-			if err != nil || d <= 0 {
-				return cfg, fmt.Errorf("%s:%d: qr_scan_cooldown must be a positive duration (e.g. 8s), got %q", path, line, val)
-			}
-			cfg.QRScanCooldown = d
-		case "prune_interval":
-			d, err := time.ParseDuration(val)
-			if err != nil || d <= 0 {
-				return cfg, fmt.Errorf("%s:%d: prune_interval must be a positive duration (e.g. 30m), got %q", path, line, val)
-			}
-			cfg.PruneInterval = d
-		case "prune_batch_size":
-			n, err := strconv.Atoi(val)
-			if err != nil || n <= 0 {
-				return cfg, fmt.Errorf("%s:%d: prune_batch_size must be a positive integer, got %q", path, line, val)
-			}
-			cfg.PruneBatchSize = n
+		f, ok := fieldByKey(key)
+		if !ok {
+			continue // unknown key: ignored, so old files still load
+		}
+		if err := f.Set(&cfg, val); err != nil {
+			return cfg, fmt.Errorf("%s:%d: %w", path, line, err)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -123,22 +91,43 @@ func Load(path string) (Config, error) {
 }
 
 // Write persists cfg to path in INI format (overwriting any existing file).
+// Keys are grouped under their section in Fields order, each preceded by its
+// description as a comment. The Settings window saves through this function, so
+// a hand-edited file and a UI-saved file have the same shape.
 func Write(path string, cfg Config) error {
 	var b strings.Builder
-	b.WriteString("# checkin settings\n\n")
-	b.WriteString("[camera]\n")
-	b.WriteString("# Webcam capture/detect rate in frames per second.\n")
-	fmt.Fprintf(&b, "camera_fps = %d\n", cfg.CameraFPS)
-	b.WriteString("# Requested capture resolution. The camera chooses the closest supported\n")
-	b.WriteString("# resolution, so the actual frame size may not match exactly. Lower = less CPU.\n")
-	fmt.Fprintf(&b, "camera_request_width = %d\n", cfg.CameraRequestWidth)
-	fmt.Fprintf(&b, "camera_request_height = %d\n", cfg.CameraRequestHeight)
-	b.WriteString("# How long a scanned QR code is ignored after a scan (e.g. 8s, 500ms).\n")
-	fmt.Fprintf(&b, "qr_scan_cooldown = %s\n", cfg.QRScanCooldown)
-	b.WriteString("\n[database]\n")
-	b.WriteString("# How often old log rows are pruned in the background (e.g. 30m, 1h).\n")
-	fmt.Fprintf(&b, "prune_interval = %s\n", cfg.PruneInterval)
-	b.WriteString("# Max number of rows deleted per prune wake-up.\n")
-	fmt.Fprintf(&b, "prune_batch_size = %d\n", cfg.PruneBatchSize)
+	b.WriteString("# checkin settings\n")
+
+	section := ""
+	for _, f := range Fields {
+		if f.Section != section {
+			b.WriteString("\n[" + f.Section + "]\n")
+			section = f.Section
+		}
+		for _, line := range wrapComment(f.Desc, 78) {
+			b.WriteString("# " + line + "\n")
+		}
+		fmt.Fprintf(&b, "%s = %s\n", f.Key, f.Get(cfg))
+	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+// wrapComment splits s into lines of at most width characters, breaking on
+// spaces, so long descriptions do not run off the edge of the settings file.
+func wrapComment(s string, width int) []string {
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return nil
+	}
+	lines := []string{}
+	cur := words[0]
+	for _, w := range words[1:] {
+		if len(cur)+1+len(w) > width {
+			lines = append(lines, cur)
+			cur = w
+			continue
+		}
+		cur += " " + w
+	}
+	return append(lines, cur)
 }

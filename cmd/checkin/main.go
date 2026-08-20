@@ -113,7 +113,7 @@ func main() {
 		slog.Info("center opened", "name", c.Name, "dir", c.Dir)
 		slog.Info("database opened", "path", absPath(dbPath))
 
-		app := ui.NewApp(ctx, fa, s, c.Name, cfg.CameraFPS, cfg.CameraRequestWidth, cfg.CameraRequestHeight, cfg.QRScanCooldown)
+		app := ui.NewApp(ctx, fa, s, c.Name, cfg, cfgPath)
 
 		// Start background pruning after the UI is constructed; first pass fires
 		// after the configured interval so startup stays fast. The pruner only

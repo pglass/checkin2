@@ -1,5 +1,22 @@
 # Unreleased
 
+Settings window
+
+* Added a Settings window for editing settings.ini (under Admin on Windows and
+  Linux; macOS moves it to the application menu): every setting shows its config
+  key, an input, and a description, with per-field validation and a red error
+  message for bad input. Saving writes settings.ini in the same format as
+  startup. Changed settings take effect the next time the app is started, as
+  noted at the bottom of the window.
+
+Camera
+
+* Fixed the camera failing to reopen with "invalid state: driver is already
+  opened", which left the app running without a camera until it was restarted.
+  A device that is not closed is now closed before being reopened, and a failed
+  close is logged instead of being silently dropped. This also affected
+  switching directly between two cameras in the device picker.
+
 Main list ordering
 
 * Sorted the main list by today's most recent check-in or check-out, newest

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -14,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 
 	"github.com/pglass/checkin/internal/camera"
+	"github.com/pglass/checkin/internal/config"
 	"github.com/pglass/checkin/internal/store"
 	"github.com/pglass/checkin/internal/version"
 )
@@ -29,14 +29,17 @@ type App struct {
 	// window so the menu exists before a Center is open.
 	about about
 
-	table           *studentTable
-	cam             *camera.Camera
-	camCancel       context.CancelFunc // stops the current camera; set per device
-	camDevice       int                // index of the running device
-	cameraFPS       int
-	cameraReqWidth  int
-	cameraReqHeight int
-	qrScanCooldown  time.Duration
+	table     *studentTable
+	cam       *camera.Camera
+	camCancel context.CancelFunc // stops the current camera; set per device
+	camDevice int                // index of the running device
+
+	// cfg is the live settings, seeded at startup and replaced when the
+	// Settings window saves. Camera restarts and pruner restarts read from it,
+	// so a save takes effect without restarting the app. cfgPath is the
+	// settings.ini it is written back to.
+	cfg     config.Config
+	cfgPath string
 
 	// Camera preview lives in its own window, created on demand.
 	preview    *canvas.Image
@@ -54,6 +57,10 @@ type App struct {
 	// importWin is the Import window; tracked like qrWin so reopening raises
 	// the existing one instead of spawning a duplicate.
 	importWin fyne.Window
+
+	// settingsWin is the Settings window; tracked like qrWin so reopening
+	// raises the existing one instead of spawning a duplicate.
+	settingsWin fyne.Window
 
 	// popupOpen is true while a scan-triggered popup (check-in/out, or the
 	// "student not found" Add dialog) is showing. QR scans are ignored while
@@ -79,13 +86,14 @@ func NewFyneApp() fyne.App {
 
 // NewApp builds the main window (menubar + student list) but does not run it.
 // centerName is shown in the title bar so the open Center is always visible.
-func NewApp(ctx context.Context, fa fyne.App, s *store.Store, centerName string, cameraFPS, cameraReqWidth, cameraReqHeight int, qrScanCooldown time.Duration) *App {
+// cfg is the loaded settings and cfgPath the file the Settings window saves to.
+func NewApp(ctx context.Context, fa fyne.App, s *store.Store, centerName string, cfg config.Config, cfgPath string) *App {
 	win := fa.NewWindow("Check-In — " + centerName)
 
 	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx,
-		about:     about{fyneApp: fa, parent: win},
-		cameraFPS: cameraFPS, cameraReqWidth: cameraReqWidth, cameraReqHeight: cameraReqHeight,
-		qrScanCooldown: qrScanCooldown,
+		about:   about{fyneApp: fa, parent: win},
+		cfg:     cfg,
+		cfgPath: cfgPath,
 		// No camera until startCamera picks one; 0 would mean "device 0 running".
 		camDevice: deviceNone}
 	a.table = newStudentTable(a)
@@ -118,6 +126,7 @@ func (a *App) buildMenu() *fyne.MainMenu {
 		fyne.NewMenuItem("History…", a.showHistoryWindow),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Show/Hide Camera", a.toggleCamera),
+		fyne.NewMenuItem("Settings…", a.showSettingsWindow),
 	)
 	return fyne.NewMainMenu(admin, a.about.menu())
 }

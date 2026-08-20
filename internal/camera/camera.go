@@ -146,7 +146,14 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 	if err != nil {
 		return err
 	}
-	defer d.Close()
+	// Close failing leaves the driver wrapper stuck in a non-closed state, which
+	// blocks every later Open, so it is logged rather than silently dropped.
+	// openDevice recovers from it, but the log is the only evidence it happened.
+	defer func() {
+		if cerr := d.Close(); cerr != nil {
+			slog.Warn("closing camera device failed", "device", deviceID, "error", cerr)
+		}
+	}()
 
 	p, err := c.chooseFormat(d)
 	if err != nil {
@@ -306,10 +313,40 @@ func openDevice(deviceID int) (driver.Driver, error) {
 		return nil, fmt.Errorf("device %d out of range (%d connected)", deviceID, len(drivers))
 	}
 	d := drivers[deviceID]
+
+	// The manager hands back the same driver wrapper every time, and the
+	// wrapper's open/closed state lives in it, not here. Open() only accepts a
+	// wrapper in StateClosed, and the wrapper only advances to StateClosed when
+	// its Close() returns nil -- so one failed or not-yet-finished Close leaves
+	// it stuck in StateRunning and every later Open fails with "invalid state:
+	// driver is already opened" until the process restarts. That is what made
+	// switching straight from one camera to another (or restarting capture with
+	// new settings) fail while going via "None" appeared to work.
+	//
+	// Closing first is the reset: the transition to StateClosed is always
+	// permitted, so this clears a stale state and is a no-op on the common path
+	// where the device is already closed.
+	resetDeviceState(d, deviceID)
+
 	if err := d.Open(); err != nil {
 		return nil, fmt.Errorf("opening device %d: %w", deviceID, err)
 	}
 	return d, nil
+}
+
+// resetDeviceState closes d if it is not already closed, so the following Open
+// is made against a wrapper in StateClosed. Closing is always a permitted
+// transition, so this is a no-op on the common path and a recovery on the
+// stuck one described in openDevice.
+func resetDeviceState(d driver.Driver, deviceID int) {
+	st := d.Status()
+	if st == driver.StateClosed {
+		return
+	}
+	slog.Debug("device not closed; closing before reopen", "device", deviceID, "state", st)
+	if err := d.Close(); err != nil {
+		slog.Warn("closing stale device failed", "device", deviceID, "error", err)
+	}
 }
 
 // chooseFormat picks one of the device's own advertised capture modes,

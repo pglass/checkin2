@@ -58,6 +58,29 @@ func (l insetLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
 	objs[0].Resize(fyne.NewSize(size.Width-2*l.x, size.Height-2*l.y))
 }
 
+// fixedWidthLayout gives its single child a fixed width (full height), used for
+// label columns that must line up across rows regardless of text length.
+type fixedWidthLayout struct{ w float32 }
+
+func (l fixedWidthLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
+	h := float32(0)
+	if len(objs) > 0 {
+		h = objs[0].MinSize().Height
+	}
+	return fyne.NewSize(l.w, h)
+}
+
+func (l fixedWidthLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
+	if len(objs) == 0 {
+		return
+	}
+	// Vertically centered so a single-line label sits level with the input it
+	// labels, which is taller than the raw text.
+	h := objs[0].MinSize().Height
+	objs[0].Move(fyne.NewPos(0, (size.Height-h)/2))
+	objs[0].Resize(fyne.NewSize(l.w, h))
+}
+
 // withWindowMargin wraps content in the standard window-edge margins.
 func withWindowMargin(content fyne.CanvasObject) fyne.CanvasObject {
 	return container.New(insetLayout{x: windowEdgeInsetX, y: windowEdgeInsetY}, content)
