@@ -25,8 +25,8 @@ type App struct {
 	store   *store.Store
 	ctx     context.Context
 
-	// about supplies the About menu and its windows, shared with the startup
-	// window so the menu exists before a Center is open.
+	// about supplies the About window, shared with the startup window so the
+	// version and license information is reachable before a Center is open.
 	about about
 
 	table     *studentTable
@@ -117,9 +117,10 @@ func (a *App) Run() { a.win.ShowAndRun() }
 // Window exposes the main window for dialog parenting.
 func (a *App) Window() fyne.Window { return a.win }
 
-// buildMenu constructs the Admin and About menubar menus.
+// buildMenu constructs the File menubar menu. About sits at the bottom, after a
+// separator, matching the startup window's menu.
 func (a *App) buildMenu() *fyne.MainMenu {
-	admin := fyne.NewMenu("Admin",
+	file := fyne.NewMenu("File",
 		fyne.NewMenuItem("Add Student…", a.showAddStudentDialog),
 		fyne.NewMenuItem("Import…", a.showImportWindow),
 		fyne.NewMenuItem("Generate QR PDF…", a.showGenerateQRDialog),
@@ -127,8 +128,10 @@ func (a *App) buildMenu() *fyne.MainMenu {
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Show/Hide Camera", a.toggleCamera),
 		fyne.NewMenuItem("Settings…", a.showSettingsWindow),
+		fyne.NewMenuItemSeparator(),
+		a.about.menuItem(),
 	)
-	return fyne.NewMainMenu(admin, a.about.menu())
+	return fyne.NewMainMenu(file)
 }
 
 // refresh reloads rows from the store and repaints the table. Safe to call

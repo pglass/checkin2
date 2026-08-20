@@ -1,37 +1,12 @@
 # Unreleased
 
-Settings window
-
-* Added a Settings window for editing settings.ini (under Admin on Windows and
-  Linux; macOS moves it to the application menu): every setting shows its config
-  key, an input, and a description, with per-field validation and a red error
-  message for bad input. Saving writes settings.ini in the same format as
-  startup. Changed settings take effect the next time the app is started, as
-  noted at the bottom of the window.
-
-Camera
-
-* Fixed the camera failing to reopen with "invalid state: driver is already
-  opened", which left the app running without a camera until it was restarted.
-  A device that is not closed is now closed before being reopened, and a failed
-  close is logged instead of being silently dropped. This also affected
-  switching directly between two cameras in the device picker.
-
-Main list ordering
-
-* Sorted the main list by today's most recent check-in or check-out, newest
-  first, with students who have no activity today following alphabetically.
-  The list re-sorts after every check-in, check-out, and student added.
-
-Check-in/out pop-ups
-
-* Show at most one scan pop-up at a time: a QR code scanned while a pop-up is
-  already showing is ignored instead of stacking a second one.
-
-Webcam latency
-
-* Fixed multi-second webcam lag by reading frames flat-out and decoupling
-  capture from QR detection.
+* Added settings window. Changed settings take effect on next startup.
+* Fixed camera reopen failure due to ignored error from the device
+* Sort main list by today's most recent check in/out and then by name
+* Show at most one scan pop-up at a time (no stacked pop-ups)
+* Fixed camera lag by decoupling capture from QR detection
+* Open a Center by clicking its name in the startup window (no Open button)
+* Rename Admin menu to File and combine version and license into About menu
 
 # 0.0.3
 

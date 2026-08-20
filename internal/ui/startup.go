@@ -21,15 +21,12 @@ type startup struct {
 	win     fyne.Window
 	appDir  string
 
-	// about supplies the About menu, so version and license information is
+	// about supplies the About window, so version and license information is
 	// reachable before any Center is open.
 	about about
 
-	centers  []center.Center
-	list     *widget.List
-	selected int // index into centers, or -1 when nothing is selected
-
-	openBtn *widget.Button
+	centers []center.Center
+	list    *widget.List
 	errLbl  *canvas.Text
 
 	// onOpen receives the chosen Center and opens it. It returns an error (e.g.
@@ -50,12 +47,15 @@ type startup struct {
 // onOpen is never called and the process should exit. The caller drives the
 // Fyne event loop.
 func ShowStartup(fa fyne.App, appDir string, onOpen func(center.Center) error) {
-	s := &startup{fyneApp: fa, appDir: appDir, selected: -1, onOpen: onOpen}
-	s.win = fa.NewWindow("Check-In — Select Center")
+	s := &startup{fyneApp: fa, appDir: appDir, onOpen: onOpen}
+	s.win = fa.NewWindow("Check-In")
 	s.about = about{fyneApp: fa, parent: s.win}
-	s.win.SetMainMenu(fyne.NewMainMenu(s.about.menu()))
+	// The selection window has no Center-specific actions yet, so its File menu
+	// holds only About -- but the menu is always present, so the menubar does
+	// not appear and disappear between the two windows.
+	s.win.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu("File", s.about.menuItem())))
 	s.build()
-	s.reload("")
+	s.reload()
 	s.win.Resize(fyne.NewSize(360, 320))
 	s.win.CenterOnScreen()
 	s.win.Show()
@@ -71,29 +71,26 @@ func (s *startup) build() {
 	s.errLbl = canvas.NewText("", theme.Color(theme.ColorNameError))
 	s.errLbl.TextSize = theme.CaptionTextSize()
 
+	// Each row is a button that opens its own Center: one click instead of
+	// select-then-Open. The row's OnTapped is rebound on every update, since
+	// widget.List recycles row objects across indices.
 	s.list = widget.NewList(
 		func() int { return len(s.centers) },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func() fyne.CanvasObject { return widget.NewButton("", nil) },
 		func(i widget.ListItemID, o fyne.CanvasObject) {
-			o.(*widget.Label).SetText(s.centers[i].Name)
+			btn := o.(*widget.Button)
+			c := s.centers[i]
+			btn.SetText(c.Name)
+			btn.Alignment = widget.ButtonAlignLeading
+			btn.Importance = widget.LowImportance
+			btn.OnTapped = func() { s.open(c) }
 		},
 	)
-	s.list.OnSelected = func(i widget.ListItemID) {
-		s.selected = i
-		s.openBtn.Enable()
-	}
-	s.list.OnUnselected = func(widget.ListItemID) {
-		s.selected = -1
-		s.openBtn.Disable()
-	}
 
-	s.openBtn = widget.NewButton("Open", s.open)
-	s.openBtn.Importance = widget.HighImportance
-	s.openBtn.Disable()
 	addBtn := widget.NewButton("Add Center…", s.showAddDialog)
 
 	header := widget.NewLabel("Select a Center:")
-	buttons := container.NewHBox(addBtn, layout.NewSpacer(), s.openBtn)
+	buttons := container.NewHBox(addBtn, layout.NewSpacer())
 	bottom := container.NewVBox(s.errLbl, buttons)
 
 	s.win.SetContent(withWindowMargin(
@@ -107,35 +104,20 @@ func (s *startup) build() {
 	})
 }
 
-// reload re-lists the Centers on disk and repaints the list, selecting the
-// Center named selectName when it is present.
-func (s *startup) reload(selectName string) {
+// reload re-lists the Centers on disk and repaints the list.
+func (s *startup) reload() {
 	centers, err := center.List(s.appDir)
 	if err != nil {
 		s.showError(err)
 		return
 	}
 	s.centers = centers
-	s.selected = -1
-	s.openBtn.Disable()
-	s.list.UnselectAll()
 	s.list.Refresh()
-
-	if selectName != "" {
-		for i, c := range centers {
-			if c.Name == selectName {
-				s.list.Select(i)
-				break
-			}
-		}
-	}
 }
 
-func (s *startup) open() {
-	if s.selected < 0 || s.selected >= len(s.centers) {
-		return
-	}
-	c := s.centers[s.selected]
+// open opens c, keeping the selection window up with a message if it cannot be
+// opened (e.g. it is already open in another instance).
+func (s *startup) open(c center.Center) {
 	slog.Info("center selected", "name", c.Name, "dir", c.Dir)
 	if err := s.onOpen(c); err != nil {
 		// The Center could not be opened (already open in another instance):
@@ -170,7 +152,7 @@ func (s *startup) showAddDialog() {
 		}
 		slog.Info("center created", "name", c.Name, "dir", c.Dir)
 		popup.Hide()
-		s.reload(c.Name)
+		s.reload()
 	}
 
 	createBtn := widget.NewButton("Create", confirm)
