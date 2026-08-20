@@ -27,6 +27,9 @@ type Config struct {
 	PruneInterval time.Duration
 	// PruneBatchSize is the max number of rows the pruner deletes per wake-up.
 	PruneBatchSize int
+	// ConfirmScan requires a confirmation pop-up before a scanned QR code
+	// checks a student in or out. With it off, a scan is applied immediately.
+	ConfirmScan bool
 }
 
 // Default returns the built-in default settings.
@@ -38,6 +41,9 @@ func Default() Config {
 		QRScanCooldown:      8 * time.Second,
 		PruneInterval:       5 * time.Minute,
 		PruneBatchSize:      100,
+		// Confirming by default preserves the behaviour every existing install
+		// already has; turning it off is an opt-in to faster unattended scanning.
+		ConfirmScan: true,
 	}
 }
 

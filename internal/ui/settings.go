@@ -2,6 +2,7 @@ package ui
 
 import (
 	"log/slog"
+	"strconv"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -29,16 +30,40 @@ const (
 
 // settingsRow is one editable setting: the key label, its input, the small
 // description below, and the red error shown while the input is invalid.
+//
+// The input is either an entry or a checkbox, never both -- boolean settings
+// get a checkbox, everything else a text entry. Read the current value through
+// value() rather than touching the widgets, so the rest of the window does not
+// care which kind it is.
 type settingsRow struct {
 	field config.Field
-	entry *widget.Entry
+	entry *widget.Entry // nil for boolean settings
+	check *widget.Check // nil for everything else
 	errLb *canvas.Text
-	// orig is the value the entry was built with, so an edit that is undone
+	// orig is the value the input was built with, so an edit that is undone
 	// counts as unchanged again.
 	orig string
 	// block holds every widget of this setting (key + input, description, and
 	// error), so an advanced row can be hidden and shown as a unit.
 	block []fyne.CanvasObject
+}
+
+// value returns the row's current value in the same string form config.Field's
+// Get produces and Set parses.
+func (r *settingsRow) value() string {
+	if r.check != nil {
+		return strconv.FormatBool(r.check.Checked)
+	}
+	return r.entry.Text
+}
+
+// isBoolField reports whether f holds a boolean, which is shown as a checkbox
+// rather than a text entry. Determined by parsing the field's own default
+// rather than by naming specific keys, so a new boolean setting added to
+// config.Fields is picked up with no change here.
+func isBoolField(f config.Field) bool {
+	_, err := strconv.ParseBool(f.Get(config.Default()))
+	return err == nil
 }
 
 // settings holds the widgets for one Settings window. Rows are generated from
@@ -82,12 +107,10 @@ func (s *settings) build() fyne.CanvasObject {
 		row := &settingsRow{field: f}
 
 		row.orig = f.Get(cfg)
-		row.entry = widget.NewEntry()
-		row.entry.SetText(row.orig)
-		// Validate as the user types so the error appears next to the offending
-		// value rather than only after pressing Save, and re-check whether the
-		// restart warning still applies.
-		row.entry.OnChanged = func(string) {
+		// Validate as the input changes so an error appears next to the
+		// offending value rather than only after pressing Save, and re-check
+		// whether the restart warning still applies.
+		onChange := func() {
 			s.validateRow(row)
 			s.updateRestartNote()
 		}
@@ -117,9 +140,29 @@ func (s *settings) build() fyne.CanvasObject {
 		row.errLb = canvas.NewText("", theme.Color(theme.ColorNameError))
 		row.errLb.TextSize = theme.CaptionTextSize()
 
+		// Built only now, and the initial value set BEFORE the callback is
+		// attached: Check.SetChecked fires OnChanged, and onChange reads
+		// row.errLb, which must already exist (same ordering rule as
+		// history.build). Attaching after the initial value also stops the
+		// restart note appearing before the user has touched anything.
+		var input fyne.CanvasObject
+		if isBoolField(f) {
+			// A checkbox cannot hold an invalid value, so it needs no
+			// validation of its own -- but it still drives the restart note.
+			row.check = widget.NewCheck("", nil)
+			row.check.SetChecked(row.orig == "true")
+			row.check.OnChanged = func(bool) { onChange() }
+			input = row.check
+		} else {
+			row.entry = widget.NewEntry()
+			row.entry.SetText(row.orig)
+			row.entry.OnChanged = func(string) { onChange() }
+			input = row.entry
+		}
+
 		// Fixed-width key column keeps every input left-aligned with the others.
 		keyCol := container.New(fixedWidthLayout{w: settingsKeyWidth}, key)
-		top := container.NewBorder(nil, nil, keyCol, nil, row.entry)
+		top := container.NewBorder(nil, nil, keyCol, nil, input)
 
 		// The error is hidden until it has text: a shown-but-empty canvas.Text
 		// still occupies a line, which would space every setting apart even when
@@ -196,7 +239,7 @@ func (s *settings) applyAdvancedVisibility() {
 // It reports whether the value is valid.
 func (s *settings) validateRow(row *settingsRow) bool {
 	var probe config.Config
-	if err := row.field.Set(&probe, row.entry.Text); err != nil {
+	if err := row.field.Set(&probe, row.value()); err != nil {
 		row.errLb.Text = err.Error()
 		row.errLb.Refresh()
 		row.errLb.Show() // takes a line only while there is something to say
@@ -225,7 +268,7 @@ func (s *settings) updateRestartNote() {
 // dirty reports whether any input differs from the value it was built with.
 func (s *settings) dirty() bool {
 	for _, row := range s.rows {
-		if row.entry.Text != row.orig {
+		if row.value() != row.orig {
 			return true
 		}
 	}
@@ -243,7 +286,7 @@ func (s *settings) save() {
 		// Validate into the real config so valid rows carry their new value,
 		// and re-check every row so all errors are shown at once, not just the
 		// first.
-		if err := row.field.Set(&cfg, row.entry.Text); err != nil {
+		if err := row.field.Set(&cfg, row.value()); err != nil {
 			ok = false
 		}
 		if !s.validateRow(row) {

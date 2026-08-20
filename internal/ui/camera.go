@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"image"
 	"log/slog"
 
@@ -152,13 +153,29 @@ func (a *App) routeScan(ev camera.ScanEvent) {
 		}
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				a.showAddStudentDialogPrefill(p.Name, "Student not found. Add them?")
+				// An unknown code always prompts, confirmation setting or not:
+				// there is no student to check in, and silently dropping the
+				// scan would look like the camera failed to read the code.
+				a.showAddStudentDialogPrefill(p.Name,
+					fmt.Sprintf("Scanned %q but student is not found in this center. Add them?", p.Name))
 			}
 			return
 		}
-		// The check-in/out dialog reads current status from the store, so the
-		// row's In/Out fields are not needed here.
-		a.showCheckInOutDialog(store.StudentRow{ID: st.ID, Name: st.Name})
+		// Status is read from the store, so the row's In/Out fields are not
+		// needed here.
+		row := store.StudentRow{ID: st.ID, Name: st.Name}
+
+		// With confirmation off, apply the scan immediately. applyCheckInOut
+		// returns false only when the student has already checked in and out
+		// today, which has no next action -- fall back to the dialog, which
+		// says so, rather than leaving the scan with no visible effect.
+		if !a.cfg.ConfirmScan {
+			if a.applyCheckInOut(row) {
+				slog.Info("scan applied without confirmation", "name", row.Name)
+				return
+			}
+		}
+		a.showCheckInOutDialog(row)
 	})
 }
 

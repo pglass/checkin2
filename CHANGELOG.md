@@ -1,5 +1,8 @@
 # Unreleased
 
+* Added `confirm_scan` setting. Off, a scanned QR code checks the student in or
+  out immediately with no pop-up; on (the default) it confirms first. Unknown
+  codes still open the Add Student pop-up either way.
 * Added settings window. Changed settings take effect on next startup.
 * Added static macOS build (`make package-darwin`) linking slim OpenCV
 * Support cross-build for Intel Macs with `ARCH=x86_64`.

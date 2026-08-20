@@ -14,6 +14,17 @@ import (
 	"github.com/pglass/checkin/internal/store"
 )
 
+// addNameLabelWidth is the width of the "Name:" column in the Add Student
+// dialog, wide enough for the label so the entry starts clear of it.
+const addNameLabelWidth = 52
+
+// addStudentWidthFraction is how much of the main window's width the Add
+// Student dialog spans. Fyne sizes a custom dialog to its content, which leaves
+// it narrow and makes the "not found" notice wrap over several lines; widening
+// it gives the notice and the name entry room. Dialog.Resize clamps to the
+// content's MinSize, so this can only ever widen, never truncate.
+const addStudentWidthFraction = 0.85
+
 // showAddStudentDialog presents the Add Student popup. On duplicate name it
 // shows a red message and keeps the dialog open (prefill optionally set for QR).
 func (a *App) showAddStudentDialog() { a.showAddStudentDialogPrefill("", "") }
@@ -24,7 +35,16 @@ func (a *App) showAddStudentDialogPrefill(prefill, notice string) {
 	entry := widget.NewEntry()
 	entry.SetText(prefill)
 
-	errLabel := canvas.NewText(notice, theme.Color(theme.ColorNameError))
+	// The notice explains why the dialog opened (a scanned code with no matching
+	// student). It is normal size and wraps, unlike the validation error below,
+	// which stays a small red caption.
+	noticeLbl := widget.NewLabel(notice)
+	noticeLbl.Wrapping = fyne.TextWrapWord
+	if notice == "" {
+		noticeLbl.Hide() // no line taken when opened from the menu
+	}
+
+	errLabel := canvas.NewText("", theme.Color(theme.ColorNameError))
 	errLabel.TextSize = theme.CaptionTextSize()
 
 	var popup dialog.Dialog
@@ -47,16 +67,29 @@ func (a *App) showAddStudentDialogPrefill(prefill, notice string) {
 	addBtn.Importance = widget.HighImportance
 	cancelBtn := widget.NewButton("Cancel", func() { popup.Hide() })
 
+	// Label and entry share a row: the fixed-width label column keeps the entry
+	// aligned the same way the Settings window aligns its inputs.
+	nameLbl := widget.NewLabel("Name:")
+	nameRow := container.NewBorder(nil, nil,
+		container.New(fixedWidthLayout{w: addNameLabelWidth}, nameLbl), nil, entry)
+
 	body := container.NewVBox(
-		widget.NewLabel("Student name:"),
-		entry,
+		noticeLbl,
+		nameRow,
 		errLabel,
-		container.NewHBox(cancelBtn, addBtn),
+		// Centred rather than left-aligned: the dialog is much wider than the
+		// buttons, so an HBox alone would strand them at the left edge.
+		container.NewCenter(container.NewHBox(cancelBtn, addBtn)),
 	)
 	popup = dialog.NewCustomWithoutButtons("Add Student", body, a.win)
 	popup.SetOnClosed(func() { a.popupOpen = false })
 	entry.OnSubmitted = func(string) { confirm() }
 	popup.Show()
+	// After Show: Resize needs the dialog's inner window, which does not exist
+	// until then. Height comes from MinSize (Resize takes the max), so only the
+	// width is really being set here.
+	winSize := a.win.Canvas().Size()
+	popup.Resize(fyne.NewSize(winSize.Width*addStudentWidthFraction, 0))
 	a.win.Canvas().Focus(entry)
 }
 
@@ -111,6 +144,32 @@ func (a *App) showRemoveDialog(row store.StudentRow) {
 	popup.Show()
 }
 
+// applyCheckInOut performs the check-in or check-out implied by the student's
+// current status, without any confirmation. Shared by the confirmation dialog's
+// buttons and by the no-confirmation scan path, so both apply exactly the same
+// state transition.
+//
+// It reports whether anything was applied: a student who has already checked in
+// and out today has no next action, and the caller decides what to do about it
+// (the scan path falls back to showing the dialog, which explains the state).
+func (a *App) applyCheckInOut(row store.StudentRow) bool {
+	var err error
+	switch a.store.Status(row.ID) {
+	case store.StatusNotIn:
+		err = a.store.CheckIn(a.ctx, row.ID, row.Name)
+	case store.StatusIn:
+		err = a.store.CheckOut(a.ctx, row.ID, row.Name)
+	default: // StatusOut: nothing left to do today
+		return false
+	}
+	if err != nil {
+		dialog.ShowError(err, a.win)
+		return true // handled: the error is on screen, do not fall back
+	}
+	a.refresh()
+	return true
+}
+
 // showCheckInOutDialog presents the check-in/out popup (shared by double-click
 // and QR scan). The middle button depends on the student's current status.
 func (a *App) showCheckInOutDialog(row store.StudentRow) {
@@ -129,11 +188,7 @@ func (a *App) showCheckInOutDialog(row store.StudentRow) {
 	case store.StatusNotIn:
 		name.Text = "Check in " + row.Name + " at " + now
 		b := widget.NewButton("Check In", func() {
-			if err := a.store.CheckIn(a.ctx, row.ID, row.Name); err != nil {
-				dialog.ShowError(err, a.win)
-				return
-			}
-			a.refresh()
+			a.applyCheckInOut(row)
 			popup.Hide()
 		})
 		b.Importance = widget.HighImportance
@@ -141,11 +196,7 @@ func (a *App) showCheckInOutDialog(row store.StudentRow) {
 	case store.StatusIn:
 		name.Text = "Check out " + row.Name + " at " + now
 		b := widget.NewButton("Check Out", func() {
-			if err := a.store.CheckOut(a.ctx, row.ID, row.Name); err != nil {
-				dialog.ShowError(err, a.win)
-				return
-			}
-			a.refresh()
+			a.applyCheckInOut(row)
 			popup.Hide()
 		})
 		b.Importance = widget.HighImportance

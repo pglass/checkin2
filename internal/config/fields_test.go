@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -81,7 +82,16 @@ func TestFieldsSetValidation(t *testing.T) {
 		if err := f.Set(&cfg, padded); err != nil {
 			t.Errorf("%s: Set(%q) = %v, want space to be trimmed", f.Key, padded, err)
 		}
-		for _, bad := range []string{"", "abc", "-1", "0"} {
+		// What counts as invalid depends on the field's type: "0" and "-1" are
+		// nonsense for a positive int or duration, but "0" is a perfectly good
+		// false for a bool. Key off whether the current value parses as a bool.
+		bad := []string{"", "abc"}
+		if _, err := strconv.ParseBool(f.Get(Default())); err != nil {
+			bad = append(bad, "-1", "0")
+		} else {
+			bad = append(bad, "2", "yes")
+		}
+		for _, bad := range bad {
 			if err := f.Set(&cfg, bad); err == nil {
 				t.Errorf("%s: Set(%q) = nil, want error", f.Key, bad)
 			} else if !strings.Contains(err.Error(), f.Key) {
