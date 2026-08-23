@@ -1,4 +1,4 @@
-# Unreleased
+# 0.0.5
 
 * Require authorized adult to check in/out each student
 * History results name the authorized adult ("... checked in by Jane Smith")
