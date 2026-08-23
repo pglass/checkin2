@@ -1,11 +1,10 @@
 # Unreleased
 
-* Check-in/out requires the parent or authorized adult to type their name; it is
-  stored with the check-in/out time in the database
-* Scans always show the confirmation pop-up; removed the `confirm_scan` setting
-* Check-in/out pop-up suggests the adults who recently signed that student in or
-  out; tap one to fill the name instead of typing it
+* Require authorized adult to check in/out each student
 * History results name the authorized adult ("... checked in by Jane Smith")
+* Scans always show the confirmation pop-up; removed the `confirm_scan` setting
+* Use First Name and Last Name fields instead of combined Name field
+* Fix QR Code PDF layout
 
 # 0.0.4
 

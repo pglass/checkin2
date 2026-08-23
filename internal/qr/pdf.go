@@ -17,6 +17,13 @@ const (
 	pdfRows     = 4
 	pdfMargin   = 12.0 // mm
 	pdfNameH    = 6.0  // mm reserved for the name under each code
+	pdfNameGap  = 1.0  // mm between a code and its caption
+	// pdfBottomMargin is the space kept clear at the foot of the page. fpdf's
+	// own page-break margin defaults to about 20mm regardless of SetMargins,
+	// and printers reserve a similar strip, so the grid is sized against this
+	// rather than pdfMargin: a bottom-row caption that crossed it used to be
+	// pushed onto the next page, stranding the following codes a page later.
+	pdfBottomMargin = 20.5
 	qrPixelSize = 512  // render resolution per code
 )
 
@@ -51,36 +58,32 @@ func GeneratePDFProgress(students []Student, path string, progress func(done, to
 
 	pdf := fpdf.New("P", "mm", "Letter", "")
 	pdf.SetMargins(pdfMargin, pdfMargin, pdfMargin)
+	// Every element is placed at an absolute position and pages are added by the
+	// loop below, so fpdf must not insert its own breaks. Its default bottom
+	// margin (about 20mm) is independent of SetMargins, and a bottom-row caption
+	// crosses it: fpdf would push that caption to a fresh page and leave the
+	// cursor there, so the next code landed on the wrong page and the sheet
+	// drifted one page further with every overflow.
+	pdf.SetAutoPageBreak(false, 0)
 
 	pageW, pageH := pdf.GetPageSize()
-	usableW := pageW - 2*pdfMargin
-	usableH := pageH - 2*pdfMargin
-	cellW := usableW / float64(pdfCols)
-	cellH := usableH / float64(pdfRows)
-	qrSide := minf(cellW, cellH-pdfNameH) * 0.9
+	grid := newGrid(pageW, pageH)
 
-	perPage := pdfCols * pdfRows
 	for i, st := range students {
-		if i%perPage == 0 {
+		if i%grid.perPage == 0 {
 			pdf.AddPage()
 		}
-		slot := i % perPage
-		col := slot % pdfCols
-		row := slot / pdfCols
-
-		cellX := pdfMargin + float64(col)*cellW
-		cellY := pdfMargin + float64(row)*cellH
+		slot := grid.slot(i)
 
 		imgName := fmt.Sprintf("qr%d", i)
 		pdf.RegisterImageOptionsReader(imgName, fpdf.ImageOptions{ImageType: "PNG"}, bytes.NewReader(pngs[i]))
 
-		qrX := cellX + (cellW-qrSide)/2
-		qrY := cellY
-		pdf.ImageOptions(imgName, qrX, qrY, qrSide, qrSide, false, fpdf.ImageOptions{ImageType: "PNG"}, 0, "")
+		pdf.ImageOptions(imgName, slot.QRX, slot.QRY, grid.qrSide, grid.qrSide,
+			false, fpdf.ImageOptions{ImageType: "PNG"}, 0, "")
 
 		pdf.SetFont("Helvetica", "", 10)
-		pdf.SetXY(cellX, qrY+qrSide+1)
-		pdf.CellFormat(cellW, pdfNameH, tr(pdf, st.Label), "", 0, "C", false, 0, "")
+		pdf.SetXY(slot.CellX, slot.CaptionY)
+		pdf.CellFormat(grid.cellW, pdfNameH, tr(pdf, st.Label), "", 0, "C", false, 0, "")
 	}
 
 	if pdf.Err() {
@@ -92,6 +95,57 @@ func GeneratePDFProgress(students []Student, path string, progress func(done, to
 // renderPNGs renders one PNG-encoded QR image per name, in parallel across all
 // CPUs, returning them in the original order. progress (if non-nil) is called
 // once per completed image with a running count.
+// grid is the page geometry for one sheet: where each code and caption goes.
+// Split out from the drawing loop so the placement rules can be checked
+// directly, without reading back a generated PDF.
+type grid struct {
+	pageH   float64
+	cellW   float64
+	cellH   float64
+	qrSide  float64
+	perPage int
+}
+
+// slotPos is one cell's placement, in mm from the page's top-left corner.
+type slotPos struct {
+	CellX    float64 // left edge of the cell
+	QRX, QRY float64 // top-left of the QR image
+	CaptionY float64 // top of the caption line
+}
+
+func newGrid(pageW, pageH float64) grid {
+	cellW := (pageW - 2*pdfMargin) / float64(pdfCols)
+	cellH := (pageH - pdfMargin - pdfBottomMargin) / float64(pdfRows)
+	return grid{
+		pageH:   pageH,
+		cellW:   cellW,
+		cellH:   cellH,
+		qrSide:  minf(cellW, cellH-pdfNameH-pdfNameGap) * 0.9,
+		perPage: pdfCols * pdfRows,
+	}
+}
+
+// slot returns the placement of the i-th student, counting across rows and
+// wrapping to a new page every perPage entries.
+func (g grid) slot(i int) slotPos {
+	n := i % g.perPage
+	col := n % pdfCols
+	row := n / pdfCols
+
+	cellX := pdfMargin + float64(col)*g.cellW
+	cellY := pdfMargin + float64(row)*g.cellH
+
+	return slotPos{
+		CellX:    cellX,
+		QRX:      cellX + (g.cellW-g.qrSide)/2,
+		QRY:      cellY,
+		CaptionY: cellY + g.qrSide + pdfNameGap,
+	}
+}
+
+// bottom is the y of the lowest ink in a cell: the bottom of its caption.
+func (g grid) bottom(s slotPos) float64 { return s.CaptionY + pdfNameH }
+
 func renderPNGs(students []Student, progress func(done, total int)) ([][]byte, error) {
 	total := len(students)
 	out := make([][]byte, total)
