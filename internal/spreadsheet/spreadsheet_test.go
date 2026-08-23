@@ -102,8 +102,9 @@ func TestFromRowsSkipsNumbersCaptionRow(t *testing.T) {
 	if got.HeaderRow != 2 {
 		t.Errorf("HeaderRow = %d, want 2", got.HeaderRow)
 	}
-	if want := []string{"melissa kam", "paul glass"}; !reflect.DeepEqual(got.Names(0, 1), want) {
-		t.Errorf("names = %q, want %q", got.Names(0, 1), want)
+	want := []Name{{First: "melissa", Last: "kam"}, {First: "paul", Last: "glass"}}
+	if !reflect.DeepEqual(got.Names(0, 1), want) {
+		t.Errorf("names = %+v, want %+v", got.Names(0, 1), want)
 	}
 }
 
@@ -156,8 +157,9 @@ func TestWithHeaderRow(t *testing.T) {
 	if want := []string{"Table 1"}; !reflect.DeepEqual(got.Headers, want) {
 		t.Errorf("headers = %q, want %q", got.Headers, want)
 	}
-	if want := []string{"First Name", "melissa"}; !reflect.DeepEqual(got.Names(0, -1), want) {
-		t.Errorf("names = %q, want %q", got.Names(0, -1), want)
+	// One column can no longer produce a name: both parts are required.
+	if got := got.Names(0, -1); got != nil {
+		t.Errorf("Names(0,-1) = %+v, want nil", got)
 	}
 	// The receiver is unchanged: WithHeaderRow returns a new Sheet.
 	if sheet.HeaderRow != 2 {
@@ -200,40 +202,37 @@ func TestNames(t *testing.T) {
 		Headers: []string{"First", "Last"},
 		Rows: [][]string{
 			{"John", "Smith"},
-			{"Ada", ""},     // missing last name: no trailing space
-			{"", "Hopper"},  // missing first name: no leading space
-			{"", ""},        // fully blank: not a student
-			{"Grace", "H."}, //
+			{"Ada", ""},       // missing last name: not a complete student
+			{"", "Hopper"},    // missing first name: likewise
+			{"", ""},          // fully blank
+			{" Grace ", "H."}, // parts are trimmed
 		},
 	}
 
 	t.Run("both columns", func(t *testing.T) {
-		want := []string{"John Smith", "Ada", "Hopper", "Grace H."}
+		want := []Name{{First: "John", Last: "Smith"}, {First: "Grace", Last: "H."}}
 		if got := sheet.Names(0, 1); !reflect.DeepEqual(got, want) {
-			t.Errorf("Names(0,1) = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("first column only", func(t *testing.T) {
-		want := []string{"John", "Ada", "Grace"}
-		if got := sheet.Names(0, -1); !reflect.DeepEqual(got, want) {
-			t.Errorf("Names(0,-1) = %q, want %q", got, want)
+			t.Errorf("Names(0,1) = %+v, want %+v", got, want)
 		}
 	})
 
 	t.Run("out of range first column", func(t *testing.T) {
 		if got := sheet.Names(-1, 1); got != nil {
-			t.Errorf("Names(-1,1) = %q, want nil", got)
+			t.Errorf("Names(-1,1) = %+v, want nil", got)
 		}
 		if got := sheet.Names(9, 1); got != nil {
-			t.Errorf("Names(9,1) = %q, want nil", got)
+			t.Errorf("Names(9,1) = %+v, want nil", got)
 		}
 	})
 
-	t.Run("out of range last column falls back to first only", func(t *testing.T) {
-		want := []string{"John", "Ada", "Grace"}
-		if got := sheet.Names(0, 9); !reflect.DeepEqual(got, want) {
-			t.Errorf("Names(0,9) = %q, want %q", got, want)
+	// Both columns are required, so an unset or out-of-range last column
+	// yields nothing rather than falling back to the first column alone.
+	t.Run("missing or out of range last column", func(t *testing.T) {
+		if got := sheet.Names(0, -1); got != nil {
+			t.Errorf("Names(0,-1) = %+v, want nil", got)
+		}
+		if got := sheet.Names(0, 9); got != nil {
+			t.Errorf("Names(0,9) = %+v, want nil", got)
 		}
 	})
 }
@@ -278,8 +277,9 @@ func TestOpen(t *testing.T) {
 		t.Errorf("headers = %q, want %q", sheet.Headers, want)
 	}
 	// Cell values are trimmed on read.
-	if want := []string{"John Smith", "Ada Lovelace"}; !reflect.DeepEqual(sheet.Names(0, 1), want) {
-		t.Errorf("names = %q, want %q", sheet.Names(0, 1), want)
+	want := []Name{{First: "John", Last: "Smith"}, {First: "Ada", Last: "Lovelace"}}
+	if !reflect.DeepEqual(sheet.Names(0, 1), want) {
+		t.Errorf("names = %+v, want %+v", sheet.Names(0, 1), want)
 	}
 }
 
@@ -444,8 +444,9 @@ func TestWithoutHeaderRow(t *testing.T) {
 		t.Errorf("headers = %q, want %q", got.Headers, want)
 	}
 	// No row is consumed as a header: both rows are students.
-	if want := []string{"john smith", "ada lovelace"}; !reflect.DeepEqual(got.Names(0, 1), want) {
-		t.Errorf("names = %q, want %q", got.Names(0, 1), want)
+	want := []Name{{First: "john", Last: "smith"}, {First: "ada", Last: "lovelace"}}
+	if !reflect.DeepEqual(got.Names(0, 1), want) {
+		t.Errorf("names = %+v, want %+v", got.Names(0, 1), want)
 	}
 	if got.HeaderRow != 0 {
 		t.Errorf("HeaderRow = %d, want 0 (meaning no header)", got.HeaderRow)
@@ -472,8 +473,11 @@ func TestWithoutHeaderRowPadsToWidestRow(t *testing.T) {
 			t.Errorf("row %d has %d cells, want 3", i, len(r))
 		}
 	}
-	if want := []string{"john", "ada lovelace"}; !reflect.DeepEqual(got.Names(0, 1), want) {
-		t.Errorf("names = %q, want %q", got.Names(0, 1), want)
+	// The padded "john" row has no last name, so it is not an importable
+	// student; only the complete row survives.
+	want := []Name{{First: "ada", Last: "lovelace"}}
+	if !reflect.DeepEqual(got.Names(0, 1), want) {
+		t.Errorf("names = %+v, want %+v", got.Names(0, 1), want)
 	}
 }
 

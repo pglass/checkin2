@@ -23,10 +23,10 @@ func TestMutationDebugLogs(t *testing.T) {
 	}
 	defer s.Close()
 
-	st, _ := s.AddStudent(ctx, "Grace")
-	s.CheckIn(ctx, st.ID, st.Name, "Parent")
-	s.CheckOut(ctx, st.ID, st.Name, "Parent")
-	s.RemoveStudent(ctx, st.ID, st.Name)
+	st, _ := s.AddStudent(ctx, testName("Grace"))
+	s.CheckIn(ctx, st.ID, nameOf(st), "Parent")
+	s.CheckOut(ctx, st.ID, nameOf(st), "Parent")
+	s.RemoveStudent(ctx, st.ID, nameOf(st))
 
 	out := buf.String()
 	for _, want := range []string{
@@ -55,7 +55,7 @@ func TestInfoLevelHidesDebug(t *testing.T) {
 	}
 	defer s.Close()
 
-	s.AddStudent(ctx, "Heidi")
+	s.AddStudent(ctx, testName("Heidi"))
 	if strings.Contains(buf.String(), "student added") {
 		t.Errorf("DEBUG log leaked at INFO level:\n%s", buf.String())
 	}

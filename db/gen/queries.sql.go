@@ -12,23 +12,29 @@ import (
 )
 
 const addStudent = `-- name: AddStudent :one
-INSERT INTO Student (Name) VALUES (?) RETURNING id, name
+INSERT INTO Student (FirstName, LastName) VALUES (?, ?) RETURNING id, firstname, lastname
 `
 
-func (q *Queries) AddStudent(ctx context.Context, name string) (Student, error) {
-	row := q.db.QueryRowContext(ctx, addStudent, name)
+type AddStudentParams struct {
+	Firstname string `json:"firstname"`
+	Lastname  string `json:"lastname"`
+}
+
+func (q *Queries) AddStudent(ctx context.Context, arg AddStudentParams) (Student, error) {
+	row := q.db.QueryRowContext(ctx, addStudent, arg.Firstname, arg.Lastname)
 	var i Student
-	err := row.Scan(&i.ID, &i.Name)
+	err := row.Scan(&i.ID, &i.Firstname, &i.Lastname)
 	return i, err
 }
 
 const appendLog = `-- name: AppendLog :exec
-INSERT INTO Log (StudentID, StudentName, Action, Timestamp, AuthorizedAdult) VALUES (?, ?, ?, ?, ?)
+INSERT INTO Log (StudentID, FirstName, LastName, Action, Timestamp, AuthorizedAdult) VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type AppendLogParams struct {
 	Studentid       sql.NullInt64  `json:"studentid"`
-	Studentname     string         `json:"studentname"`
+	Firstname       string         `json:"firstname"`
+	Lastname        string         `json:"lastname"`
 	Action          string         `json:"action"`
 	Timestamp       int64          `json:"timestamp"`
 	Authorizedadult sql.NullString `json:"authorizedadult"`
@@ -37,7 +43,8 @@ type AppendLogParams struct {
 func (q *Queries) AppendLog(ctx context.Context, arg AppendLogParams) error {
 	_, err := q.db.ExecContext(ctx, appendLog,
 		arg.Studentid,
-		arg.Studentname,
+		arg.Firstname,
+		arg.Lastname,
 		arg.Action,
 		arg.Timestamp,
 		arg.Authorizedadult,
@@ -50,7 +57,7 @@ SELECT COUNT(*) FROM Log
 WHERE Action IN ('Checked In', 'Checked Out')
   AND (?1 = 0 OR Timestamp >= ?2)
   AND (?3 = 0 OR Timestamp <= ?4)
-  AND (?5 = 1 OR StudentName IN (SELECT value FROM json_each(?6)))
+  AND (?5 = 1 OR StudentID IN (SELECT value FROM json_each(?6)))
 `
 
 type CountHistoryParams struct {
@@ -59,7 +66,7 @@ type CountHistoryParams struct {
 	HasEnd      interface{} `json:"has_end"`
 	End         int64       `json:"end"`
 	AllStudents interface{} `json:"all_students"`
-	NamesJson   interface{} `json:"names_json"`
+	IdsJson     interface{} `json:"ids_json"`
 }
 
 func (q *Queries) CountHistory(ctx context.Context, arg CountHistoryParams) (int64, error) {
@@ -69,7 +76,7 @@ func (q *Queries) CountHistory(ctx context.Context, arg CountHistoryParams) (int
 		arg.HasEnd,
 		arg.End,
 		arg.AllStudents,
-		arg.NamesJson,
+		arg.IdsJson,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -139,34 +146,39 @@ func (q *Queries) DeleteTodayCheckinsForStudent(ctx context.Context, arg DeleteT
 }
 
 const getStudentByID = `-- name: GetStudentByID :one
-SELECT id, name FROM Student WHERE ID = ?
+SELECT id, firstname, lastname FROM Student WHERE ID = ?
 `
 
 func (q *Queries) GetStudentByID(ctx context.Context, id int64) (Student, error) {
 	row := q.db.QueryRowContext(ctx, getStudentByID, id)
 	var i Student
-	err := row.Scan(&i.ID, &i.Name)
+	err := row.Scan(&i.ID, &i.Firstname, &i.Lastname)
 	return i, err
 }
 
 const getStudentByName = `-- name: GetStudentByName :one
-SELECT id, name FROM Student WHERE Name = ?
+SELECT id, firstname, lastname FROM Student WHERE LastName = ? AND FirstName = ?
 `
 
-func (q *Queries) GetStudentByName(ctx context.Context, name string) (Student, error) {
-	row := q.db.QueryRowContext(ctx, getStudentByName, name)
+type GetStudentByNameParams struct {
+	Lastname  string `json:"lastname"`
+	Firstname string `json:"firstname"`
+}
+
+func (q *Queries) GetStudentByName(ctx context.Context, arg GetStudentByNameParams) (Student, error) {
+	row := q.db.QueryRowContext(ctx, getStudentByName, arg.Lastname, arg.Firstname)
 	var i Student
-	err := row.Scan(&i.ID, &i.Name)
+	err := row.Scan(&i.ID, &i.Firstname, &i.Lastname)
 	return i, err
 }
 
 const historyByName = `-- name: HistoryByName :many
-SELECT StudentName, Action, Timestamp, AuthorizedAdult FROM Log
+SELECT FirstName, LastName, Action, Timestamp, AuthorizedAdult FROM Log
 WHERE Action IN ('Checked In', 'Checked Out')
   AND (?1 = 0 OR Timestamp >= ?2)
   AND (?3 = 0 OR Timestamp <= ?4)
-  AND (?5 = 1 OR StudentName IN (SELECT value FROM json_each(?6)))
-ORDER BY StudentName ASC, Timestamp ASC
+  AND (?5 = 1 OR StudentID IN (SELECT value FROM json_each(?6)))
+ORDER BY LastName ASC, FirstName ASC, Timestamp ASC
 LIMIT ?7
 `
 
@@ -176,12 +188,13 @@ type HistoryByNameParams struct {
 	HasEnd      interface{} `json:"has_end"`
 	End         int64       `json:"end"`
 	AllStudents interface{} `json:"all_students"`
-	NamesJson   interface{} `json:"names_json"`
+	IdsJson     interface{} `json:"ids_json"`
 	Lim         int64       `json:"lim"`
 }
 
 type HistoryByNameRow struct {
-	Studentname     string         `json:"studentname"`
+	Firstname       string         `json:"firstname"`
+	Lastname        string         `json:"lastname"`
 	Action          string         `json:"action"`
 	Timestamp       int64          `json:"timestamp"`
 	Authorizedadult sql.NullString `json:"authorizedadult"`
@@ -194,7 +207,7 @@ func (q *Queries) HistoryByName(ctx context.Context, arg HistoryByNameParams) ([
 		arg.HasEnd,
 		arg.End,
 		arg.AllStudents,
-		arg.NamesJson,
+		arg.IdsJson,
 		arg.Lim,
 	)
 	if err != nil {
@@ -205,7 +218,8 @@ func (q *Queries) HistoryByName(ctx context.Context, arg HistoryByNameParams) ([
 	for rows.Next() {
 		var i HistoryByNameRow
 		if err := rows.Scan(
-			&i.Studentname,
+			&i.Firstname,
+			&i.Lastname,
 			&i.Action,
 			&i.Timestamp,
 			&i.Authorizedadult,
@@ -224,11 +238,12 @@ func (q *Queries) HistoryByName(ctx context.Context, arg HistoryByNameParams) ([
 }
 
 const historyByTime = `-- name: HistoryByTime :many
-SELECT StudentName, Action, Timestamp, AuthorizedAdult FROM Log
+
+SELECT FirstName, LastName, Action, Timestamp, AuthorizedAdult FROM Log
 WHERE Action IN ('Checked In', 'Checked Out')
   AND (?1 = 0 OR Timestamp >= ?2)
   AND (?3 = 0 OR Timestamp <= ?4)
-  AND (?5 = 1 OR StudentName IN (SELECT value FROM json_each(?6)))
+  AND (?5 = 1 OR StudentID IN (SELECT value FROM json_each(?6)))
 ORDER BY Timestamp ASC
 LIMIT ?7
 `
@@ -239,17 +254,21 @@ type HistoryByTimeParams struct {
 	HasEnd      interface{} `json:"has_end"`
 	End         int64       `json:"end"`
 	AllStudents interface{} `json:"all_students"`
-	NamesJson   interface{} `json:"names_json"`
+	IdsJson     interface{} `json:"ids_json"`
 	Lim         int64       `json:"lim"`
 }
 
 type HistoryByTimeRow struct {
-	Studentname     string         `json:"studentname"`
+	Firstname       string         `json:"firstname"`
+	Lastname        string         `json:"lastname"`
 	Action          string         `json:"action"`
 	Timestamp       int64          `json:"timestamp"`
 	Authorizedadult sql.NullString `json:"authorizedadult"`
 }
 
+// Students are matched by ID rather than by name: a name is now two columns,
+// and the picker already tracks selection by ID. json_each over a JSON array
+// keeps this a single fixed placeholder (see store.History for why).
 func (q *Queries) HistoryByTime(ctx context.Context, arg HistoryByTimeParams) ([]HistoryByTimeRow, error) {
 	rows, err := q.db.QueryContext(ctx, historyByTime,
 		arg.HasStart,
@@ -257,7 +276,7 @@ func (q *Queries) HistoryByTime(ctx context.Context, arg HistoryByTimeParams) ([
 		arg.HasEnd,
 		arg.End,
 		arg.AllStudents,
-		arg.NamesJson,
+		arg.IdsJson,
 		arg.Lim,
 	)
 	if err != nil {
@@ -268,7 +287,8 @@ func (q *Queries) HistoryByTime(ctx context.Context, arg HistoryByTimeParams) ([
 	for rows.Next() {
 		var i HistoryByTimeRow
 		if err := rows.Scan(
-			&i.Studentname,
+			&i.Firstname,
+			&i.Lastname,
 			&i.Action,
 			&i.Timestamp,
 			&i.Authorizedadult,
@@ -287,9 +307,11 @@ func (q *Queries) HistoryByTime(ctx context.Context, arg HistoryByTimeParams) ([
 }
 
 const listStudents = `-- name: ListStudents :many
-SELECT id, name FROM Student ORDER BY Name
+SELECT id, firstname, lastname FROM Student ORDER BY LastName, FirstName
 `
 
+// Ordered by the UNIQUE (LastName, FirstName) index, which is also the roster
+// order the main list and the student pickers display.
 func (q *Queries) ListStudents(ctx context.Context) ([]Student, error) {
 	rows, err := q.db.QueryContext(ctx, listStudents)
 	if err != nil {
@@ -299,7 +321,7 @@ func (q *Queries) ListStudents(ctx context.Context) ([]Student, error) {
 	var items []Student
 	for rows.Next() {
 		var i Student
-		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+		if err := rows.Scan(&i.ID, &i.Firstname, &i.Lastname); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -314,7 +336,7 @@ func (q *Queries) ListStudents(ctx context.Context) ([]Student, error) {
 }
 
 const logSince = `-- name: LogSince :many
-SELECT id, studentid, studentname, "action", timestamp, authorizedadult FROM Log
+SELECT id, studentid, firstname, lastname, "action", timestamp, authorizedadult FROM Log
 WHERE Timestamp >= ? AND Action IN ('Checked In', 'Checked Out')
 ORDER BY Timestamp
 `
@@ -331,7 +353,8 @@ func (q *Queries) LogSince(ctx context.Context, timestamp int64) ([]Log, error) 
 		if err := rows.Scan(
 			&i.ID,
 			&i.Studentid,
-			&i.Studentname,
+			&i.Firstname,
+			&i.Lastname,
 			&i.Action,
 			&i.Timestamp,
 			&i.Authorizedadult,

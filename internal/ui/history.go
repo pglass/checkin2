@@ -32,7 +32,7 @@ func formatHistoryLine(r store.HistoryRow) string {
 		verb = "checked out"
 	}
 	line := fmt.Sprintf("%s -- %s %s",
-		r.Timestamp.Format("2006-01-02 03:04:05 PM MST"), r.StudentName, verb)
+		r.Timestamp.Format("2006-01-02 03:04:05 PM MST"), r.Name.Full(), verb)
 	if r.AuthorizedAdult != "" {
 		line += " by " + r.AuthorizedAdult
 	}
@@ -181,9 +181,9 @@ func (h *history) clearDate(de *widget.DateEntry) {
 // currentQuery reads the widgets into a store.HistoryQuery.
 func (h *history) currentQuery() store.HistoryQuery {
 	q := store.HistoryQuery{
-		Start:        h.startDate.Date,
-		End:          h.endDate.Date,
-		StudentNames: h.students.selectedNames(),
+		Start:      h.startDate.Date,
+		End:        h.endDate.Date,
+		StudentIDs: h.students.selectedIDs(),
 	}
 	if h.sortSel.SelectedIndex() == 1 {
 		q.Sort = store.SortStudentName

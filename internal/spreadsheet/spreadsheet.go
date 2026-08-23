@@ -24,6 +24,12 @@ var Extensions = []string{".xlsx", ".xlsm", ".xltx", ".xltm"}
 // ErrNoData is returned when the workbook has no usable header row.
 var ErrNoData = errors.New("spreadsheet has no header row")
 
+// Name is one student's name as read from two spreadsheet columns.
+type Name struct {
+	First string
+	Last  string
+}
+
 // Sheet is one worksheet flattened into a header row plus data rows.
 type Sheet struct {
 	// Headers are the column titles, in column order. Blank columns are given
@@ -333,26 +339,28 @@ func isBlank(row []string) bool {
 
 // Names builds the student names for the given column selections.
 //
-// firstIdx is required. lastIdx may be -1, meaning the first column alone holds
-// the whole name; otherwise the two column values are joined with a space.
-// Rows whose resulting name is empty are skipped — a blank cell is not a
-// student.
-func (s *Sheet) Names(firstIdx, lastIdx int) []string {
+// Both column indexes are required: a student is identified by the (last,
+// first) pair, so neither part can be inferred from the other. Rows missing
+// either part are skipped — a blank cell is not a student.
+func (s *Sheet) Names(firstIdx, lastIdx int) []Name {
 	if firstIdx < 0 || firstIdx >= len(s.Headers) {
 		return nil
 	}
-	names := make([]string, 0, len(s.Rows))
+	if lastIdx < 0 || lastIdx >= len(s.Headers) {
+		return nil
+	}
+	names := make([]Name, 0, len(s.Rows))
 	for _, r := range s.Rows {
-		name := r[firstIdx]
-		if lastIdx >= 0 && lastIdx < len(s.Headers) {
-			// TrimSpace on the join, not the parts: either side may be blank,
-			// and "John " / " Smith" should both come out clean.
-			name = strings.TrimSpace(name + " " + r[lastIdx])
+		n := Name{
+			First: strings.TrimSpace(r[firstIdx]),
+			Last:  strings.TrimSpace(r[lastIdx]),
 		}
-		if name == "" {
+		// Both parts identify a student, so a row missing either one carries no
+		// importable name and is skipped rather than imported half-blank.
+		if n.First == "" || n.Last == "" {
 			continue
 		}
-		names = append(names, name)
+		names = append(names, n)
 	}
 	return names
 }

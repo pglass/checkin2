@@ -20,10 +20,19 @@ const (
 	qrPixelSize = 512  // render resolution per code
 )
 
-// GeneratePDF writes a printable PDF of QR codes (one per name) to path,
-// laid out in a grid with the name under each code.
-func GeneratePDF(names []string, path string) error {
-	return GeneratePDFProgress(names, path, nil)
+// Student is one entry on a QR sheet: the name pair to encode, plus the Label
+// printed under the code. The caller supplies the label so the sheet matches
+// however names are shown elsewhere in the app ("Last, First").
+type Student struct {
+	First string
+	Last  string
+	Label string
+}
+
+// GeneratePDF writes a printable PDF of QR codes (one per student) to path,
+// laid out in a grid with the label under each code.
+func GeneratePDF(students []Student, path string) error {
+	return GeneratePDFProgress(students, path, nil)
 }
 
 // GeneratePDFProgress is like GeneratePDF but reports progress. The optional
@@ -34,8 +43,8 @@ func GeneratePDF(names []string, path string) error {
 // The rendering of each QR image (encode + PNG) is the expensive part and is
 // pure CPU, so it is parallelized across all cores; assembling the PDF from the
 // finished PNGs is fast and stays serial.
-func GeneratePDFProgress(names []string, path string, progress func(done, total int)) error {
-	pngs, err := renderPNGs(names, progress)
+func GeneratePDFProgress(students []Student, path string, progress func(done, total int)) error {
+	pngs, err := renderPNGs(students, progress)
 	if err != nil {
 		return err
 	}
@@ -51,7 +60,7 @@ func GeneratePDFProgress(names []string, path string, progress func(done, total 
 	qrSide := minf(cellW, cellH-pdfNameH) * 0.9
 
 	perPage := pdfCols * pdfRows
-	for i, name := range names {
+	for i, st := range students {
 		if i%perPage == 0 {
 			pdf.AddPage()
 		}
@@ -71,7 +80,7 @@ func GeneratePDFProgress(names []string, path string, progress func(done, total 
 
 		pdf.SetFont("Helvetica", "", 10)
 		pdf.SetXY(cellX, qrY+qrSide+1)
-		pdf.CellFormat(cellW, pdfNameH, tr(pdf, name), "", 0, "C", false, 0, "")
+		pdf.CellFormat(cellW, pdfNameH, tr(pdf, st.Label), "", 0, "C", false, 0, "")
 	}
 
 	if pdf.Err() {
@@ -83,8 +92,8 @@ func GeneratePDFProgress(names []string, path string, progress func(done, total 
 // renderPNGs renders one PNG-encoded QR image per name, in parallel across all
 // CPUs, returning them in the original order. progress (if non-nil) is called
 // once per completed image with a running count.
-func renderPNGs(names []string, progress func(done, total int)) ([][]byte, error) {
-	total := len(names)
+func renderPNGs(students []Student, progress func(done, total int)) ([][]byte, error) {
+	total := len(students)
 	out := make([][]byte, total)
 
 	workers := runtime.NumCPU()
@@ -110,7 +119,7 @@ func renderPNGs(names []string, progress func(done, total int)) ([][]byte, error
 			if i >= total {
 				return
 			}
-			img, err := Image(names[i], qrPixelSize)
+			img, err := Image(students[i].First, students[i].Last, qrPixelSize)
 			if err == nil {
 				var buf bytes.Buffer
 				err = png.Encode(&buf, img)

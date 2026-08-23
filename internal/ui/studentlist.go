@@ -13,8 +13,9 @@ import (
 	"github.com/pglass/checkin/internal/store"
 )
 
-// studentTable renders the main student list with Name / In / Out columns and
-// wires double-click (check-in/out) and right-click (remove) per row.
+// studentTable renders the main student list with Last Name / First Name / In /
+// Out columns and wires double-click (check-in/out) and right-click (remove)
+// per row.
 type studentTable struct {
 	app  *App
 	rows []store.StudentRow
@@ -40,8 +41,9 @@ func newStudentTable(a *App) *studentTable {
 }
 
 func (t *studentTable) widget() fyne.CanvasObject {
-	header := container.NewGridWithColumns(3,
-		boldText("Name"), boldText("Check In"), boldText("Check Out"),
+	header := container.NewGridWithColumns(4,
+		boldText("Last Name"), boldText("First Name"),
+		boldText("Check In"), boldText("Check Out"),
 	)
 	return container.NewBorder(header, nil, nil, nil, t.list)
 }
@@ -72,7 +74,7 @@ func rowHeight() float32 { return theme.TextSize() + 2*theme.Padding() }
 // vertical padding, keeping rows compact.
 type studentRow struct {
 	widget.BaseWidget
-	name, in, out *canvas.Text
+	last, first, in, out *canvas.Text
 
 	onDouble    func()
 	onSecondary func(fyne.Position, fyne.KeyModifier)
@@ -84,23 +86,25 @@ func newStudentRow() *studentRow {
 		t.TextSize = theme.TextSize()
 		return t
 	}
-	r := &studentRow{name: mk(), in: mk(), out: mk()}
+	r := &studentRow{last: mk(), first: mk(), in: mk(), out: mk()}
 	r.ExtendBaseWidget(r)
 	return r
 }
 
 func (r *studentRow) update(row store.StudentRow) {
-	r.name.Text = row.Name
+	r.last.Text = row.Name.Last
+	r.first.Text = row.Name.First
 	r.in.Text = timeFmt(row.In)
 	r.out.Text = timeFmt(row.Out)
-	r.name.Refresh()
+	r.last.Refresh()
+	r.first.Refresh()
 	r.in.Refresh()
 	r.out.Refresh()
 }
 
 func (r *studentRow) CreateRenderer() fyne.WidgetRenderer {
 	bg := canvas.NewRectangle(color.Transparent)
-	grid := container.NewGridWithColumns(3, r.name, r.in, r.out)
+	grid := container.NewGridWithColumns(4, r.last, r.first, r.in, r.out)
 	c := container.NewStack(bg, grid)
 	return &rowRenderer{obj: c}
 }

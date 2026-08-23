@@ -23,16 +23,19 @@ const historyQueryTimeout = 30 * time.Second
 
 // HistoryQuery describes a history lookup over the Log table.
 type HistoryQuery struct {
-	Start, End   *time.Time // nil = unbounded (whole-day bounds applied by History)
-	StudentNames []string   // empty = all students
-	Sort         HistorySort
+	Start, End *time.Time // nil = unbounded (whole-day bounds applied by History)
+	// StudentIDs selects which students to include; empty = all students.
+	// Selection is by ID, not name: a name is two columns now, and the picker
+	// already tracks its selection by ID.
+	StudentIDs []int64
+	Sort       HistorySort
 }
 
 // HistoryRow is one check-in/out event.
 type HistoryRow struct {
-	StudentName string
-	Action      string // ActionCheckedIn | ActionCheckedOut
-	Timestamp   time.Time
+	Name      Name
+	Action    string // ActionCheckedIn | ActionCheckedOut
+	Timestamp time.Time
 	// AuthorizedAdult is the name the parent or authorized adult typed when
 	// signing the student in or out. Empty for rows written before the field
 	// existed, or where none was entered (stored as NULL).
@@ -41,7 +44,7 @@ type HistoryRow struct {
 
 // History returns up to limit matching rows plus the total match count
 // (independent of limit). Date bounds are applied at whole-day granularity:
-// Start at 00:00:00 local, End at 23:59:59 local. An empty StudentNames matches
+// Start at 00:00:00 local, End at 23:59:59 local. An empty StudentIDs matches
 // all students. All access is through sqlc-generated queries.
 func (s *Store) History(ctx context.Context, q HistoryQuery, limit int) ([]HistoryRow, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, historyQueryTimeout)
@@ -66,20 +69,20 @@ func (s *Store) History(ctx context.Context, q HistoryQuery, limit int) ([]Histo
 	// students are chosen, all_students=1 bypasses the filter and the JSON is an
 	// (unused) empty array.
 	allStudents := int64(0)
-	if len(q.StudentNames) == 0 {
+	if len(q.StudentIDs) == 0 {
 		allStudents = 1
 	}
-	namesJSON, err := json.Marshal(q.StudentNames)
+	idsJSON, err := json.Marshal(q.StudentIDs)
 	if err != nil {
 		return nil, 0, err
 	}
-	if len(q.StudentNames) == 0 {
-		namesJSON = []byte("[]")
+	if len(q.StudentIDs) == 0 {
+		idsJSON = []byte("[]")
 	}
 
 	total, err := s.q.CountHistory(ctx, gen.CountHistoryParams{
 		HasStart: hasStart, Start: start, HasEnd: hasEnd, End: end,
-		AllStudents: allStudents, NamesJson: string(namesJSON),
+		AllStudents: allStudents, IdsJson: string(idsJSON),
 	})
 	if err != nil {
 		return nil, 0, err
@@ -90,28 +93,36 @@ func (s *Store) History(ctx context.Context, q HistoryQuery, limit int) ([]Histo
 	case SortStudentName:
 		got, err := s.q.HistoryByName(ctx, gen.HistoryByNameParams{
 			HasStart: hasStart, Start: start, HasEnd: hasEnd, End: end,
-			AllStudents: allStudents, NamesJson: string(namesJSON), Lim: int64(limit),
+			AllStudents: allStudents, IdsJson: string(idsJSON), Lim: int64(limit),
 		})
 		if err != nil {
 			return nil, 0, err
 		}
 		rows = make([]HistoryRow, len(got))
 		for i, r := range got {
-			rows[i] = HistoryRow{StudentName: r.Studentname, Action: r.Action,
-				Timestamp: time.Unix(r.Timestamp, 0), AuthorizedAdult: r.Authorizedadult.String}
+			rows[i] = HistoryRow{
+				Name:            Name{First: r.Firstname, Last: r.Lastname},
+				Action:          r.Action,
+				Timestamp:       time.Unix(r.Timestamp, 0),
+				AuthorizedAdult: r.Authorizedadult.String,
+			}
 		}
 	default: // SortEventTime
 		got, err := s.q.HistoryByTime(ctx, gen.HistoryByTimeParams{
 			HasStart: hasStart, Start: start, HasEnd: hasEnd, End: end,
-			AllStudents: allStudents, NamesJson: string(namesJSON), Lim: int64(limit),
+			AllStudents: allStudents, IdsJson: string(idsJSON), Lim: int64(limit),
 		})
 		if err != nil {
 			return nil, 0, err
 		}
 		rows = make([]HistoryRow, len(got))
 		for i, r := range got {
-			rows[i] = HistoryRow{StudentName: r.Studentname, Action: r.Action,
-				Timestamp: time.Unix(r.Timestamp, 0), AuthorizedAdult: r.Authorizedadult.String}
+			rows[i] = HistoryRow{
+				Name:            Name{First: r.Firstname, Last: r.Lastname},
+				Action:          r.Action,
+				Timestamp:       time.Unix(r.Timestamp, 0),
+				AuthorizedAdult: r.Authorizedadult.String,
+			}
 		}
 	}
 

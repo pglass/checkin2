@@ -140,19 +140,20 @@ func (a *App) updatePreview(img image.Image) {
 // known student, or an Add dialog (prefilled, "not found") for an unknown one.
 func (a *App) routeScan(ev camera.ScanEvent) {
 	p, err := qr.ParsePayload(ev.Payload)
-	if err != nil || p.Version != qr.Version || p.Name == "" {
+	if err != nil || p.Version != qr.Version || p.FirstName == "" || p.LastName == "" {
 		// Detected a QR code we can't use: log the raw string for diagnosis.
 		slog.Debug("QR code detected but not parseable", "raw", ev.Payload)
 		return
 	}
-	slog.Debug("QR code detected", "json", ev.Payload, "name", p.Name)
+	name := store.NewName(p.FirstName, p.LastName)
+	slog.Debug("QR code detected", "json", ev.Payload, "name", name.Display())
 
-	st, err := a.store.StudentByName(a.ctx, p.Name)
+	st, err := a.store.StudentByName(a.ctx, name)
 	fyne.Do(func() {
 		// At most one scan-triggered popup at a time: ignore scans that arrive
 		// while one is still showing.
 		if a.popupOpen {
-			slog.Debug("QR code ignored; popup already showing", "name", p.Name)
+			slog.Debug("QR code ignored; popup already showing", "name", name.Display())
 			return
 		}
 		if err != nil {
@@ -160,15 +161,16 @@ func (a *App) routeScan(ev camera.ScanEvent) {
 				// An unknown code always prompts, confirmation setting or not:
 				// there is no student to check in, and silently dropping the
 				// scan would look like the camera failed to read the code.
-				a.showAddStudentDialogPrefill(p.Name,
-					fmt.Sprintf("Scanned %q but student is not found in this center. Add them?", p.Name),
+				a.showAddStudentDialogPrefill(name,
+					fmt.Sprintf("Scanned %q but student is not found in this center. Add them?",
+						name.Full()),
 					ev.Payload)
 			}
 			return
 		}
 		// Status is read from the store, so the row's In/Out fields are not
 		// needed here.
-		row := store.StudentRow{ID: st.ID, Name: st.Name}
+		row := store.StudentRow{ID: st.ID, Name: store.Name{First: st.Firstname, Last: st.Lastname}}
 
 		// A scan always confirms: the pop-up is where the parent or authorized
 		// adult types their name, which every check-in/out requires.

@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/spreadsheet"
+	"github.com/pglass/checkin/internal/store"
 )
 
 // The file picker is resized to follow the window, but FileDialog.Resize
@@ -75,17 +76,19 @@ func TestResizeBeforeShowPanics(t *testing.T) {
 }
 
 // The preview lists new students first so the rows that will change something
-// are visible without scrolling, while each group keeps spreadsheet order.
+// are visible without scrolling, and sorts each group by (last, first).
 func TestRefreshPreviewOrdersNewFirst(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()
 
+	// Within each group the spreadsheet order is deliberately not the name
+	// order, so the assertion below can only pass if the rows are sorted.
 	sheet, err := spreadsheet.FromRowsForTest([][]string{
 		{"First Name", "Last Name"},
-		{"zoe", "existing"},  // already in the DB
-		{"adam", "new"},      // new
-		{"beth", "existing"}, // already in the DB
-		{"carl", "new"},      // new
+		{"zoe", "Ward"},   // already in the DB
+		{"carl", "Young"}, // new
+		{"beth", "Adams"}, // already in the DB
+		{"adam", "Nash"},  // new
 	})
 	if err != nil {
 		t.Fatalf("FromRowsForTest: %v", err)
@@ -95,8 +98,8 @@ func TestRefreshPreviewOrdersNewFirst(t *testing.T) {
 		win:   a.NewWindow("t"),
 		sheet: sheet,
 		existing: map[string]bool{
-			"zoe existing":  true,
-			"beth existing": true,
+			normalizeName(store.Name{First: "zoe", Last: "Ward"}):   true,
+			normalizeName(store.Name{First: "beth", Last: "Adams"}): true,
 		},
 	}
 	im.build()
@@ -104,9 +107,10 @@ func TestRefreshPreviewOrdersNewFirst(t *testing.T) {
 
 	var got []string
 	for _, e := range im.entries {
-		got = append(got, e.name)
+		got = append(got, e.name.Display())
 	}
-	want := []string{"adam new", "carl new", "zoe existing", "beth existing"}
+	// New first (Nash before Young), then existing (Adams before Ward).
+	want := []string{"Nash, adam", "Young, carl", "Adams, beth", "Ward, zoe"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("preview order = %q, want %q", got, want)
 	}
@@ -114,7 +118,7 @@ func TestRefreshPreviewOrdersNewFirst(t *testing.T) {
 	// The first two are new, the rest existing.
 	for i, e := range im.entries {
 		if wantNew := i < 2; e.isNew != wantNew {
-			t.Errorf("entry %d (%q): isNew = %v, want %v", i, e.name, e.isNew, wantNew)
+			t.Errorf("entry %d (%q): isNew = %v, want %v", i, e.name.Display(), e.isNew, wantNew)
 		}
 	}
 }

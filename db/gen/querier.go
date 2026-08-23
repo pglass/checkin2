@@ -10,7 +10,7 @@ import (
 )
 
 type Querier interface {
-	AddStudent(ctx context.Context, name string) (Student, error)
+	AddStudent(ctx context.Context, arg AddStudentParams) (Student, error)
 	AppendLog(ctx context.Context, arg AppendLogParams) error
 	CountHistory(ctx context.Context, arg CountHistoryParams) (int64, error)
 	// Counts rows older than the cutoff but stops after the cap (second ?), so the
@@ -21,9 +21,14 @@ type Querier interface {
 	DeleteStudent(ctx context.Context, id int64) error
 	DeleteTodayCheckinsForStudent(ctx context.Context, arg DeleteTodayCheckinsForStudentParams) error
 	GetStudentByID(ctx context.Context, id int64) (Student, error)
-	GetStudentByName(ctx context.Context, name string) (Student, error)
+	GetStudentByName(ctx context.Context, arg GetStudentByNameParams) (Student, error)
 	HistoryByName(ctx context.Context, arg HistoryByNameParams) ([]HistoryByNameRow, error)
+	// Students are matched by ID rather than by name: a name is now two columns,
+	// and the picker already tracks selection by ID. json_each over a JSON array
+	// keeps this a single fixed placeholder (see store.History for why).
 	HistoryByTime(ctx context.Context, arg HistoryByTimeParams) ([]HistoryByTimeRow, error)
+	// Ordered by the UNIQUE (LastName, FirstName) index, which is also the roster
+	// order the main list and the student pickers display.
 	ListStudents(ctx context.Context) ([]Student, error)
 	LogSince(ctx context.Context, timestamp int64) ([]Log, error)
 	OldestLogIDs(ctx context.Context, arg OldestLogIDsParams) ([]int64, error)

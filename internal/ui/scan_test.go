@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/pglass/checkin/db/gen"
 	"github.com/pglass/checkin/internal/camera"
 	"github.com/pglass/checkin/internal/config"
 	"github.com/pglass/checkin/internal/qr"
@@ -40,10 +41,11 @@ func newScanApp(t *testing.T) *App {
 	return a
 }
 
-// scan feeds a QR payload for name through the scan router.
-func scan(t *testing.T, a *App, name string) {
+// scan feeds a QR payload for the named student through the scan router.
+func scan(t *testing.T, a *App, first string) {
 	t.Helper()
-	data, err := qr.NewPayload(name).Marshal()
+	n := testStudentName(first)
+	data, err := qr.NewPayload(n.First, n.Last).Marshal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +55,7 @@ func scan(t *testing.T, a *App, name string) {
 // A scan always opens the pop-up and changes nothing until the user acts.
 func TestScanShowsPopup(t *testing.T) {
 	a := newScanApp(t)
-	st, err := a.store.AddStudent(a.ctx, "Alice")
+	st, err := a.store.AddStudent(a.ctx, testStudentName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,14 +74,14 @@ func TestScanShowsPopup(t *testing.T) {
 // dialog still opens and explains the state.
 func TestScanAlreadyOutShowsPopup(t *testing.T) {
 	a := newScanApp(t)
-	st, err := a.store.AddStudent(a.ctx, "Alice")
+	st, err := a.store.AddStudent(a.ctx, testStudentName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.store.CheckIn(a.ctx, st.ID, st.Name, "Parent"); err != nil {
+	if err := a.store.CheckIn(a.ctx, st.ID, testStudentNameOf(st), "Parent"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.store.CheckOut(a.ctx, st.ID, st.Name, "Parent"); err != nil {
+	if err := a.store.CheckOut(a.ctx, st.ID, testStudentNameOf(st), "Parent"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -104,7 +106,7 @@ func TestScanUnknownStudentAlwaysPrompts(t *testing.T) {
 // The one-pop-up-at-a-time guard still applies to the confirmation path.
 func TestScanIgnoredWhilePopupOpen(t *testing.T) {
 	a := newScanApp(t)
-	if _, err := a.store.AddStudent(a.ctx, "Alice"); err != nil {
+	if _, err := a.store.AddStudent(a.ctx, testStudentName("Alice")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -123,7 +125,7 @@ func TestScanUnknownStudentNoticeText(t *testing.T) {
 
 	scan(t, a, "Bobby Tables")
 
-	want := `Scanned "Bobby Tables" but student is not found in this center. Add them?`
+	want := `Scanned "Bobby Tables Bobby Tablesson" but student is not found in this center. Add them?`
 	found := false
 	for _, lbl := range dialogLabels(a) {
 		{
@@ -143,23 +145,32 @@ func TestScanUnknownStudentNoticeText(t *testing.T) {
 	}
 }
 
-// The Add Student dialog puts "Name:" and its entry on one row.
-func TestAddStudentDialogNameRow(t *testing.T) {
+// The Add Student dialog has a labelled row per name part, last name first to
+// match the main list's column order, each prefilled from the scanned code.
+func TestAddStudentDialogNameRows(t *testing.T) {
 	a := newScanApp(t)
 
-	a.showAddStudentDialogPrefill("Alice", "", "")
+	a.showAddStudentDialogPrefill(store.Name{First: "Alice", Last: "Smith"}, "", "")
 
-	var names []string
+	var labels []string
 	for _, lbl := range dialogLabels(a) {
-		names = append(names, lbl.Text)
+		labels = append(labels, lbl.Text)
 	}
-	for _, n := range names {
-		if n == "Student name:" {
-			t.Error(`label is still "Student name:", want "Name:"`)
+	for _, want := range []string{"Last Name:", "First Name:"} {
+		if !slices.Contains(labels, want) {
+			t.Errorf("no %q label found; labels = %v", want, labels)
 		}
 	}
-	if !slices.Contains(names, "Name:") {
-		t.Errorf(`no "Name:" label found; labels = %v`, names)
+
+	entries := dialogEntries(a)
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2 (last and first name)", len(entries))
+	}
+	if got := entries[0].Text; got != "Smith" {
+		t.Errorf("first entry = %q, want the last name %q", got, "Smith")
+	}
+	if got := entries[1].Text; got != "Alice" {
+		t.Errorf("second entry = %q, want the first name %q", got, "Alice")
 	}
 }
 
@@ -186,8 +197,8 @@ func TestAddStudentDialogIsWide(t *testing.T) {
 	a := newScanApp(t)
 	a.win.Resize(fyne.NewSize(640, 480))
 
-	a.showAddStudentDialogPrefill("Alice",
-		`Scanned "Bobby Tables" but student is not found in this center. Add them?`, "")
+	a.showAddStudentDialogPrefill(testStudentName("Alice"),
+		`Scanned "Bobby Tables Bobby Tablesson" but student is not found in this center. Add them?`, "")
 
 	canvasW := a.win.Canvas().Size().Width
 	// The notice label stretches with the dialog, so its width stands in for
@@ -210,8 +221,8 @@ func TestAddStudentDialogIsWide(t *testing.T) {
 func TestAddStudentDialogButtonsCentred(t *testing.T) {
 	a := newScanApp(t)
 	a.win.Resize(fyne.NewSize(640, 480))
-	a.showAddStudentDialogPrefill("Alice",
-		`Scanned "Bobby Tables" but student is not found in this center. Add them?`, "")
+	a.showAddStudentDialogPrefill(testStudentName("Alice"),
+		`Scanned "Bobby Tables Bobby Tablesson" but student is not found in this center. Add them?`, "")
 
 	drv := fyne.CurrentApp().Driver()
 
@@ -265,7 +276,8 @@ func TestAddFromScanClearsCooldown(t *testing.T) {
 	a := newScanApp(t)
 	a.cam = camera.New(6, 640, 480, time.Minute)
 
-	payload, err := qr.NewPayload("Alice").Marshal()
+	alice := testStudentName("Alice")
+	payload, err := qr.NewPayload(alice.First, alice.Last).Marshal()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,14 +288,14 @@ func TestAddFromScanClearsCooldown(t *testing.T) {
 		t.Fatal("the opening scan should have started a cooldown")
 	}
 
-	a.showAddStudentDialogPrefill("Alice",
+	a.showAddStudentDialogPrefill(testStudentName("Alice"),
 		`Scanned "Alice" but student is not found in this center. Add them?`,
 		string(payload))
 
 	// Confirm the add the way the Add button does.
 	dialogConfirm(t, a)
 
-	if _, err := a.store.StudentByName(a.ctx, "Alice"); err != nil {
+	if _, err := a.store.StudentByName(a.ctx, testStudentName("Alice")); err != nil {
 		t.Fatalf("student was not added: %v", err)
 	}
 	if a.cam.InCooldown(string(payload)) {
@@ -297,13 +309,14 @@ func TestAddFromMenuLeavesCooldownAlone(t *testing.T) {
 	a := newScanApp(t)
 	a.cam = camera.New(6, 640, 480, time.Minute)
 
-	payload, err := qr.NewPayload("Alice").Marshal()
+	alice := testStudentName("Alice")
+	payload, err := qr.NewPayload(alice.First, alice.Last).Marshal()
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.cam.RecordScan(string(payload))
 
-	a.showAddStudentDialogPrefill("Alice", "", "")
+	a.showAddStudentDialogPrefill(testStudentName("Alice"), "", "")
 	dialogConfirm(t, a)
 
 	if !a.cam.InCooldown(string(payload)) {
@@ -354,7 +367,7 @@ func dialogButton(a *App, label string) *widget.Button {
 // and whitespace alone does not count.
 func TestCheckInOutDialogRequiresAuthorizedAdult(t *testing.T) {
 	a := newScanApp(t)
-	if _, err := a.store.AddStudent(a.ctx, "Alice"); err != nil {
+	if _, err := a.store.AddStudent(a.ctx, testStudentName("Alice")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -389,7 +402,7 @@ func TestCheckInOutDialogRequiresAuthorizedAdult(t *testing.T) {
 // check-out that follows records the adult entered for it.
 func TestCheckInOutDialogStoresAuthorizedAdult(t *testing.T) {
 	a := newScanApp(t)
-	st, err := a.store.AddStudent(a.ctx, "Alice")
+	st, err := a.store.AddStudent(a.ctx, testStudentName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +458,7 @@ func TestCheckInOutDialogStoresAuthorizedAdult(t *testing.T) {
 // button, without submitting.
 func TestCheckInOutDialogSuggestsRecentAdults(t *testing.T) {
 	a := newScanApp(t)
-	st, err := a.store.AddStudent(a.ctx, "Alice")
+	st, err := a.store.AddStudent(a.ctx, testStudentName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,9 +467,10 @@ func TestCheckInOutDialogSuggestsRecentAdults(t *testing.T) {
 	base := time.Now().Add(-100 * time.Hour)
 	for i, adult := range []string{"Grandpa", "Jane Parent"} {
 		_, err := a.store.DB().ExecContext(a.ctx,
-			`INSERT INTO Log (StudentID, StudentName, Action, Timestamp, AuthorizedAdult)
-			 VALUES (?, ?, 'Checked In', ?, ?)`,
-			st.ID, st.Name, base.Add(time.Duration(i)*time.Hour).Unix(), adult)
+			`INSERT INTO Log (StudentID, FirstName, LastName, Action, Timestamp, AuthorizedAdult)
+			 VALUES (?, ?, ?, 'Checked In', ?, ?)`,
+			st.ID, st.Firstname, st.Lastname,
+			base.Add(time.Duration(i)*time.Hour).Unix(), adult)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -502,7 +516,7 @@ func TestCheckInOutDialogSuggestsRecentAdults(t *testing.T) {
 // the entry, which still gates the action button.
 func TestCheckInOutDialogNoSuggestionsForNewStudent(t *testing.T) {
 	a := newScanApp(t)
-	if _, err := a.store.AddStudent(a.ctx, "Alice"); err != nil {
+	if _, err := a.store.AddStudent(a.ctx, testStudentName("Alice")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -522,4 +536,16 @@ func TestCheckInOutDialogNoSuggestionsForNewStudent(t *testing.T) {
 			t.Errorf("unexpected button %q; a student with no history should get no suggestions", l)
 		}
 	}
+}
+
+// testStudentName builds a two-part name from a single first name, for tests
+// that only need a distinct student. Sorting and display rules are covered by
+// the store's own Name tests.
+func testStudentName(first string) store.Name {
+	return store.Name{First: first, Last: first + "son"}
+}
+
+// testStudentNameOf is the Name of a student returned by the store.
+func testStudentNameOf(st gen.Student) store.Name {
+	return store.Name{First: st.Firstname, Last: st.Lastname}
 }

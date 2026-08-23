@@ -11,13 +11,15 @@ import (
 type Log struct {
 	ID              int64          `json:"id"`
 	Studentid       sql.NullInt64  `json:"studentid"`
-	Studentname     string         `json:"studentname"`
+	Firstname       string         `json:"firstname"`
+	Lastname        string         `json:"lastname"`
 	Action          string         `json:"action"`
 	Timestamp       int64          `json:"timestamp"`
 	Authorizedadult sql.NullString `json:"authorizedadult"`
 }
 
 type Student struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID        int64  `json:"id"`
+	Firstname string `json:"firstname"`
+	Lastname  string `json:"lastname"`
 }

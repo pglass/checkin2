@@ -69,13 +69,16 @@ func createStudents(ctx context.Context, q *gen.Queries, n int) ([]gen.Student, 
 	out := make([]gen.Student, 0, n)
 	now := time.Now()
 	for i := 0; i < n; i++ {
-		name := fmt.Sprintf("Student %05d", i+1)
-		st, err := q.AddStudent(ctx, name)
+		// Last names repeat across a small pool so the seeded roster exercises
+		// the (last, first) sort and the surname-collision case.
+		first := fmt.Sprintf("Student %05d", i+1)
+		last := fmt.Sprintf("Family %03d", i%250)
+		st, err := q.AddStudent(ctx, gen.AddStudentParams{Firstname: first, Lastname: last})
 		if err != nil {
-			return nil, fmt.Errorf("add %q: %w", name, err)
+			return nil, fmt.Errorf("add %q %q: %w", first, last, err)
 		}
 		if err := appendLog(ctx, q, st, store.ActionAdded, now); err != nil {
-			return nil, fmt.Errorf("log added %q: %w", name, err)
+			return nil, fmt.Errorf("log added %q %q: %w", first, last, err)
 		}
 		out = append(out, st)
 	}
@@ -149,9 +152,10 @@ func checkOutTime(in time.Time, rng *rand.Rand) time.Time {
 
 func appendLog(ctx context.Context, q *gen.Queries, st gen.Student, action string, t time.Time) error {
 	return q.AppendLog(ctx, gen.AppendLogParams{
-		Studentid:   sql.NullInt64{Int64: st.ID, Valid: true},
-		Studentname: st.Name,
-		Action:      action,
-		Timestamp:   t.Unix(),
+		Studentid: sql.NullInt64{Int64: st.ID, Valid: true},
+		Firstname: st.Firstname,
+		Lastname:  st.Lastname,
+		Action:    action,
+		Timestamp: t.Unix(),
 	})
 }

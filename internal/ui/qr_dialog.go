@@ -61,12 +61,12 @@ func (a *App) showGenerateQRDialog() {
 	w := a.fyneApp.NewWindow("Generate QR PDF")
 
 	generate := func() {
-		names := sel.selectedNames()
-		if len(names) == 0 {
+		students := sel.selectedForQR()
+		if len(students) == 0 {
 			dialog.ShowInformation("Generate QR PDF", "No students selected.", w)
 			return
 		}
-		a.runGeneration(w, names)
+		a.runGeneration(w, students)
 	}
 
 	buttons := container.NewHBox(
@@ -94,8 +94,8 @@ const minProgressDisplay = 2500 * time.Millisecond
 // progress (rate-limited so it takes at least minProgressDisplay); once the
 // images are rendered, a spinner + "Opening PDF…" covers the PDF stitching and
 // launching the viewer.
-func (a *App) runGeneration(w fyne.Window, names []string) {
-	total := len(names)
+func (a *App) runGeneration(w fyne.Window, students []qr.Student) {
+	total := len(students)
 
 	msg := widget.NewLabel(fmt.Sprintf("Generating PDF for %d QR Codes…", total))
 	msg.Alignment = fyne.TextAlignCenter
@@ -123,7 +123,7 @@ func (a *App) runGeneration(w fyne.Window, names []string) {
 	go func() {
 		out := filepath.Join(os.TempDir(),
 			"student-qr-"+time.Now().Format("20060102-150405")+".pdf")
-		err := qr.GeneratePDFProgress(names, out, func(done, tot int) {
+		err := qr.GeneratePDFProgress(students, out, func(done, tot int) {
 			renderFrac.Store(float64(done) / float64(tot))
 			if done >= tot {
 				renderDone.Store(true)
@@ -371,7 +371,7 @@ func newStudentSelectWithOptions(rows []store.StudentRow, defaultAllSelected boo
 			check := border.Objects[1].(*widget.Check)
 			name := border.Objects[0].(*widget.Label)
 			r := s.rows[i]
-			name.SetText(r.Name)
+			name.SetText(r.Name.Display())
 			check.OnChanged = nil // avoid firing while we set state
 			check.SetChecked(s.selected[r.ID])
 			check.OnChanged = func(v bool) {
@@ -527,9 +527,9 @@ func (s *studentSelect) refreshSelectAll() {
 func (s *studentSelect) applySort() {
 	switch s.sort {
 	case sortNameAsc:
-		sort.Slice(s.rows, func(i, j int) bool { return s.rows[i].Name < s.rows[j].Name })
+		sort.Slice(s.rows, func(i, j int) bool { return s.rows[i].Name.Less(s.rows[j].Name) })
 	case sortNameDesc:
-		sort.Slice(s.rows, func(i, j int) bool { return s.rows[i].Name > s.rows[j].Name })
+		sort.Slice(s.rows, func(i, j int) bool { return s.rows[j].Name.Less(s.rows[i].Name) })
 	case sortRecent:
 		sort.Slice(s.rows, func(i, j int) bool { return s.rows[i].ID > s.rows[j].ID })
 	}
@@ -556,15 +556,32 @@ func (s *studentSelect) updateCount() {
 	s.count.SetText(fmt.Sprintf("%d of %d selected", n, len(s.rows)))
 }
 
-// selectedNames returns the names of selected students in current sort order.
+// selectedNames returns the display names ("Last, First") of the selected
+// students, in current sort order, for summaries shown to the user.
 func (s *studentSelect) selectedNames() []string {
 	var names []string
 	for _, r := range s.rows {
 		if s.selected[r.ID] {
-			names = append(names, r.Name)
+			names = append(names, r.Name.Display())
 		}
 	}
 	return names
+}
+
+// selectedForQR returns the selected students as QR sheet entries, labelled the
+// same way they appear in the picker.
+func (s *studentSelect) selectedForQR() []qr.Student {
+	var out []qr.Student
+	for _, r := range s.rows {
+		if s.selected[r.ID] {
+			out = append(out, qr.Student{
+				First: r.Name.First,
+				Last:  r.Name.Last,
+				Label: r.Name.Display(),
+			})
+		}
+	}
+	return out
 }
 
 // selectedIDs returns the IDs of selected students in current sort order.

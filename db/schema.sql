@@ -1,12 +1,20 @@
 CREATE TABLE IF NOT EXISTS Student (
-    ID   INTEGER PRIMARY KEY,
-    Name TEXT NOT NULL UNIQUE
+    ID        INTEGER PRIMARY KEY,
+    FirstName TEXT NOT NULL,
+    LastName  TEXT NOT NULL,
+
+    -- A student is identified by the pair, not by either part alone. Ordered
+    -- (LastName, FirstName) so the index also serves the roster sort.
+    UNIQUE (LastName, FirstName)
 );
 
 CREATE TABLE IF NOT EXISTS Log (
     ID          INTEGER PRIMARY KEY,
     StudentID   INTEGER,               -- not a hard FK so 'Deleted' rows survive student removal
-    StudentName TEXT NOT NULL,
+    -- Names are copied onto the row rather than joined from Student, so log
+    -- entries still read correctly after the student is removed or renamed.
+    FirstName   TEXT NOT NULL,
+    LastName    TEXT NOT NULL,
     Action      TEXT NOT NULL,         -- 'Added' | 'Checked In' | 'Checked Out' | 'Deleted'
     Timestamp   INTEGER NOT NULL,      -- unix epoch seconds; integer -> fast range scans
 

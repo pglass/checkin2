@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+
+	"github.com/pglass/checkin/db/gen"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -24,15 +26,15 @@ func TestAddStudent_Duplicate(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	st, err := s.AddStudent(ctx, "Alice")
+	st, err := s.AddStudent(ctx, testName("Alice"))
 	if err != nil {
 		t.Fatalf("AddStudent: %v", err)
 	}
-	if st.Name != "Alice" || st.ID == 0 {
+	if nameOf(st) != testName("Alice") || st.ID == 0 {
 		t.Fatalf("unexpected student: %+v", st)
 	}
 
-	if _, err := s.AddStudent(ctx, "Alice"); err != ErrDuplicateName {
+	if _, err := s.AddStudent(ctx, testName("Alice")); err != ErrDuplicateName {
 		t.Fatalf("want ErrDuplicateName, got %v", err)
 	}
 }
@@ -40,33 +42,37 @@ func TestAddStudent_Duplicate(t *testing.T) {
 func TestAddStudent_TrimsAndRejectsEmpty(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	if _, err := s.AddStudent(ctx, "   "); err == nil {
-		t.Fatal("want error for empty name")
+	// Either part missing is a rejection: both identify the student.
+	if _, err := s.AddStudent(ctx, Name{First: "   ", Last: "Smith"}); err == nil {
+		t.Fatal("want error for empty first name")
 	}
-	st, err := s.AddStudent(ctx, "  Bob  ")
+	if _, err := s.AddStudent(ctx, Name{First: "Bob", Last: "  "}); err == nil {
+		t.Fatal("want error for empty last name")
+	}
+	st, err := s.AddStudent(ctx, Name{First: "  Bob  ", Last: "  Smith  "})
 	if err != nil {
 		t.Fatalf("AddStudent: %v", err)
 	}
-	if st.Name != "Bob" {
-		t.Fatalf("name not trimmed: %q", st.Name)
+	if got, want := nameOf(st), (Name{First: "Bob", Last: "Smith"}); got != want {
+		t.Fatalf("name not trimmed: %+v, want %+v", got, want)
 	}
 }
 
 func TestCheckInOutStatus(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	st, _ := s.AddStudent(ctx, "Carol")
+	st, _ := s.AddStudent(ctx, testName("Carol"))
 
 	if got := s.Status(st.ID); got != StatusNotIn {
 		t.Fatalf("initial status = %v, want NotIn", got)
 	}
-	if err := s.CheckIn(ctx, st.ID, st.Name, "Parent"); err != nil {
+	if err := s.CheckIn(ctx, st.ID, nameOf(st), "Parent"); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.Status(st.ID); got != StatusIn {
 		t.Fatalf("after check-in status = %v, want In", got)
 	}
-	if err := s.CheckOut(ctx, st.ID, st.Name, "Parent"); err != nil {
+	if err := s.CheckOut(ctx, st.ID, nameOf(st), "Parent"); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.Status(st.ID); got != StatusOut {
@@ -89,9 +95,9 @@ func TestReset_ClearsTodayAndRebuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, _ := s.AddStudent(ctx, "Dave")
-	s.CheckIn(ctx, st.ID, st.Name, "Parent")
-	s.CheckOut(ctx, st.ID, st.Name, "Parent")
+	st, _ := s.AddStudent(ctx, testName("Dave"))
+	s.CheckIn(ctx, st.ID, nameOf(st), "Parent")
+	s.CheckOut(ctx, st.ID, nameOf(st), "Parent")
 	if err := s.Reset(ctx, st.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +121,8 @@ func TestRebuildFromLog(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "rebuild.db")
 	s, _ := Open(path)
-	st, _ := s.AddStudent(ctx, "Erin")
-	s.CheckIn(ctx, st.ID, st.Name, "Parent")
+	st, _ := s.AddStudent(ctx, testName("Erin"))
+	s.CheckIn(ctx, st.ID, nameOf(st), "Parent")
 	s.Close()
 
 	s2, err := Open(path)
@@ -132,8 +138,8 @@ func TestRebuildFromLog(t *testing.T) {
 func TestRemoveStudent(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	st, _ := s.AddStudent(ctx, "Frank")
-	if err := s.RemoveStudent(ctx, st.ID, st.Name); err != nil {
+	st, _ := s.AddStudent(ctx, testName("Frank"))
+	if err := s.RemoveStudent(ctx, st.ID, nameOf(st)); err != nil {
 		t.Fatal(err)
 	}
 	rows, _ := s.Students(ctx)
@@ -154,14 +160,21 @@ func TestStudents_SortByRecentActivityThenName(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	names := []string{"Bob", "Alice", "Carol", "Dave"}
+	// Shared surnames and mixed case, so the tiebreak has to compare
+	// (last, first) case-insensitively rather than a single joined string.
+	roster := []Name{
+		{First: "Bob", Last: "Zane"},
+		{First: "alice", Last: "Adams"},
+		{First: "Carol", Last: "adams"},
+		{First: "Dave", Last: "Mills"},
+	}
 	ids := map[string]int64{}
-	for _, n := range names {
+	for _, n := range roster {
 		st, err := s.AddStudent(ctx, n)
 		if err != nil {
-			t.Fatalf("AddStudent %s: %v", n, err)
+			t.Fatalf("AddStudent %v: %v", n, err)
 		}
-		ids[n] = st.ID
+		ids[n.First] = st.ID
 	}
 
 	now := time.Now()
@@ -170,7 +183,7 @@ func TestStudents_SortByRecentActivityThenName(t *testing.T) {
 	s.day.setIn(ids["Bob"], now.Add(-3*time.Hour))
 	s.day.setIn(ids["Dave"], now.Add(-2*time.Hour))
 	s.day.setOut(ids["Dave"], now.Add(-time.Minute))
-	// Alice and Carol have nothing today.
+	// alice and Carol have nothing today.
 
 	rows, err := s.Students(ctx)
 	if err != nil {
@@ -178,9 +191,11 @@ func TestStudents_SortByRecentActivityThenName(t *testing.T) {
 	}
 	var got []string
 	for _, r := range rows {
-		got = append(got, r.Name)
+		got = append(got, r.Name.Display())
 	}
-	want := []string{"Dave", "Bob", "Alice", "Carol"}
+	// Today's activity first (most recent first), then the rest by
+	// (last, first): "adams, alice" before "adams, Carol" ignoring case.
+	want := []string{"Mills, Dave", "Zane, Bob", "Adams, alice", "adams, Carol"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
@@ -192,14 +207,14 @@ func TestAuthorizedAdultStoredOnLogRows(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	st, err := s.AddStudent(ctx, "Alice")
+	st, err := s.AddStudent(ctx, testName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CheckIn(ctx, st.ID, st.Name, "  Bob Parent  "); err != nil {
+	if err := s.CheckIn(ctx, st.ID, nameOf(st), "  Bob Parent  "); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CheckOut(ctx, st.ID, st.Name, ""); err != nil {
+	if err := s.CheckOut(ctx, st.ID, nameOf(st), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -244,7 +259,7 @@ func TestAuthorizedAdultStoredOnLogRows(t *testing.T) {
 // signInAt records a check-in for a student at an explicit time with an
 // explicit authorized adult, so a test can build up several days of history.
 // (CheckIn always stamps time.Now(), and Reset would delete same-day rows.)
-func signInAt(t *testing.T, s *Store, id int64, name, adult string, at time.Time) {
+func signInAt(t *testing.T, s *Store, id int64, name Name, adult string, at time.Time) {
 	t.Helper()
 	if err := s.appendLogAt(context.Background(), id, name, ActionCheckedIn, at, adult); err != nil {
 		t.Fatal(err)
@@ -257,11 +272,11 @@ func TestRecentAuthorizedAdults(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	alice, err := s.AddStudent(ctx, "Alice")
+	alice, err := s.AddStudent(ctx, testName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := s.AddStudent(ctx, "Bob")
+	bob, err := s.AddStudent(ctx, testName("Bob"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,10 +285,10 @@ func TestRecentAuthorizedAdults(t *testing.T) {
 	// Oldest first. Jane repeats, so she must collapse to one entry and rank by
 	// her latest use, not her first.
 	for i, adult := range []string{"Jane", "Grandpa", "Jane", "Sitter"} {
-		signInAt(t, s, alice.ID, alice.Name, adult, base.Add(time.Duration(i)*time.Hour))
+		signInAt(t, s, alice.ID, nameOf(alice), adult, base.Add(time.Duration(i)*time.Hour))
 	}
 	// Another student's adult must not leak into Alice's suggestions.
-	signInAt(t, s, bob.ID, bob.Name, "Stranger", base.Add(10*time.Hour))
+	signInAt(t, s, bob.ID, nameOf(bob), "Stranger", base.Add(10*time.Hour))
 
 	got, err := s.RecentAuthorizedAdults(ctx, alice.ID)
 	if err != nil {
@@ -291,7 +306,7 @@ func TestRecentAuthorizedAdultsEmptyCases(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	st, err := s.AddStudent(ctx, "Alice")
+	st, err := s.AddStudent(ctx, testName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +319,7 @@ func TestRecentAuthorizedAdultsEmptyCases(t *testing.T) {
 		t.Errorf("new student suggestions = %v, want none", got)
 	}
 
-	if err := s.CheckIn(ctx, st.ID, st.Name, ""); err != nil {
+	if err := s.CheckIn(ctx, st.ID, nameOf(st), ""); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.RecentAuthorizedAdults(ctx, st.ID)
@@ -322,13 +337,13 @@ func TestRecentAuthorizedAdultsCapped(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	st, err := s.AddStudent(ctx, "Alice")
+	st, err := s.AddStudent(ctx, testName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := time.Now().Add(-100 * time.Hour)
 	for i, adult := range []string{"A", "B", "C", "D", "E"} {
-		signInAt(t, s, st.ID, st.Name, adult, base.Add(time.Duration(i)*time.Hour))
+		signInAt(t, s, st.ID, nameOf(st), adult, base.Add(time.Duration(i)*time.Hour))
 	}
 
 	got, err := s.RecentAuthorizedAdults(ctx, st.ID)
@@ -348,15 +363,15 @@ func TestRecentAuthorizedAdultsScanWindow(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 
-	st, err := s.AddStudent(ctx, "Alice")
+	st, err := s.AddStudent(ctx, testName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := time.Now().Add(-1000 * time.Hour)
 	// One long-ago sign-in, then more than a full scan window of newer ones.
-	signInAt(t, s, st.ID, st.Name, "LongAgo", base)
+	signInAt(t, s, st.ID, nameOf(st), "LongAgo", base)
 	for i := 0; i < adultScanRows; i++ {
-		signInAt(t, s, st.ID, st.Name, "Recent", base.Add(time.Duration(i+1)*time.Hour))
+		signInAt(t, s, st.ID, nameOf(st), "Recent", base.Add(time.Duration(i+1)*time.Hour))
 	}
 
 	got, err := s.RecentAuthorizedAdults(ctx, st.ID)
@@ -367,4 +382,16 @@ func TestRecentAuthorizedAdultsScanWindow(t *testing.T) {
 		t.Errorf("RecentAuthorizedAdults = %v, want [Recent]; "+
 			"an adult beyond the %d-row scan window should not be suggested", got, adultScanRows)
 	}
+}
+
+// testName builds a Name from a single first name, pairing it with a last name
+// derived from it. Most tests care only that a student is distinct and has a
+// name; the (last, first) specifics are exercised by the sorting tests.
+func testName(first string) Name {
+	return Name{First: first, Last: first + "son"}
+}
+
+// nameOf is the Name of a student row returned by the generated queries.
+func nameOf(st gen.Student) Name {
+	return Name{First: st.Firstname, Last: st.Lastname}
 }

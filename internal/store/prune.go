@@ -93,11 +93,12 @@ func (s *Store) remainingToPrune(ctx context.Context, cutoff int64) (int64, bool
 }
 
 // insertLogForTest is a test helper to seed Log rows at arbitrary timestamps.
-func (s *Store) insertLogForTest(ctx context.Context, name string, t time.Time) error {
+func (s *Store) insertLogForTest(ctx context.Context, name Name, t time.Time) error {
 	return s.q.AppendLog(ctx, gen.AppendLogParams{
-		Studentid:   sql.NullInt64{},
-		Studentname: name,
-		Action:      ActionCheckedIn,
-		Timestamp:   t.Unix(),
+		Studentid: sql.NullInt64{},
+		Firstname: name.First,
+		Lastname:  name.Last,
+		Action:    ActionCheckedIn,
+		Timestamp: t.Unix(),
 	})
 }

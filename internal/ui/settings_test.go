@@ -408,4 +408,3 @@ func TestSettingsDescriptionMargins(t *testing.T) {
 		t.Errorf("bottom margin %v should exceed top margin %v", m.bottom, m.top)
 	}
 }
-

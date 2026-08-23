@@ -30,12 +30,12 @@ func TestPruneOnce(t *testing.T) {
 
 	// 250 old rows (spans >2 batches of 100) + 5 recent rows.
 	for i := 0; i < 250; i++ {
-		if err := s.insertLogForTest(ctx, "old", old); err != nil {
+		if err := s.insertLogForTest(ctx, testName("Old"), old); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for i := 0; i < 5; i++ {
-		if err := s.insertLogForTest(ctx, "recent", recent); err != nil {
+		if err := s.insertLogForTest(ctx, testName("Recent"), recent); err != nil {
 			t.Fatal(err)
 		}
 	}

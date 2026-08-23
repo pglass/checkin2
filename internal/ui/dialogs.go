@@ -16,9 +16,9 @@ import (
 	"github.com/pglass/checkin/internal/store"
 )
 
-// addNameLabelWidth is the width of the "Name:" column in the Add Student
-// dialog, wide enough for the label so the entry starts clear of it.
-const addNameLabelWidth = 52
+// addNameLabelWidth is the width of the label column in the Add Student
+// dialog, wide enough for "Last Name:" so both entries start clear of it.
+const addNameLabelWidth = 80
 
 // addStudentWidthFraction is how much of the main window's width the Add
 // Student dialog spans. Fyne sizes a custom dialog to its content, which leaves
@@ -33,7 +33,7 @@ const adultLabelWidth = 100
 
 // showAddStudentDialog presents the Add Student popup. On duplicate name it
 // shows a red message and keeps the dialog open (prefill optionally set for QR).
-func (a *App) showAddStudentDialog() { a.showAddStudentDialogPrefill("", "", "") }
+func (a *App) showAddStudentDialog() { a.showAddStudentDialogPrefill(store.Name{}, "", "") }
 
 // showAddStudentDialogPrefill opens the Add Student dialog with the name box
 // prefilled and an explanatory notice above it.
@@ -42,11 +42,13 @@ func (a *App) showAddStudentDialog() { a.showAddStudentDialogPrefill("", "", "")
 // was opened from the menu. On a successful add it is cleared from the camera's
 // cooldown, so the same code can immediately check the new student in rather
 // than being ignored as a repeat scan.
-func (a *App) showAddStudentDialogPrefill(prefill, notice, scanPayload string) {
+func (a *App) showAddStudentDialogPrefill(prefill store.Name, notice, scanPayload string) {
 	a.popupOpen = true
 
-	entry := widget.NewEntry()
-	entry.SetText(prefill)
+	lastEntry := widget.NewEntry()
+	lastEntry.SetText(prefill.Last)
+	firstEntry := widget.NewEntry()
+	firstEntry.SetText(prefill.First)
 
 	// The notice explains why the dialog opened (a scanned code with no matching
 	// student). It is normal size and wraps, unlike the validation error below,
@@ -62,7 +64,7 @@ func (a *App) showAddStudentDialogPrefill(prefill, notice, scanPayload string) {
 
 	var popup dialog.Dialog
 	confirm := func() {
-		_, err := a.store.AddStudent(a.ctx, entry.Text)
+		_, err := a.store.AddStudent(a.ctx, store.NewName(firstEntry.Text, lastEntry.Text))
 		if err != nil {
 			if errors.Is(err, store.ErrDuplicateName) {
 				errLabel.Text = "That name is already taken."
@@ -86,15 +88,18 @@ func (a *App) showAddStudentDialogPrefill(prefill, notice, scanPayload string) {
 	addBtn.Importance = widget.HighImportance
 	cancelBtn := widget.NewButton("Cancel", func() { popup.Hide() })
 
-	// Label and entry share a row: the fixed-width label column keeps the entry
-	// aligned the same way the Settings window aligns its inputs.
-	nameLbl := widget.NewLabel("Name:")
-	nameRow := container.NewBorder(nil, nil,
-		container.New(fixedWidthLayout{w: addNameLabelWidth}, nameLbl), nil, entry)
+	// Label and entry share a row: the fixed-width label column keeps the entries
+	// aligned the same way the Settings window aligns its inputs. Last name
+	// first, matching the column order of the main list.
+	nameRow := func(label string, e *widget.Entry) fyne.CanvasObject {
+		return container.NewBorder(nil, nil,
+			container.New(fixedWidthLayout{w: addNameLabelWidth}, widget.NewLabel(label)), nil, e)
+	}
 
 	body := container.NewVBox(
 		noticeLbl,
-		nameRow,
+		nameRow("Last Name:", lastEntry),
+		nameRow("First Name:", firstEntry),
 		errLabel,
 		// Centred rather than left-aligned: the dialog is much wider than the
 		// buttons, so an HBox alone would strand them at the left edge.
@@ -102,14 +107,15 @@ func (a *App) showAddStudentDialogPrefill(prefill, notice, scanPayload string) {
 	)
 	popup = dialog.NewCustomWithoutButtons("Add Student", body, a.win)
 	popup.SetOnClosed(func() { a.popupOpen = false })
-	entry.OnSubmitted = func(string) { confirm() }
+	lastEntry.OnSubmitted = func(string) { confirm() }
+	firstEntry.OnSubmitted = func(string) { confirm() }
 	popup.Show()
 	// After Show: Resize needs the dialog's inner window, which does not exist
 	// until then. Height comes from MinSize (Resize takes the max), so only the
 	// width is really being set here.
 	winSize := a.win.Canvas().Size()
 	popup.Resize(fyne.NewSize(winSize.Width*addStudentWidthFraction, 0))
-	a.win.Canvas().Focus(entry)
+	a.win.Canvas().Focus(lastEntry)
 }
 
 // showRowContextMenu pops up the right-click context menu for a student row.
@@ -138,7 +144,7 @@ func (a *App) showRowContextMenu(row store.StudentRow, pos fyne.Position, mod fy
 
 // showRemoveDialog confirms removal of a student.
 func (a *App) showRemoveDialog(row store.StudentRow) {
-	name := canvas.NewText(row.Name, theme.Color(theme.ColorNameForeground))
+	name := canvas.NewText(row.Name.Display(), theme.Color(theme.ColorNameForeground))
 	name.TextSize = theme.TextSize() * 2
 	name.Alignment = fyne.TextAlignCenter
 
@@ -195,9 +201,9 @@ func (a *App) applyCheckInOut(row store.StudentRow, adult string) bool {
 	if a.feedback != nil {
 		now := time.Now()
 		if checkedIn {
-			a.feedback.showCheckIn(row.Name, now)
+			a.feedback.showCheckIn(row.Name.Full(), now)
 		} else {
-			a.feedback.showCheckOut(row.Name, now)
+			a.feedback.showCheckOut(row.Name.Full(), now)
 		}
 	}
 	return true
@@ -219,7 +225,7 @@ func (a *App) applyCheckInOut(row store.StudentRow, adult string) bool {
 func (a *App) showCheckInOutDialog(row store.StudentRow) {
 	a.popupOpen = true
 
-	name := canvas.NewText(row.Name, theme.Color(theme.ColorNameForeground))
+	name := canvas.NewText(row.Name.Full(), theme.Color(theme.ColorNameForeground))
 	name.TextSize = theme.TextSize() * 2
 	name.Alignment = fyne.TextAlignCenter
 
@@ -237,7 +243,7 @@ func (a *App) showCheckInOutDialog(row store.StudentRow) {
 	// are a shortcut, and the entry still works without them.
 	adults, err := a.store.RecentAuthorizedAdults(a.ctx, row.ID)
 	if err != nil {
-		slog.Warn("could not load recent authorized adults", "student", row.Name, "err", err)
+		slog.Warn("could not load recent authorized adults", "student", row.Name.Display(), "err", err)
 	}
 	var suggestions fyne.CanvasObject
 	if len(adults) > 0 {
@@ -269,10 +275,10 @@ func (a *App) showCheckInOutDialog(row store.StudentRow) {
 
 	switch a.store.Status(row.ID) {
 	case store.StatusNotIn:
-		name.Text = "Check in " + row.Name + " at " + now
+		name.Text = "Check in " + row.Name.Full() + " at " + now
 		actionBtn = widget.NewButton("Check In", apply)
 	case store.StatusIn:
-		name.Text = "Check out " + row.Name + " at " + now
+		name.Text = "Check out " + row.Name.Full() + " at " + now
 		actionBtn = widget.NewButton("Check Out", apply)
 	case store.StatusOut:
 		action = widget.NewLabel("This student has checked out. Please close this window.")

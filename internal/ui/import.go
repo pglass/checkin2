@@ -16,19 +16,15 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/spreadsheet"
+	"github.com/pglass/checkin/internal/store"
 )
-
-// noColumn is the placeholder option for the optional Last Name selector. A
-// widget.Select cannot hold a truly empty option (an empty string renders as an
-// unselected control), so the "no column" choice is a named entry instead.
-const noColumn = "(none)"
 
 // importNewColor tints preview rows for students that will be added.
 var importNewColor = color.NRGBA{R: 0x2E, G: 0x7D, B: 0x32, A: 0xFF} // green
 
 // previewEntry is one parsed name plus whether importing would create it.
 type previewEntry struct {
-	name  string
+	name  store.Name
 	isNew bool
 }
 
@@ -115,7 +111,7 @@ func (im *importer) build() {
 	im.firstSel = widget.NewSelect(nil, nil)
 	im.firstSel.PlaceHolder = "Select a column"
 	im.lastSel = widget.NewSelect(nil, nil)
-	im.lastSel.PlaceHolder = noColumn
+	im.lastSel.PlaceHolder = "Select a column"
 
 	im.newLbl = canvas.NewText("", importNewColor)
 	im.newLbl.TextSize = theme.TextSize()
@@ -199,8 +195,7 @@ func (im *importer) selectedHeaderRow() int {
 func (im *importer) configPane() fyne.CanvasObject {
 	intro := widget.NewLabel(
 		"Import students from a spreadsheet. Choose a file, then pick the " +
-			"column holding each student's name. Use both First and Last Name " +
-			"columns if the spreadsheet splits them.")
+			"columns holding each student's first and last name.")
 	intro.Wrapping = fyne.TextWrapWord
 
 	browse := widget.NewButton("Choose File…", im.onBrowse)
@@ -219,7 +214,7 @@ func (im *importer) configPane() fyne.CanvasObject {
 		im.headerSel,
 		widget.NewLabel("First Name (required):"),
 		im.firstSel,
-		widget.NewLabel("Last Name (optional):"),
+		widget.NewLabel("Last Name (required):"),
 		im.lastSel,
 	)
 
@@ -357,19 +352,17 @@ func (im *importer) resetColumnSelectors() {
 	im.firstSel.OnChanged, im.lastSel.OnChanged = nil, nil
 
 	im.firstSel.Options = im.sheet.Headers
-	im.lastSel.Options = append([]string{noColumn}, im.sheet.Headers...)
+	im.lastSel.Options = im.sheet.Headers
 
+	// Both columns are required now, so a sheet that only identifies a single
+	// name column leaves the picking to the user rather than half-filling it.
 	first, last, ok := im.sheet.MatchNameColumns()
-	switch {
-	case ok && last >= 0:
+	if ok && last >= 0 {
 		im.firstSel.SetSelected(im.sheet.Headers[first])
 		im.lastSel.SetSelected(im.sheet.Headers[last])
-	case ok:
-		im.firstSel.SetSelected(im.sheet.Headers[first])
-		im.lastSel.SetSelected(noColumn)
-	default:
+	} else {
 		im.firstSel.ClearSelected()
-		im.lastSel.SetSelected(noColumn)
+		im.lastSel.ClearSelected()
 	}
 
 	im.firstSel.Refresh()
@@ -449,16 +442,13 @@ func (im *importer) refreshPreview() {
 	}
 
 	first := indexOf(im.sheet.Headers, im.firstSel.Selected)
-	if first < 0 {
-		// No First Name column yet: nothing can be parsed.
+	last := indexOf(im.sheet.Headers, im.lastSel.Selected)
+	if first < 0 || last < 0 {
+		// Both columns are required before anything can be parsed.
 		im.setCounts(-1, -1)
 		im.importBtn.Disable()
 		im.list.Refresh()
 		return
-	}
-	last := -1
-	if im.lastSel.Selected != noColumn {
-		last = indexOf(im.sheet.Headers, im.lastSel.Selected)
 	}
 
 	// seen dedupes within the spreadsheet itself: a name repeated in the file
@@ -469,19 +459,26 @@ func (im *importer) refreshPreview() {
 	names := im.sheet.Names(first, last)
 	im.entries = make([]previewEntry, 0, len(names))
 	for _, n := range names {
-		key := normalizeName(n)
+		name := store.NewName(n.First, n.Last)
+		key := normalizeName(name)
 		isNew := !im.existing[key] && !seen[key]
 		seen[key] = true
 		if isNew {
 			newCount++
 		}
-		im.entries = append(im.entries, previewEntry{name: n, isNew: isNew})
+		im.entries = append(im.entries, previewEntry{name: name, isNew: isNew})
 	}
 
 	// New students first so the rows that will actually change something are
-	// visible without scrolling. Stable so each group keeps spreadsheet order.
+	// visible without scrolling; within each group, roster order by
+	// (last, first) -- the same ordering the main list and the pickers use, so
+	// a name is looked up the same way everywhere.
 	sort.SliceStable(im.entries, func(i, j int) bool {
-		return im.entries[i].isNew && !im.entries[j].isNew
+		a, b := im.entries[i], im.entries[j]
+		if a.isNew != b.isNew {
+			return a.isNew
+		}
+		return a.name.Less(b.name)
 	})
 
 	im.setCounts(newCount, len(im.entries)-newCount)
@@ -519,7 +516,8 @@ func (im *importer) onImport() {
 			// Partial imports are kept: the students added so far are real, and
 			// rolling them back would be more surprising than reporting where
 			// it stopped.
-			dialog.ShowError(fmt.Errorf("added %d students, then failed on %q: %w", added, e.name, err), im.win)
+			dialog.ShowError(fmt.Errorf("added %d students, then failed on %q: %w",
+				added, e.name.Display(), err), im.win)
 			im.app.refresh()
 			return
 		}
@@ -532,8 +530,11 @@ func (im *importer) onImport() {
 // normalizeName is the key used to compare a parsed name against the database.
 // Case-insensitive so "john smith" does not import alongside an existing
 // "John Smith"; the store's unique constraint would not catch that on its own.
-func normalizeName(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
+// The two parts are joined with a separator that cannot occur inside a trimmed
+// name, so ("Ann Marie", "Lee") and ("Ann", "Marie Lee") stay distinct keys.
+func normalizeName(n store.Name) string {
+	return strings.ToLower(strings.TrimSpace(n.Last)) + "\x00" +
+		strings.ToLower(strings.TrimSpace(n.First))
 }
 
 func indexOf(list []string, want string) int {
@@ -562,7 +563,7 @@ func newPreviewRow() *previewRow {
 }
 
 func (r *previewRow) update(e previewEntry) {
-	r.name.Text = e.name
+	r.name.Text = e.name.Display()
 	if e.isNew {
 		r.name.Color = importNewColor
 	} else {

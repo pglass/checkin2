@@ -10,14 +10,16 @@ import (
 	"github.com/pglass/checkin/db/gen"
 )
 
-// logAt appends a Log row with an explicit name, action, and time.
-func logAt(t *testing.T, s *Store, name, action string, at time.Time) {
+// logAt appends a Log row for a student at an explicit time. The student ID is
+// carried on the row because the history student filter matches on it.
+func logAt(t *testing.T, s *Store, st gen.Student, action string, at time.Time) {
 	t.Helper()
 	err := s.q.AppendLog(context.Background(), gen.AppendLogParams{
-		Studentid:   sql.NullInt64{},
-		Studentname: name,
-		Action:      action,
-		Timestamp:   at.Unix(),
+		Studentid: sql.NullInt64{Int64: st.ID, Valid: true},
+		Firstname: st.Firstname,
+		Lastname:  st.Lastname,
+		Action:    action,
+		Timestamp: at.Unix(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -42,13 +44,22 @@ func TestHistoryFiltersAndSort(t *testing.T) {
 		return time.Date(y, m, d, h, 0, 0, 0, time.Local)
 	}
 
+	alice, err := s.AddStudent(ctx, testName("Alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.AddStudent(ctx, testName("Bob"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// Alice: in on the 10th, out on the 12th. Bob: in on the 11th.
-	logAt(t, s, "Alice", ActionCheckedIn, day(2026, 7, 10, 8))
-	logAt(t, s, "Alice", ActionCheckedOut, day(2026, 7, 12, 15))
-	logAt(t, s, "Bob", ActionCheckedIn, day(2026, 7, 11, 9))
+	logAt(t, s, alice, ActionCheckedIn, day(2026, 7, 10, 8))
+	logAt(t, s, alice, ActionCheckedOut, day(2026, 7, 12, 15))
+	logAt(t, s, bob, ActionCheckedIn, day(2026, 7, 11, 9))
 	// Noise that must never appear in history results:
-	logAt(t, s, "Alice", ActionAdded, day(2026, 7, 9, 8))
-	logAt(t, s, "Bob", ActionDeleted, day(2026, 7, 13, 8))
+	logAt(t, s, alice, ActionAdded, day(2026, 7, 9, 8))
+	logAt(t, s, bob, ActionDeleted, day(2026, 7, 13, 8))
 
 	t.Run("all, sorted by time", func(t *testing.T) {
 		rows, total, err := s.History(ctx, HistoryQuery{Sort: SortEventTime}, 100)
@@ -65,9 +76,9 @@ func TestHistoryFiltersAndSort(t *testing.T) {
 		wantNames := []string{"Alice", "Bob", "Alice"}
 		wantActs := []string{ActionCheckedIn, ActionCheckedIn, ActionCheckedOut}
 		for i := range rows {
-			if rows[i].StudentName != wantNames[i] || rows[i].Action != wantActs[i] {
+			if rows[i].Name.First != wantNames[i] || rows[i].Action != wantActs[i] {
 				t.Fatalf("row %d = %s/%s, want %s/%s", i,
-					rows[i].StudentName, rows[i].Action, wantNames[i], wantActs[i])
+					rows[i].Name.First, rows[i].Action, wantNames[i], wantActs[i])
 			}
 		}
 	})
@@ -84,8 +95,8 @@ func TestHistoryFiltersAndSort(t *testing.T) {
 			{"Bob", ActionCheckedIn},
 		}
 		for i, w := range want {
-			if rows[i].StudentName != w.name || rows[i].Action != w.act {
-				t.Fatalf("row %d = %s/%s, want %s/%s", i, rows[i].StudentName, rows[i].Action, w.name, w.act)
+			if rows[i].Name.First != w.name || rows[i].Action != w.act {
+				t.Fatalf("row %d = %s/%s, want %s/%s", i, rows[i].Name.First, rows[i].Action, w.name, w.act)
 			}
 		}
 	})
@@ -98,13 +109,13 @@ func TestHistoryFiltersAndSort(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if total != 1 || len(rows) != 1 || rows[0].StudentName != "Bob" {
+		if total != 1 || len(rows) != 1 || rows[0].Name.First != "Bob" {
 			t.Fatalf("11th-only got total=%d rows=%d, want 1 Bob", total, len(rows))
 		}
 	})
 
 	t.Run("student filter", func(t *testing.T) {
-		rows, total, err := s.History(ctx, HistoryQuery{StudentNames: []string{"Alice"}}, 100)
+		rows, total, err := s.History(ctx, HistoryQuery{StudentIDs: []int64{alice.ID}}, 100)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -112,8 +123,8 @@ func TestHistoryFiltersAndSort(t *testing.T) {
 			t.Fatalf("Alice filter got total=%d rows=%d, want 2", total, len(rows))
 		}
 		for _, r := range rows {
-			if r.StudentName != "Alice" {
-				t.Fatalf("unexpected name %q", r.StudentName)
+			if r.Name.First != "Alice" {
+				t.Fatalf("unexpected name %q", r.Name.Display())
 			}
 		}
 	})
@@ -123,9 +134,13 @@ func TestHistoryTotalVsLimit(t *testing.T) {
 	ctx := context.Background()
 	s := openHistoryStore(t)
 
+	alice, err := s.AddStudent(ctx, testName("Alice"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	base := time.Date(2026, 7, 1, 8, 0, 0, 0, time.Local)
 	for i := 0; i < 50; i++ {
-		logAt(t, s, "Alice", ActionCheckedIn, base.Add(time.Duration(i)*time.Minute))
+		logAt(t, s, alice, ActionCheckedIn, base.Add(time.Duration(i)*time.Minute))
 	}
 
 	rows, total, err := s.History(ctx, HistoryQuery{Sort: SortEventTime}, 10)
@@ -146,14 +161,14 @@ func TestHistoryIncludesAuthorizedAdult(t *testing.T) {
 	ctx := context.Background()
 	s := openHistoryStore(t)
 
-	st, err := s.AddStudent(ctx, "Alice")
+	st, err := s.AddStudent(ctx, testName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CheckIn(ctx, st.ID, st.Name, "Jane Parent"); err != nil {
+	if err := s.CheckIn(ctx, st.ID, nameOf(st), "Jane Parent"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CheckOut(ctx, st.ID, st.Name, ""); err != nil {
+	if err := s.CheckOut(ctx, st.ID, nameOf(st), ""); err != nil {
 		t.Fatal(err)
 	}
 

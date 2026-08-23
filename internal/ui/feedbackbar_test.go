@@ -53,7 +53,6 @@ func TestFeedbackBarCheckOutMessage(t *testing.T) {
 	}
 }
 
-
 // The result is held at full colour, then both the colour and the text fade
 // out, leaving the bar empty rather than showing a stale message forever.
 func TestFeedbackBarHoldsThenFades(t *testing.T) {
@@ -142,20 +141,19 @@ func TestFeedbackBarWiredToCheckInOut(t *testing.T) {
 	a := newScanApp(t)
 	a.feedback = newFeedbackBar()
 
-	st, err := a.store.AddStudent(a.ctx, "Alice")
+	st, err := a.store.AddStudent(a.ctx, testStudentName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := store.StudentRow{ID: st.ID, Name: st.Name}
+	row := store.StudentRow{ID: st.ID, Name: testStudentNameOf(st)}
 
 	a.applyCheckInOut(row, "Parent")
-	if got, want := a.feedback.text.Text, "Alice checked in at "; len(got) < len(want) || got[:len(want)] != want {
+	if got, want := a.feedback.text.Text, "Alice Aliceson checked in at "; len(got) < len(want) || got[:len(want)] != want {
 		t.Errorf("text = %q, want it to start %q", got, want)
 	}
 
 	a.applyCheckInOut(row, "Parent")
-	if got, want := a.feedback.text.Text, "Alice checked out at "; len(got) < len(want) || got[:len(want)] != want {
+	if got, want := a.feedback.text.Text, "Alice Aliceson checked out at "; len(got) < len(want) || got[:len(want)] != want {
 		t.Errorf("text = %q, want it to start %q", got, want)
 	}
 }
-

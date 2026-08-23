@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"slices"
 	"testing"
 	"time"
+
+	"fyne.io/fyne/v2/test"
 
 	"github.com/pglass/checkin/internal/store"
 )
@@ -21,20 +24,20 @@ func TestFormatHistoryLine(t *testing.T) {
 	}{
 		{
 			name: "check-in with adult",
-			row: store.HistoryRow{StudentName: "John Smith", Action: store.ActionCheckedIn,
-				Timestamp: at, AuthorizedAdult: "Jane Smith"},
+			row: store.HistoryRow{Name: store.Name{First: "John", Last: "Smith"},
+				Action: store.ActionCheckedIn, Timestamp: at, AuthorizedAdult: "Jane Smith"},
 			want: stamp + " -- John Smith checked in by Jane Smith",
 		},
 		{
 			name: "check-out with adult",
-			row: store.HistoryRow{StudentName: "John Smith", Action: store.ActionCheckedOut,
-				Timestamp: at, AuthorizedAdult: "Jane Smith"},
+			row: store.HistoryRow{Name: store.Name{First: "John", Last: "Smith"},
+				Action: store.ActionCheckedOut, Timestamp: at, AuthorizedAdult: "Jane Smith"},
 			want: stamp + " -- John Smith checked out by Jane Smith",
 		},
 		{
 			name: "no adult on record",
-			row: store.HistoryRow{StudentName: "John Smith", Action: store.ActionCheckedIn,
-				Timestamp: at},
+			row: store.HistoryRow{Name: store.Name{First: "John", Last: "Smith"},
+				Action: store.ActionCheckedIn, Timestamp: at},
 			want: stamp + " -- John Smith checked in",
 		},
 	}
@@ -44,5 +47,63 @@ func TestFormatHistoryLine(t *testing.T) {
 				t.Errorf("formatHistoryLine() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// The student picker (used by the History window) lists students as
+// "Last, First" and sorts by (last, first), case-insensitively.
+func TestStudentSelectDisplaysAndSortsByLastFirst(t *testing.T) {
+	fa := test.NewApp()
+	defer fa.Quit()
+
+	rows := []store.StudentRow{
+		{ID: 1, Name: store.Name{First: "Bob", Last: "Zane"}},
+		{ID: 2, Name: store.Name{First: "Carol", Last: "adams"}},
+		{ID: 3, Name: store.Name{First: "alice", Last: "Adams"}},
+	}
+	sel := newStudentSelectWithOptions(rows, false, 0, nil)
+	sel.header() // builds the sortable header widgets setSort refreshes
+	sel.setSort(sortNameAsc)
+
+	var got []string
+	for _, r := range sel.rows {
+		got = append(got, r.Name.Display())
+	}
+	want := []string{"Adams, alice", "adams, Carol", "Zane, Bob"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ascending order = %v, want %v", got, want)
+	}
+
+	sel.setSort(sortNameDesc)
+	got = nil
+	for _, r := range sel.rows {
+		got = append(got, r.Name.Display())
+	}
+	slices.Reverse(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("descending order = %v, want %v", got, want)
+	}
+}
+
+// Selecting students feeds the query by ID, and the summary names them in
+// "Last, First" form.
+func TestStudentSelectSelectionByID(t *testing.T) {
+	fa := test.NewApp()
+	defer fa.Quit()
+
+	rows := []store.StudentRow{
+		{ID: 7, Name: store.Name{First: "Bob", Last: "Zane"}},
+		{ID: 9, Name: store.Name{First: "alice", Last: "Adams"}},
+	}
+	sel := newStudentSelectWithOptions(rows, false, 0, nil)
+	sel.header()
+	sel.setSort(sortNameAsc)
+	sel.selected[9] = true
+
+	if got := sel.selectedIDs(); !slices.Equal(got, []int64{9}) {
+		t.Errorf("selectedIDs() = %v, want [9]", got)
+	}
+	if got := sel.selectedNames(); !slices.Equal(got, []string{"Adams, alice"}) {
+		t.Errorf("selectedNames() = %v, want [\"Adams, alice\"]", got)
 	}
 }

@@ -19,10 +19,10 @@ func TestStatusBarSummary(t *testing.T) {
 	now := time.Now()
 
 	b.setRows([]store.StudentRow{
-		{Name: "In only", In: tp(now)},
-		{Name: "In and out", In: tp(now), Out: tp(now)},
-		{Name: "Not in"},
-		{Name: "Also not in"},
+		{Name: testStudentName("In only"), In: tp(now)},
+		{Name: testStudentName("In and out"), In: tp(now), Out: tp(now)},
+		{Name: testStudentName("Not in")},
+		{Name: testStudentName("Also not in")},
 	})
 
 	// Two students have an In time; one of them also has an Out.
@@ -41,7 +41,7 @@ func TestStatusBarPluralisation(t *testing.T) {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
 
-	b.setRows([]store.StudentRow{{Name: "Solo", In: tp(time.Now())}})
+	b.setRows([]store.StudentRow{{Name: testStudentName("Solo"), In: tp(time.Now())}})
 	if got, want := b.summary.Text, "1 total student. 1 check-in, 0 check-outs today"; got != want {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
@@ -74,7 +74,7 @@ func TestStatusBarCamera(t *testing.T) {
 // Three groups: camera pinned left, summary centred, clock pinned right.
 func TestStatusBarGrouping(t *testing.T) {
 	b := newStatusBar()
-	b.setRows([]store.StudentRow{{Name: "A"}})
+	b.setRows([]store.StudentRow{{Name: testStudentName("A")}})
 	b.setClock(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.Local))
 	b.setCamera(true)
 
@@ -135,7 +135,7 @@ func TestStatusBarUpdatesOnRefresh(t *testing.T) {
 	a := newScanApp(t)
 	a.status = newStatusBar()
 
-	st, err := a.store.AddStudent(a.ctx, "Alice")
+	st, err := a.store.AddStudent(a.ctx, testStudentName("Alice"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestStatusBarUpdatesOnRefresh(t *testing.T) {
 	}
 
 	// applyCheckInOut refreshes internally.
-	a.applyCheckInOut(store.StudentRow{ID: st.ID, Name: st.Name}, "Parent")
+	a.applyCheckInOut(store.StudentRow{ID: st.ID, Name: testStudentNameOf(st)}, "Parent")
 
 	if got, want := a.status.summary.Text, "1 total student. 1 check-in, 0 check-outs today"; got != want {
 		t.Errorf("after check-in: summary = %q, want %q", got, want)

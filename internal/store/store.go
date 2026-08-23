@@ -74,7 +74,7 @@ const (
 // StudentRow is a view-model row for the main list.
 type StudentRow struct {
 	ID   int64
-	Name string
+	Name Name
 	In   *time.Time
 	Out  *time.Time
 }
@@ -146,29 +146,33 @@ func (s *Store) Close() error {
 	return err
 }
 
-// AddStudent inserts a new student and appends an "Added" log entry.
-// Returns ErrDuplicateName if the name is already taken.
-func (s *Store) AddStudent(ctx context.Context, name string) (gen.Student, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return gen.Student{}, errors.New("name must not be empty")
+// AddStudent inserts a new student and appends an "Added" log entry. Both name
+// parts are required. Returns ErrDuplicateName when the (last, first) pair is
+// already taken -- the same student, not merely a shared surname.
+func (s *Store) AddStudent(ctx context.Context, name Name) (gen.Student, error) {
+	name = NewName(name.First, name.Last)
+	if name.First == "" || name.Last == "" {
+		return gen.Student{}, errors.New("first and last name must not be empty")
 	}
-	st, err := s.q.AddStudent(ctx, name)
+	st, err := s.q.AddStudent(ctx, gen.AddStudentParams{
+		Firstname: name.First,
+		Lastname:  name.Last,
+	})
 	if err != nil {
 		if isUniqueViolation(err) {
 			return gen.Student{}, ErrDuplicateName
 		}
 		return gen.Student{}, err
 	}
-	if err := s.appendLog(ctx, st.ID, st.Name, ActionAdded); err != nil {
+	if err := s.appendLog(ctx, st.ID, name, ActionAdded); err != nil {
 		return gen.Student{}, err
 	}
-	slog.Debug("student added", "id", st.ID, "name", st.Name)
+	slog.Debug("student added", "id", st.ID, "name", name.Display())
 	return st, nil
 }
 
 // RemoveStudent deletes a student and appends a "Deleted" log entry.
-func (s *Store) RemoveStudent(ctx context.Context, id int64, name string) error {
+func (s *Store) RemoveStudent(ctx context.Context, id int64, name Name) error {
 	if err := s.q.DeleteStudent(ctx, id); err != nil {
 		return err
 	}
@@ -176,30 +180,30 @@ func (s *Store) RemoveStudent(ctx context.Context, id int64, name string) error 
 		return err
 	}
 	s.day.clear(id)
-	slog.Debug("student removed", "id", id, "name", name)
+	slog.Debug("student removed", "id", id, "name", name.Display())
 	return nil
 }
 
 // CheckIn records a check-in for today. adult is the name typed by the parent
 // or authorized adult signing the student in; "" is stored as NULL.
-func (s *Store) CheckIn(ctx context.Context, id int64, name, adult string) error {
+func (s *Store) CheckIn(ctx context.Context, id int64, name Name, adult string) error {
 	now := time.Now()
 	if err := s.appendLogAt(ctx, id, name, ActionCheckedIn, now, adult); err != nil {
 		return err
 	}
 	s.day.setIn(id, now)
-	slog.Debug("student checked in", "id", id, "name", name, "adult", adult, "at", now)
+	slog.Debug("student checked in", "id", id, "name", name.Display(), "adult", adult, "at", now)
 	return nil
 }
 
 // CheckOut records a check-out for today. adult is as in CheckIn.
-func (s *Store) CheckOut(ctx context.Context, id int64, name, adult string) error {
+func (s *Store) CheckOut(ctx context.Context, id int64, name Name, adult string) error {
 	now := time.Now()
 	if err := s.appendLogAt(ctx, id, name, ActionCheckedOut, now, adult); err != nil {
 		return err
 	}
 	s.day.setOut(id, now)
-	slog.Debug("student checked out", "id", id, "name", name, "adult", adult, "at", now)
+	slog.Debug("student checked out", "id", id, "name", name.Display(), "adult", adult, "at", now)
 	return nil
 }
 
@@ -301,13 +305,22 @@ func (s *Store) Students(ctx context.Context) ([]StudentRow, error) {
 	rows := make([]StudentRow, 0, len(students))
 	for _, st := range students {
 		in, out := s.day.get(st.ID)
-		rows = append(rows, StudentRow{ID: st.ID, Name: st.Name, In: in, Out: out})
+		rows = append(rows, StudentRow{
+			ID:   st.ID,
+			Name: Name{First: st.Firstname, Last: st.Lastname},
+			In:   in, Out: out,
+		})
 	}
-	// ListStudents already returns rows by name, so a stable sort keeps the
-	// no-activity rows alphabetical.
+	// Students who scanned today come first, most recent first; everyone else
+	// falls in roster order. The name tiebreak goes through Name.Less rather
+	// than leaning on ListStudents' SQL ordering, so the case-insensitive rule
+	// is the same one the student pickers sort by.
 	sort.SliceStable(rows, func(i, j int) bool {
 		a, b := lastActivity(rows[i]), lastActivity(rows[j])
-		if a == nil || b == nil {
+		switch {
+		case a == nil && b == nil:
+			return rows[i].Name.Less(rows[j].Name)
+		case a == nil || b == nil:
 			return a != nil // rows with activity today come first
 		}
 		return a.After(*b)
@@ -328,9 +341,13 @@ func (s *Store) Status(id int64) Status {
 	}
 }
 
-// StudentByName looks up a student by exact name (used by QR scanning).
-func (s *Store) StudentByName(ctx context.Context, name string) (gen.Student, error) {
-	return s.q.GetStudentByName(ctx, name)
+// StudentByName looks up a student by exact (last, first) pair, used by QR
+// scanning. Both parts must match: a surname alone does not identify a student.
+func (s *Store) StudentByName(ctx context.Context, name Name) (gen.Student, error) {
+	return s.q.GetStudentByName(ctx, gen.GetStudentByNameParams{
+		Lastname:  name.Last,
+		Firstname: name.First,
+	})
 }
 
 // Queries exposes the raw querier for the pruner and tests.
@@ -341,17 +358,18 @@ func (s *Store) Queries() *gen.Queries { return s.q }
 func (s *Store) DB() *sql.DB { return s.db }
 
 // appendLog writes a row with no authorized adult (Added/Deleted).
-func (s *Store) appendLog(ctx context.Context, id int64, name, action string) error {
+func (s *Store) appendLog(ctx context.Context, id int64, name Name, action string) error {
 	return s.appendLogAt(ctx, id, name, action, time.Now(), "")
 }
 
 // appendLogAt writes one Log row. An empty adult is stored as NULL, which is
 // the case for actions where it does not apply or where none was entered.
-func (s *Store) appendLogAt(ctx context.Context, id int64, name, action string, t time.Time, adult string) error {
+func (s *Store) appendLogAt(ctx context.Context, id int64, name Name, action string, t time.Time, adult string) error {
 	adult = strings.TrimSpace(adult)
 	return s.q.AppendLog(ctx, gen.AppendLogParams{
 		Studentid:       sql.NullInt64{Int64: id, Valid: true},
-		Studentname:     name,
+		Firstname:       name.First,
+		Lastname:        name.Last,
 		Action:          action,
 		Timestamp:       t.Unix(),
 		Authorizedadult: sql.NullString{String: adult, Valid: adult != ""},

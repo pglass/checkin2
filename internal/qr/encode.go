@@ -9,17 +9,22 @@ import (
 )
 
 // Version is the current QR payload schema version.
-const Version = 1
+//
+// v2 splits the single Name field into FirstName/LastName. v1 codes are not
+// accepted: a v1 payload carries one joined string that cannot be split back
+// into the two columns reliably, so existing sheets must be reprinted.
+const Version = 2
 
 // Payload is the JSON structure encoded in each student QR code.
 type Payload struct {
-	Version int    `json:"Version"`
-	Name    string `json:"Name"`
+	Version   int    `json:"Version"`
+	FirstName string `json:"FirstName"`
+	LastName  string `json:"LastName"`
 }
 
-// NewPayload builds a v1 payload for a student name.
-func NewPayload(name string) Payload {
-	return Payload{Version: Version, Name: name}
+// NewPayload builds a v2 payload for a student name.
+func NewPayload(first, last string) Payload {
+	return Payload{Version: Version, FirstName: first, LastName: last}
 }
 
 // Marshal returns the JSON bytes for a payload.
@@ -37,8 +42,8 @@ func ParsePayload(data string) (Payload, error) {
 }
 
 // Image renders a QR code image for a student name at the given pixel size.
-func Image(name string, size int) (image.Image, error) {
-	data, err := NewPayload(name).Marshal()
+func Image(first, last string, size int) (image.Image, error) {
+	data, err := NewPayload(first, last).Marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +55,8 @@ func Image(name string, size int) (image.Image, error) {
 }
 
 // PNG returns PNG-encoded bytes for a student's QR code.
-func PNG(name string, size int) ([]byte, error) {
-	data, err := NewPayload(name).Marshal()
+func PNG(first, last string, size int) ([]byte, error) {
+	data, err := NewPayload(first, last).Marshal()
 	if err != nil {
 		return nil, err
 	}
