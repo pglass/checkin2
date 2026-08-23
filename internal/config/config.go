@@ -23,10 +23,6 @@ type Config struct {
 	// QRScanCooldown is how long a scanned code is ignored after a successful
 	// scan, so the same student's dialog is not re-triggered immediately.
 	QRScanCooldown time.Duration
-	// PruneInterval is how often the background pruner deletes old log rows.
-	PruneInterval time.Duration
-	// PruneBatchSize is the max number of rows the pruner deletes per wake-up.
-	PruneBatchSize int
 }
 
 // Default returns the built-in default settings.
@@ -36,8 +32,6 @@ func Default() Config {
 		CameraRequestWidth:  640,
 		CameraRequestHeight: 480,
 		QRScanCooldown:      8 * time.Second,
-		PruneInterval:       5 * time.Minute,
-		PruneBatchSize:      100,
 	}
 }
 

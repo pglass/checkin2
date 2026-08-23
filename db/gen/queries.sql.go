@@ -8,7 +8,6 @@ package gen
 import (
 	"context"
 	"database/sql"
-	"strings"
 )
 
 const addStudent = `-- name: AddStudent :one
@@ -81,44 +80,6 @@ func (q *Queries) CountHistory(ctx context.Context, arg CountHistoryParams) (int
 	var count int64
 	err := row.Scan(&count)
 	return count, err
-}
-
-const countLogOlderThanCapped = `-- name: CountLogOlderThanCapped :one
-SELECT COUNT(*) FROM (SELECT 1 FROM Log WHERE Timestamp < ? LIMIT ?)
-`
-
-type CountLogOlderThanCappedParams struct {
-	Timestamp int64 `json:"timestamp"`
-	Limit     int64 `json:"limit"`
-}
-
-// Counts rows older than the cutoff but stops after the cap (second ?), so the
-// scan is bounded on huge backlogs. A result equal to the cap means "at least
-// this many" remain.
-func (q *Queries) CountLogOlderThanCapped(ctx context.Context, arg CountLogOlderThanCappedParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countLogOlderThanCapped, arg.Timestamp, arg.Limit)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
-const deleteLogByIDs = `-- name: DeleteLogByIDs :exec
-DELETE FROM Log WHERE ID IN (/*SLICE:ids*/?)
-`
-
-func (q *Queries) DeleteLogByIDs(ctx context.Context, ids []int64) error {
-	query := deleteLogByIDs
-	var queryParams []interface{}
-	if len(ids) > 0 {
-		for _, v := range ids {
-			queryParams = append(queryParams, v)
-		}
-		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
-	} else {
-		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
-	}
-	_, err := q.db.ExecContext(ctx, query, queryParams...)
-	return err
 }
 
 const deleteStudent = `-- name: DeleteStudent :exec
@@ -362,38 +323,6 @@ func (q *Queries) LogSince(ctx context.Context, timestamp int64) ([]Log, error) 
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const oldestLogIDs = `-- name: OldestLogIDs :many
-SELECT ID FROM Log WHERE Timestamp < ? ORDER BY Timestamp LIMIT ?
-`
-
-type OldestLogIDsParams struct {
-	Timestamp int64 `json:"timestamp"`
-	Limit     int64 `json:"limit"`
-}
-
-func (q *Queries) OldestLogIDs(ctx context.Context, arg OldestLogIDsParams) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, oldestLogIDs, arg.Timestamp, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

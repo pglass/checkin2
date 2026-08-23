@@ -13,18 +13,18 @@ import (
 
 // PDF layout: codes arranged in a grid, student name centered underneath each.
 const (
-	pdfCols     = 3
-	pdfRows     = 4
-	pdfMargin   = 12.0 // mm
-	pdfNameH    = 6.0  // mm reserved for the name under each code
-	pdfNameGap  = 1.0  // mm between a code and its caption
+	pdfCols    = 3
+	pdfRows    = 4
+	pdfMargin  = 12.0 // mm
+	pdfNameH   = 6.0  // mm reserved for the name under each code
+	pdfNameGap = 1.0  // mm between a code and its caption
 	// pdfBottomMargin is the space kept clear at the foot of the page. fpdf's
 	// own page-break margin defaults to about 20mm regardless of SetMargins,
 	// and printers reserve a similar strip, so the grid is sized against this
 	// rather than pdfMargin: a bottom-row caption that crossed it used to be
 	// pushed onto the next page, stranding the following codes a page later.
 	pdfBottomMargin = 20.5
-	qrPixelSize = 512  // render resolution per code
+	qrPixelSize     = 512 // render resolution per code
 )
 
 // Student is one entry on a QR sheet: the name pair to encode, plus the Label

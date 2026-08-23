@@ -5,6 +5,8 @@
 * Scans always show the confirmation pop-up; removed the `confirm_scan` setting
 * Use First Name and Last Name fields instead of combined Name field
 * Fix QR Code PDF layout
+* Remove database pruner. Keep data forever.
+* Fix sorting in some views
 
 # 0.0.4
 

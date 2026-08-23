@@ -45,18 +45,6 @@ ORDER BY Timestamp;
 DELETE FROM Log
 WHERE StudentID = ? AND Timestamp >= ? AND Action IN ('Checked In', 'Checked Out');
 
--- name: OldestLogIDs :many
-SELECT ID FROM Log WHERE Timestamp < ? ORDER BY Timestamp LIMIT ?;
-
--- name: CountLogOlderThanCapped :one
--- Counts rows older than the cutoff but stops after the cap (second ?), so the
--- scan is bounded on huge backlogs. A result equal to the cap means "at least
--- this many" remain.
-SELECT COUNT(*) FROM (SELECT 1 FROM Log WHERE Timestamp < ? LIMIT ?);
-
--- name: DeleteLogByIDs :exec
-DELETE FROM Log WHERE ID IN (sqlc.slice('ids'));
-
 -- Students are matched by ID rather than by name: a name is now two columns,
 -- and the picker already tracks selection by ID. json_each over a JSON array
 -- keeps this a single fixed placeholder (see store.History for why).

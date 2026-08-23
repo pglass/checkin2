@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS Log (
     AuthorizedAdult TEXT
 );
 
--- Fast "recent"/"today" range queries and fast prune scan of oldest rows.
+-- Fast "recent"/"today" range queries, including the History window's date
+-- bounds.
 CREATE INDEX IF NOT EXISTS idx_log_timestamp ON Log(Timestamp);
 -- Fast "today's rows for a given student".
 CREATE INDEX IF NOT EXISTS idx_log_student_ts ON Log(StudentID, Timestamp);

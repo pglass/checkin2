@@ -42,9 +42,9 @@ type App struct {
 	camMenuItems map[int]*fyne.MenuItem
 
 	// cfg is the live settings, seeded at startup and replaced when the
-	// Settings window saves. Camera restarts and pruner restarts read from it,
-	// so a save takes effect without restarting the app. cfgPath is the
-	// settings.ini it is written back to.
+	// Settings window saves. Camera restarts read from it, so a save takes
+	// effect without restarting the app. cfgPath is the settings.ini it is
+	// written back to.
 	cfg     config.Config
 	cfgPath string
 

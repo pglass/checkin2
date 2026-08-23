@@ -128,11 +128,6 @@ func main() {
 			app = ui.NewApp(ctx, fa, s, c.Name, cfg, cfgPath)
 		}
 
-		// Start background pruning after the UI is constructed; first pass fires
-		// after the configured interval so startup stays fast. The pruner only
-		// touches the open Center's database.
-		s.StartPruner(ctx, cfg.PruneInterval, cfg.PruneBatchSize)
-
 		app.Show()
 		return nil
 	}

@@ -99,7 +99,9 @@ func (h *history) build(rows []store.StudentRow) {
 	h.startDate = widget.NewDateEntry()
 	h.endDate = widget.NewDateEntry()
 	h.capNote = widget.NewLabel("")
-	h.students = newStudentSelectWithOptions(rows, false, maxHistoryStudents, nil)
+	// Opens A-Z by (last, first): history is looked up for a student the user
+	// already knows by name, so alphabetical beats the QR window's recent-first.
+	h.students = newStudentSelectWithOptions(rows, false, maxHistoryStudents, sortNameAsc, nil)
 	h.sortSel = widget.NewSelect([]string{"Event Time", "Student Name"}, nil)
 	h.summary = widget.NewLabel("")
 	h.summary.Wrapping = fyne.TextWrapWord

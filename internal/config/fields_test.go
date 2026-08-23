@@ -100,14 +100,3 @@ func TestFieldsSetValidation(t *testing.T) {
 		}
 	}
 }
-
-// The prune settings are the advanced ones; everything else is shown by
-// default. Advanced is a UI concern only -- Write must still emit every field.
-func TestAdvancedFields(t *testing.T) {
-	want := map[string]bool{"prune_interval": true, "prune_batch_size": true}
-	for _, f := range Fields {
-		if f.Advanced != want[f.Key] {
-			t.Errorf("%s: Advanced = %v, want %v", f.Key, f.Advanced, want[f.Key])
-		}
-	}
-}

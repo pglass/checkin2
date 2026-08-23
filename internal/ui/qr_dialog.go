@@ -334,18 +334,21 @@ type studentSelect struct {
 // newStudentSelect builds the QR-style picker: all students selected by default,
 // no selection cap. Kept as the simple entry point for the QR window.
 func newStudentSelect(rows []store.StudentRow) *studentSelect {
-	return newStudentSelectWithOptions(rows, true, 0, nil)
+	// Recent-first suits the QR sheet: codes are usually printed right after a
+	// batch of students is added, so the ones just imported are at the top.
+	return newStudentSelectWithOptions(rows, true, 0, sortRecent, nil)
 }
 
 // newStudentSelectWithOptions builds a picker with configurable defaults:
 //   - defaultAllSelected: start with every student selected (QR) vs none (History).
 //   - maxSelected: 0 = unlimited; else refuse to check beyond the cap.
+//   - initialSort: the ordering the list opens in; the user can change it.
 //   - onChange: called whenever the selection changes (nil = ignore).
-func newStudentSelectWithOptions(rows []store.StudentRow, defaultAllSelected bool, maxSelected int, onChange func()) *studentSelect {
+func newStudentSelectWithOptions(rows []store.StudentRow, defaultAllSelected bool, maxSelected int, initialSort sortMode, onChange func()) *studentSelect {
 	s := &studentSelect{
 		rows:        append([]store.StudentRow(nil), rows...),
 		selected:    make(map[int64]bool, len(rows)),
-		sort:        sortRecent,
+		sort:        initialSort,
 		maxSelected: maxSelected,
 		onChange:    onChange,
 	}

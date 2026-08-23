@@ -61,7 +61,7 @@ func TestStudentSelectDisplaysAndSortsByLastFirst(t *testing.T) {
 		{ID: 2, Name: store.Name{First: "Carol", Last: "adams"}},
 		{ID: 3, Name: store.Name{First: "alice", Last: "Adams"}},
 	}
-	sel := newStudentSelectWithOptions(rows, false, 0, nil)
+	sel := newStudentSelectWithOptions(rows, false, 0, sortRecent, nil)
 	sel.header() // builds the sortable header widgets setSort refreshes
 	sel.setSort(sortNameAsc)
 
@@ -95,7 +95,7 @@ func TestStudentSelectSelectionByID(t *testing.T) {
 		{ID: 7, Name: store.Name{First: "Bob", Last: "Zane"}},
 		{ID: 9, Name: store.Name{First: "alice", Last: "Adams"}},
 	}
-	sel := newStudentSelectWithOptions(rows, false, 0, nil)
+	sel := newStudentSelectWithOptions(rows, false, 0, sortRecent, nil)
 	sel.header()
 	sel.setSort(sortNameAsc)
 	sel.selected[9] = true
@@ -105,5 +105,57 @@ func TestStudentSelectSelectionByID(t *testing.T) {
 	}
 	if got := sel.selectedNames(); !slices.Equal(got, []string{"Adams, alice"}) {
 		t.Errorf("selectedNames() = %v, want [\"Adams, alice\"]", got)
+	}
+}
+
+// The History window's student list opens sorted A-Z by (last, first), not in
+// the QR window's recent-first order: history is looked up for a student the
+// user already knows by name.
+func TestHistoryStudentListOpensSortedByName(t *testing.T) {
+	fa := test.NewApp()
+	defer fa.Quit()
+
+	// IDs ascend in an order that is not the name order, so recent-first (ID
+	// descending) and A-Z produce different lists.
+	rows := []store.StudentRow{
+		{ID: 1, Name: store.Name{First: "Bob", Last: "Mills"}},
+		{ID: 2, Name: store.Name{First: "alice", Last: "Adams"}},
+		{ID: 3, Name: store.Name{First: "Carol", Last: "Zane"}},
+	}
+
+	h := &history{}
+	h.build(rows)
+
+	var got []string
+	for _, r := range h.students.rows {
+		got = append(got, r.Name.Display())
+	}
+	want := []string{"Adams, alice", "Mills, Bob", "Zane, Carol"}
+	if !slices.Equal(got, want) {
+		t.Errorf("student list opened as %v, want %v", got, want)
+	}
+}
+
+// The QR sheet's picker keeps its recent-first default: codes are printed
+// right after a batch of students is added.
+func TestQRStudentListOpensRecentFirst(t *testing.T) {
+	fa := test.NewApp()
+	defer fa.Quit()
+
+	rows := []store.StudentRow{
+		{ID: 1, Name: store.Name{First: "alice", Last: "Adams"}},
+		{ID: 2, Name: store.Name{First: "Bob", Last: "Mills"}},
+		{ID: 3, Name: store.Name{First: "Carol", Last: "Zane"}},
+	}
+
+	sel := newStudentSelect(rows)
+
+	var got []string
+	for _, r := range sel.rows {
+		got = append(got, r.Name.Display())
+	}
+	want := []string{"Zane, Carol", "Mills, Bob", "Adams, alice"} // ID descending
+	if !slices.Equal(got, want) {
+		t.Errorf("QR list opened as %v, want %v (most recently added first)", got, want)
 	}
 }

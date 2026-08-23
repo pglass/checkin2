@@ -44,7 +44,7 @@ type settingsRow struct {
 	// counts as unchanged again.
 	orig string
 	// block holds every widget of this setting (key + input, description, and
-	// error), so an advanced row can be hidden and shown as a unit.
+	// error), kept together so the row can be handled as a unit.
 	block []fyne.CanvasObject
 }
 
@@ -76,10 +76,6 @@ type settings struct {
 	// restartNote warns that saved settings only take effect at the next
 	// startup. Shown only once a value actually differs from what was loaded.
 	restartNote *canvas.Text
-	// showAdvanced reflects the "Show advanced settings" toggle, and advancedChk
-	// is the toggle itself, so a hidden invalid value can force it open.
-	showAdvanced bool
-	advancedChk  *widget.Check
 }
 
 // showSettingsWindow opens the Settings window, or raises the existing one.
@@ -171,19 +167,13 @@ func (s *settings) build() fyne.CanvasObject {
 
 		// Appended flat rather than wrapped in a per-setting VBox: nesting VBoxes
 		// pays the container's padding twice between settings, which is what made
-		// the gaps look large. The row keeps its own widgets so an advanced
-		// setting can be hidden and shown as a unit.
+		// the gaps look large.
 		row.block = []fyne.CanvasObject{top, descBlock, row.errLb}
 		blocks = append(blocks, row.block...)
 		s.rows = append(s.rows, row)
 	}
 
 	form := container.NewVBox(blocks...)
-
-	s.advancedChk = widget.NewCheck("Show advanced settings", func(on bool) {
-		s.showAdvanced = on
-		s.applyAdvancedVisibility()
-	})
 
 	saveBtn := widget.NewButton("Save", s.save)
 	saveBtn.Importance = widget.HighImportance
@@ -202,37 +192,10 @@ func (s *settings) build() fyne.CanvasObject {
 	// Nothing has been edited yet, so there is nothing to warn about.
 	s.restartNote.Hide()
 
-	bottom := container.NewVBox(widget.NewSeparator(), s.advancedChk, s.restartNote, buttons)
-
-	// Advanced settings start hidden; the checkbox above reveals them.
-	s.applyAdvancedVisibility()
+	bottom := container.NewVBox(widget.NewSeparator(), s.restartNote, buttons)
 
 	// The form scrolls so the window stays usable as settings are added.
 	return container.NewBorder(nil, bottom, nil, nil, container.NewVScroll(form))
-}
-
-// applyAdvancedVisibility hides or shows every advanced setting's widgets to
-// match the toggle. A hidden row's error stays hidden regardless, since it is
-// only shown while it has text (see validateRow).
-func (s *settings) applyAdvancedVisibility() {
-	for _, row := range s.rows {
-		if !row.field.Advanced {
-			continue
-		}
-		for _, o := range row.block {
-			switch {
-			case !s.showAdvanced:
-				o.Hide()
-			case o == fyne.CanvasObject(row.errLb):
-				// Restore only if it has something to say.
-				if row.errLb.Text != "" {
-					o.Show()
-				}
-			default:
-				o.Show()
-			}
-		}
-	}
 }
 
 // validateRow parses one row's input, showing or clearing its error message.
@@ -281,7 +244,6 @@ func (s *settings) dirty() bool {
 func (s *settings) save() {
 	cfg := s.app.cfg
 	ok := true
-	badAdvanced := false
 	for _, row := range s.rows {
 		// Validate into the real config so valid rows carry their new value,
 		// and re-check every row so all errors are shown at once, not just the
@@ -291,19 +253,9 @@ func (s *settings) save() {
 		}
 		if !s.validateRow(row) {
 			ok = false
-			if row.field.Advanced {
-				badAdvanced = true
-			}
 		}
 	}
 	if !ok {
-		// An invalid advanced value would otherwise block the save with its
-		// error hidden behind the toggle, making Save look like it did nothing.
-		if badAdvanced && !s.showAdvanced {
-			s.showAdvanced = true
-			s.advancedChk.SetChecked(true)
-			s.applyAdvancedVisibility()
-		}
 		return // errors are already displayed under the offending inputs
 	}
 
@@ -313,9 +265,9 @@ func (s *settings) save() {
 	}
 	slog.Info("settings saved", "path", s.app.cfgPath)
 
-	// Saved values are not applied to the running app: the camera, QR scanning,
-	// and the pruner keep using the settings read at startup. Restarting those
-	// in place proved fragile (a camera cannot be reopened until its driver has
+	// Saved values are not applied to the running app: the camera and QR
+	// scanning keep using the settings read at startup. Restarting those in
+	// place proved fragile (a camera cannot be reopened until its driver has
 	// released the device), so the window tells the user to restart instead.
 	s.app.cfg = cfg
 	s.win.Close()

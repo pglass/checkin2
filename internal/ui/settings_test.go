@@ -100,18 +100,12 @@ func TestSettingsSaveWritesAndApplies(t *testing.T) {
 			row.entry.SetText("720")
 		case "qr_scan_cooldown":
 			row.entry.SetText(" 3s ")
-		case "prune_interval":
-			row.entry.SetText("30m")
-		case "prune_batch_size":
-			row.entry.SetText("250")
 		}
 	}
 	want.CameraFPS = 15
 	want.CameraRequestWidth = 1280
 	want.CameraRequestHeight = 720
-	want.QRScanCooldown = 3e9          // 3s
-	want.PruneInterval = 30 * 60 * 1e9 // 30m
-	want.PruneBatchSize = 250
+	want.QRScanCooldown = 3e9 // 3s
 
 	s.save()
 
@@ -222,99 +216,6 @@ func TestSettingsRestartNoteIgnoresIdenticalRetype(t *testing.T) {
 	}
 	if s.restartNote.Visible() {
 		t.Error("restart note shown after retyping the same values")
-	}
-}
-
-// Advanced settings are hidden until the toggle is checked.
-func TestSettingsAdvancedHiddenByDefault(t *testing.T) {
-	s, _ := newTestSettings(t)
-
-	if s.showAdvanced {
-		t.Fatal("advanced settings shown by default")
-	}
-	var advanced, normal int
-	for _, row := range s.rows {
-		// block[0] is the key+input line. Fyne's Visible() reports a widget's
-		// own flag, not its parents', so the row's own container is what the
-		// toggle hides -- checking row.entry would always say visible.
-		line := row.block[0]
-		if row.field.Advanced {
-			advanced++
-			if line.Visible() {
-				t.Errorf("%s: advanced row visible by default", row.field.Key)
-			}
-		} else {
-			normal++
-			if !line.Visible() {
-				t.Errorf("%s: non-advanced row hidden", row.field.Key)
-			}
-		}
-	}
-	if advanced == 0 || normal == 0 {
-		t.Fatalf("test needs both kinds: %d advanced, %d normal", advanced, normal)
-	}
-
-	s.advancedChk.SetChecked(true)
-	for _, row := range s.rows {
-		if row.field.Advanced && !row.block[0].Visible() {
-			t.Errorf("%s: still hidden after enabling advanced", row.field.Key)
-		}
-	}
-
-	s.advancedChk.SetChecked(false)
-	for _, row := range s.rows {
-		if row.field.Advanced && row.block[0].Visible() {
-			t.Errorf("%s: still visible after disabling advanced", row.field.Key)
-		}
-	}
-}
-
-// Hidden advanced settings are still saved -- hiding is presentation only.
-func TestSettingsAdvancedStillSaved(t *testing.T) {
-	s, path := newTestSettings(t)
-
-	for _, row := range s.rows {
-		if row.field.Key == "prune_batch_size" {
-			row.entry.SetText("250")
-		}
-	}
-	s.save()
-
-	got, err := config.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.PruneBatchSize != 250 {
-		t.Fatalf("PruneBatchSize = %d, want 250 (hidden rows must still save)", got.PruneBatchSize)
-	}
-}
-
-// An invalid value in a hidden advanced row blocks the save, so the toggle is
-// opened to reveal the error rather than leaving Save looking inert.
-func TestSettingsSaveRevealsHiddenAdvancedError(t *testing.T) {
-	s, path := newTestSettings(t)
-
-	for _, row := range s.rows {
-		if row.field.Key == "prune_interval" {
-			row.entry.SetText("nonsense")
-		}
-	}
-	if s.showAdvanced {
-		t.Fatal("advanced should still be hidden before save")
-	}
-
-	s.save()
-
-	if !s.showAdvanced || !s.advancedChk.Checked {
-		t.Error("advanced settings not revealed for a hidden invalid value")
-	}
-	for _, row := range s.rows {
-		if row.field.Key == "prune_interval" && !row.errLb.Visible() {
-			t.Error("hidden invalid value's error not visible after save")
-		}
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Error("settings.ini written despite an invalid advanced value")
 	}
 }
 

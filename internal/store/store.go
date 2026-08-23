@@ -21,9 +21,9 @@ import (
 
 // connPragmas are applied to every pooled connection (via the DSN), not just the
 // first. busy_timeout and foreign_keys are per-connection settings, so setting
-// them once after Open would leave any second connection the pool creates (e.g.
-// the pruner writing while the UI reads) without them — a lock collision on that
-// connection would fail immediately instead of waiting. journal_mode=WAL is
+// them once after Open would leave any second connection the pool creates
+// without them — a lock collision on that connection would fail immediately
+// instead of waiting. journal_mode=WAL is
 // stored in the database file, but is listed here so it is guaranteed set.
 var connPragmas = []string{
 	"busy_timeout(5000)",  // wait up to 5s for a lock instead of failing
@@ -107,8 +107,8 @@ func Open(path string) (*Store, error) {
 	}
 
 	// Pragmas are carried in the DSN so they apply to every pooled connection,
-	// not just the first (see connPragmas). The UI and the background pruner can
-	// each hold their own connection, and both must have busy_timeout set.
+	// not just the first (see connPragmas): any connection the pool opens must
+	// have busy_timeout set.
 	database, err := sql.Open("sqlite", dsn(path))
 	if err != nil {
 		_ = lock.Unlock()
@@ -350,7 +350,7 @@ func (s *Store) StudentByName(ctx context.Context, name Name) (gen.Student, erro
 	})
 }
 
-// Queries exposes the raw querier for the pruner and tests.
+// Queries exposes the raw querier for tests and the seed tool.
 func (s *Store) Queries() *gen.Queries { return s.q }
 
 // DB exposes the underlying connection for bulk operations (e.g. seeding) that

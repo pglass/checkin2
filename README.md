@@ -85,7 +85,7 @@ Build the OpenCV libs once, then the app:
 ```sh
 make checkin    # compile the app        -> ./checkin
 make run        # compile, then run it
-make test       # run unit tests (DB, state, pruner, QR/PDF)
+make test       # run unit tests (DB, state, QR/PDF)
 make generate   # regenerate db/gen from db/schema.sql + db/queries.sql
 ```
 
@@ -147,14 +147,14 @@ checkin -db-path /tmp/x/checkin.db   # dev escape hatch: open a database directl
 - **Location:** `~/Library/Application Support/checkin/<Center>/checkin.db`
   (macOS), `%AppData%\checkin\<Center>\checkin.db` (Windows). Created when the
   Center is first opened.
-- **Schema:** `Student(ID, Name unique)` and an append-only
-  `Log(ID, StudentID, StudentName, Action, Timestamp)` where `Action` is
-  `Added | Checked In | Checked Out | Deleted` and `Timestamp` is unix epoch
-  seconds. Indexed on `Timestamp` and `(StudentID, Timestamp)`.
+- **Schema:** `Student(ID, FirstName, LastName)` unique on
+  `(LastName, FirstName)`, and an append-only
+  `Log(ID, StudentID, FirstName, LastName, Action, Timestamp, AuthorizedAdult)`
+  where `Action` is `Added | Checked In | Checked Out | Deleted` and `Timestamp`
+  is unix epoch seconds. Indexed on `Timestamp` and `(StudentID, Timestamp)`.
 - **Today's state** is held in memory, rebuilt from the log at startup and on
   calendar-day rollover.
-- **Retention:** a background goroutine prunes log rows older than 180 days in
-  100-row batches (see `internal/store/prune.go`). It does not run at startup.
+- **Retention:** log rows are kept indefinitely. Nothing deletes history.
 
 ## QR codes
 

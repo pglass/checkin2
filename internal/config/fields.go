@@ -35,10 +35,6 @@ type Field struct {
 	// StructField is the name of the Config struct field this maps to, used
 	// only by the test that checks every field is covered.
 	StructField string
-	// Advanced marks a setting most users never need. The settings UI hides
-	// these behind a toggle; settings.ini is unaffected, so an advanced setting
-	// is still written to the file and still editable by hand.
-	Advanced bool
 }
 
 // Fields lists every user-editable setting, in the order they appear both in
@@ -83,26 +79,6 @@ var Fields = []Field{
 		Set: func(c *Config, s string) error {
 			return setPositiveDuration(&c.QRScanCooldown, "qr_scan_cooldown", "8s", s)
 		},
-	},
-	{
-		Key:         "prune_interval",
-		Section:     "database",
-		Desc:        "Controls how often database pruning is run in the background (e.g. 30m, 1h).",
-		StructField: "PruneInterval",
-		Advanced:    true,
-		Get:         func(c Config) string { return c.PruneInterval.String() },
-		Set: func(c *Config, s string) error {
-			return setPositiveDuration(&c.PruneInterval, "prune_interval", "30m", s)
-		},
-	},
-	{
-		Key:         "prune_batch_size",
-		Section:     "database",
-		Desc:        "Max number of old database rows pruned per run.",
-		StructField: "PruneBatchSize",
-		Advanced:    true,
-		Get:         func(c Config) string { return strconv.Itoa(c.PruneBatchSize) },
-		Set:         func(c *Config, s string) error { return setPositiveInt(&c.PruneBatchSize, "prune_batch_size", s) },
 	},
 }
 
