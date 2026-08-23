@@ -24,8 +24,8 @@ func TestMutationDebugLogs(t *testing.T) {
 	defer s.Close()
 
 	st, _ := s.AddStudent(ctx, "Grace")
-	s.CheckIn(ctx, st.ID, st.Name)
-	s.CheckOut(ctx, st.ID, st.Name)
+	s.CheckIn(ctx, st.ID, st.Name, "Parent")
+	s.CheckOut(ctx, st.ID, st.Name, "Parent")
 	s.RemoveStudent(ctx, st.ID, st.Name)
 
 	out := buf.String()

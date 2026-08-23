@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -18,9 +19,8 @@ import (
 	"github.com/pglass/checkin/internal/store"
 )
 
-// newScanApp builds an App backed by a real store, with confirmSc set as the
-// confirm_scan setting.
-func newScanApp(t *testing.T, confirmScan bool) *App {
+// newScanApp builds an App backed by a real store.
+func newScanApp(t *testing.T) *App {
 	t.Helper()
 	fa := test.NewApp()
 	t.Cleanup(fa.Quit)
@@ -32,7 +32,6 @@ func newScanApp(t *testing.T, confirmScan bool) *App {
 	t.Cleanup(func() { s.Close() })
 
 	cfg := config.Default()
-	cfg.ConfirmScan = confirmScan
 
 	a := &App{fyneApp: fa, store: s, ctx: context.Background(),
 		cfg: cfg, camDevice: deviceNone}
@@ -51,36 +50,9 @@ func scan(t *testing.T, a *App, name string) {
 	a.routeScan(camera.ScanEvent{Payload: string(data)})
 }
 
-// With confirmation off, a scan checks the student in immediately, with no
-// pop-up, and a second scan checks them out.
-func TestScanWithoutConfirmationAppliesImmediately(t *testing.T) {
-	a := newScanApp(t, false)
-	st, err := a.store.AddStudent(a.ctx, "Alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	scan(t, a, "Alice")
-	if got := a.store.Status(st.ID); got != store.StatusIn {
-		t.Fatalf("after first scan status = %v, want In", got)
-	}
-	if a.popupOpen {
-		t.Error("a pop-up was shown despite confirm_scan being off")
-	}
-
-	scan(t, a, "Alice")
-	if got := a.store.Status(st.ID); got != store.StatusOut {
-		t.Fatalf("after second scan status = %v, want Out", got)
-	}
-	if a.popupOpen {
-		t.Error("a pop-up was shown on the check-out scan")
-	}
-}
-
-// With confirmation on, a scan opens the pop-up and changes nothing until the
-// user acts.
-func TestScanWithConfirmationShowsPopup(t *testing.T) {
-	a := newScanApp(t, true)
+// A scan always opens the pop-up and changes nothing until the user acts.
+func TestScanShowsPopup(t *testing.T) {
+	a := newScanApp(t)
 	st, err := a.store.AddStudent(a.ctx, "Alice")
 	if err != nil {
 		t.Fatal(err)
@@ -89,55 +61,49 @@ func TestScanWithConfirmationShowsPopup(t *testing.T) {
 	scan(t, a, "Alice")
 
 	if !a.popupOpen {
-		t.Error("no pop-up shown despite confirm_scan being on")
+		t.Error("no pop-up shown for a scanned student")
 	}
 	if got := a.store.Status(st.ID); got != store.StatusNotIn {
 		t.Fatalf("status = %v, want NotIn until the user confirms", got)
 	}
 }
 
-// A student who has already checked in and out has no next action. With
-// confirmation off this is reported on the feedback bar rather than by a
-// pop-up, so an unattended kiosk is never left waiting for a click -- see
-// TestScanAlreadyOutUsesFeedbackBarNotPopup. With confirmation on, the dialog
-// still opens and explains the state.
-func TestScanAlreadyOutWithConfirmationShowsPopup(t *testing.T) {
-	a := newScanApp(t, true)
+// A student who has already checked in and out has no next action, but the
+// dialog still opens and explains the state.
+func TestScanAlreadyOutShowsPopup(t *testing.T) {
+	a := newScanApp(t)
 	st, err := a.store.AddStudent(a.ctx, "Alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.store.CheckIn(a.ctx, st.ID, st.Name); err != nil {
+	if err := a.store.CheckIn(a.ctx, st.ID, st.Name, "Parent"); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.store.CheckOut(a.ctx, st.ID, st.Name); err != nil {
+	if err := a.store.CheckOut(a.ctx, st.ID, st.Name, "Parent"); err != nil {
 		t.Fatal(err)
 	}
 
 	scan(t, a, "Alice")
 
 	if !a.popupOpen {
-		t.Error("no pop-up for an already-checked-out student with confirm_scan on")
+		t.Error("no pop-up for an already-checked-out student")
 	}
 }
 
-// An unknown code opens the Add Student pop-up whether or not confirmation is
-// required: there is no student to check in either way.
+// An unknown code opens the Add Student pop-up: there is no student to check in.
 func TestScanUnknownStudentAlwaysPrompts(t *testing.T) {
-	for _, confirm := range []bool{true, false} {
-		a := newScanApp(t, confirm)
+	a := newScanApp(t)
 
-		scan(t, a, "Nobody")
+	scan(t, a, "Nobody")
 
-		if !a.popupOpen {
-			t.Errorf("confirm_scan=%v: no Add Student pop-up for an unknown code", confirm)
-		}
+	if !a.popupOpen {
+		t.Error("no Add Student pop-up for an unknown code")
 	}
 }
 
 // The one-pop-up-at-a-time guard still applies to the confirmation path.
 func TestScanIgnoredWhilePopupOpen(t *testing.T) {
-	a := newScanApp(t, true)
+	a := newScanApp(t)
 	if _, err := a.store.AddStudent(a.ctx, "Alice"); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +119,7 @@ func TestScanIgnoredWhilePopupOpen(t *testing.T) {
 // The unknown-code notice names the scanned student, and is a normal-size
 // wrapping label rather than the small red caption used for validation errors.
 func TestScanUnknownStudentNoticeText(t *testing.T) {
-	a := newScanApp(t, false)
+	a := newScanApp(t)
 
 	scan(t, a, "Bobby Tables")
 
@@ -179,7 +145,7 @@ func TestScanUnknownStudentNoticeText(t *testing.T) {
 
 // The Add Student dialog puts "Name:" and its entry on one row.
 func TestAddStudentDialogNameRow(t *testing.T) {
-	a := newScanApp(t, false)
+	a := newScanApp(t)
 
 	a.showAddStudentDialogPrefill("Alice", "", "")
 
@@ -217,7 +183,7 @@ func dialogLabels(a *App) []*widget.Label {
 // dialog to its content, which leaves it narrow enough that the "not found"
 // notice wraps over several lines.
 func TestAddStudentDialogIsWide(t *testing.T) {
-	a := newScanApp(t, false)
+	a := newScanApp(t)
 	a.win.Resize(fyne.NewSize(640, 480))
 
 	a.showAddStudentDialogPrefill("Alice",
@@ -242,7 +208,7 @@ func TestAddStudentDialogIsWide(t *testing.T) {
 // The Cancel and Add buttons are centred in the dialog. The dialog is far wider
 // than the buttons, so a plain HBox would leave them at the left edge.
 func TestAddStudentDialogButtonsCentred(t *testing.T) {
-	a := newScanApp(t, false)
+	a := newScanApp(t)
 	a.win.Resize(fyne.NewSize(640, 480))
 	a.showAddStudentDialogPrefill("Alice",
 		`Scanned "Bobby Tables" but student is not found in this center. Add them?`, "")
@@ -296,7 +262,7 @@ func TestAddStudentDialogButtonsCentred(t *testing.T) {
 // operator can scan again immediately to check the new student in rather than
 // waiting out qr_scan_cooldown.
 func TestAddFromScanClearsCooldown(t *testing.T) {
-	a := newScanApp(t, false)
+	a := newScanApp(t)
 	a.cam = camera.New(6, 640, 480, time.Minute)
 
 	payload, err := qr.NewPayload("Alice").Marshal()
@@ -328,7 +294,7 @@ func TestAddFromScanClearsCooldown(t *testing.T) {
 // Opening the dialog from the menu (no scan payload) must not disturb any
 // cooldown.
 func TestAddFromMenuLeavesCooldownAlone(t *testing.T) {
-	a := newScanApp(t, false)
+	a := newScanApp(t)
 	a.cam = camera.New(6, 640, 480, time.Minute)
 
 	payload, err := qr.NewPayload("Alice").Marshal()
@@ -357,4 +323,203 @@ func dialogConfirm(t *testing.T, a *App) {
 		}
 	}
 	t.Fatal("no Add button found in the open dialog")
+}
+
+// dialogEntries collects the entry widgets of whatever dialog is showing.
+func dialogEntries(a *App) []*widget.Entry {
+	var out []*widget.Entry
+	for _, top := range a.win.Canvas().Overlays().List() {
+		for _, o := range test.LaidOutObjects(top) {
+			if e, ok := o.(*widget.Entry); ok {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
+}
+
+// dialogButton finds the dialog button with the given label.
+func dialogButton(a *App, label string) *widget.Button {
+	for _, top := range a.win.Canvas().Overlays().List() {
+		for _, o := range test.LaidOutObjects(top) {
+			if btn, ok := o.(*widget.Button); ok && btn.Text == label {
+				return btn
+			}
+		}
+	}
+	return nil
+}
+
+// The check-in button is disabled until an authorized adult name is entered,
+// and whitespace alone does not count.
+func TestCheckInOutDialogRequiresAuthorizedAdult(t *testing.T) {
+	a := newScanApp(t)
+	if _, err := a.store.AddStudent(a.ctx, "Alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	scan(t, a, "Alice")
+
+	btn := dialogButton(a, "Check In")
+	if btn == nil {
+		t.Fatal("no Check In button in the dialog")
+	}
+	if !btn.Disabled() {
+		t.Error("Check In button is enabled with no authorized adult entered")
+	}
+
+	entries := dialogEntries(a)
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries in the dialog, want 1 (the authorized adult)", len(entries))
+	}
+	entry := entries[0]
+
+	entry.SetText("   ")
+	if !btn.Disabled() {
+		t.Error("Check In button enabled by whitespace only")
+	}
+
+	entry.SetText("Bob Parent")
+	if btn.Disabled() {
+		t.Error("Check In button still disabled after entering a name")
+	}
+}
+
+// Confirming the dialog stores the typed adult on the check-in row, and the
+// check-out that follows records the adult entered for it.
+func TestCheckInOutDialogStoresAuthorizedAdult(t *testing.T) {
+	a := newScanApp(t)
+	st, err := a.store.AddStudent(a.ctx, "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	confirm := func(adult, label string) {
+		t.Helper()
+		scan(t, a, "Alice")
+		entries := dialogEntries(a)
+		if len(entries) != 1 {
+			t.Fatalf("got %d entries, want 1", len(entries))
+		}
+		entries[0].SetText(adult)
+		btn := dialogButton(a, label)
+		if btn == nil {
+			t.Fatalf("no %q button in the dialog", label)
+		}
+		btn.OnTapped()
+		a.popupOpen = false // the test dialog's OnClosed does not run
+	}
+
+	confirm("Bob Parent", "Check In")
+	if got := a.store.Status(st.ID); got != store.StatusIn {
+		t.Fatalf("status = %v, want In", got)
+	}
+	confirm("Carol Guardian", "Check Out")
+	if got := a.store.Status(st.ID); got != store.StatusOut {
+		t.Fatalf("status = %v, want Out", got)
+	}
+
+	rows, err := a.store.DB().QueryContext(a.ctx,
+		"SELECT Action, AuthorizedAdult FROM Log WHERE Action IN ('Checked In','Checked Out') ORDER BY ID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var action string
+		var adult sql.NullString
+		if err := rows.Scan(&action, &adult); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, action+"="+adult.String)
+	}
+	want := []string{"Checked In=Bob Parent", "Checked Out=Carol Guardian"}
+	if !slices.Equal(got, want) {
+		t.Errorf("log rows = %v, want %v", got, want)
+	}
+}
+
+// The check-in/out dialog offers buttons for the adults who recently signed
+// this student in or out; tapping one fills the entry and enables the action
+// button, without submitting.
+func TestCheckInOutDialogSuggestsRecentAdults(t *testing.T) {
+	a := newScanApp(t)
+	st, err := a.store.AddStudent(a.ctx, "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// History from previous days, seeded directly: CheckIn always stamps
+	// time.Now(), which would also change today's state for this student.
+	base := time.Now().Add(-100 * time.Hour)
+	for i, adult := range []string{"Grandpa", "Jane Parent"} {
+		_, err := a.store.DB().ExecContext(a.ctx,
+			`INSERT INTO Log (StudentID, StudentName, Action, Timestamp, AuthorizedAdult)
+			 VALUES (?, ?, 'Checked In', ?, ?)`,
+			st.ID, st.Name, base.Add(time.Duration(i)*time.Hour).Unix(), adult)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	scan(t, a, "Alice")
+
+	// Most recently used first.
+	if btn := dialogButton(a, "Jane Parent"); btn == nil {
+		t.Fatal("no quick-pick button for the most recent authorized adult")
+	}
+	if btn := dialogButton(a, "Grandpa"); btn == nil {
+		t.Error("no quick-pick button for the older authorized adult")
+	}
+
+	action := dialogButton(a, "Check In")
+	if action == nil {
+		t.Fatal("no Check In button in the dialog")
+	}
+	if !action.Disabled() {
+		t.Fatal("Check In button enabled before a name was chosen")
+	}
+
+	dialogButton(a, "Jane Parent").OnTapped()
+
+	entries := dialogEntries(a)
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if got := entries[0].Text; got != "Jane Parent" {
+		t.Errorf("entry = %q, want %q after tapping the suggestion", got, "Jane Parent")
+	}
+	if action.Disabled() {
+		t.Error("Check In button still disabled after tapping a suggestion")
+	}
+	// Tapping a suggestion must not check the student in on its own.
+	if got := a.store.Status(st.ID); got != store.StatusNotIn {
+		t.Errorf("status = %v after tapping a suggestion, want NotIn until confirmed", got)
+	}
+}
+
+// A student with no prior authorized adults gets no quick-pick buttons -- just
+// the entry, which still gates the action button.
+func TestCheckInOutDialogNoSuggestionsForNewStudent(t *testing.T) {
+	a := newScanApp(t)
+	if _, err := a.store.AddStudent(a.ctx, "Alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	scan(t, a, "Alice")
+
+	var labels []string
+	for _, top := range a.win.Canvas().Overlays().List() {
+		for _, o := range test.LaidOutObjects(top) {
+			if btn, ok := o.(*widget.Button); ok {
+				labels = append(labels, btn.Text)
+			}
+		}
+	}
+	want := []string{"Check In", "Cancel"}
+	for _, l := range labels {
+		if !slices.Contains(want, l) {
+			t.Errorf("unexpected button %q; a student with no history should get no suggestions", l)
+		}
+	}
 }

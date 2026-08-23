@@ -132,7 +132,7 @@ func posOf(t *testing.T, root fyne.CanvasObject, obj *canvas.Text) float32 {
 // The bar is wired into refresh: checking a student in through the app updates
 // the summary without any explicit status call.
 func TestStatusBarUpdatesOnRefresh(t *testing.T) {
-	a := newScanApp(t, false)
+	a := newScanApp(t)
 	a.status = newStatusBar()
 
 	st, err := a.store.AddStudent(a.ctx, "Alice")
@@ -145,7 +145,7 @@ func TestStatusBarUpdatesOnRefresh(t *testing.T) {
 	}
 
 	// applyCheckInOut refreshes internally.
-	a.applyCheckInOut(store.StudentRow{ID: st.ID, Name: st.Name})
+	a.applyCheckInOut(store.StudentRow{ID: st.ID, Name: st.Name}, "Parent")
 
 	if got, want := a.status.summary.Text, "1 total student. 1 check-in, 0 check-outs today"; got != want {
 		t.Errorf("after check-in: summary = %q, want %q", got, want)
@@ -161,7 +161,7 @@ func TestStatusBarUpdatesOnRefresh(t *testing.T) {
 // deviceNone, so the start path needs its own update or the bar stays "Off"
 // with a camera running.
 func TestStatusBarCameraFollowsDeviceStart(t *testing.T) {
-	a := newScanApp(t, false)
+	a := newScanApp(t)
 	a.status = newStatusBar()
 	a.updateStatus(nil)
 

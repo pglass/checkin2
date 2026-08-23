@@ -180,26 +180,63 @@ func (s *Store) RemoveStudent(ctx context.Context, id int64, name string) error 
 	return nil
 }
 
-// CheckIn records a check-in for today.
-func (s *Store) CheckIn(ctx context.Context, id int64, name string) error {
+// CheckIn records a check-in for today. adult is the name typed by the parent
+// or authorized adult signing the student in; "" is stored as NULL.
+func (s *Store) CheckIn(ctx context.Context, id int64, name, adult string) error {
 	now := time.Now()
-	if err := s.appendLogAt(ctx, id, name, ActionCheckedIn, now); err != nil {
+	if err := s.appendLogAt(ctx, id, name, ActionCheckedIn, now, adult); err != nil {
 		return err
 	}
 	s.day.setIn(id, now)
-	slog.Debug("student checked in", "id", id, "name", name, "at", now)
+	slog.Debug("student checked in", "id", id, "name", name, "adult", adult, "at", now)
 	return nil
 }
 
-// CheckOut records a check-out for today.
-func (s *Store) CheckOut(ctx context.Context, id int64, name string) error {
+// CheckOut records a check-out for today. adult is as in CheckIn.
+func (s *Store) CheckOut(ctx context.Context, id int64, name, adult string) error {
 	now := time.Now()
-	if err := s.appendLogAt(ctx, id, name, ActionCheckedOut, now); err != nil {
+	if err := s.appendLogAt(ctx, id, name, ActionCheckedOut, now, adult); err != nil {
 		return err
 	}
 	s.day.setOut(id, now)
-	slog.Debug("student checked out", "id", id, "name", name, "at", now)
+	slog.Debug("student checked out", "id", id, "name", name, "adult", adult, "at", now)
 	return nil
+}
+
+// adultScanRows is how many of a student's most recent check-in/out rows
+// RecentAuthorizedAdults looks at. Bounded so the cost of the suggestion query
+// does not grow with a student's history (two years of it, under the retention
+// policy). Large enough that a family alternating two or three adults still
+// surfaces all of them.
+const adultScanRows = 20
+
+// maxAdultSuggestions is how many distinct names the check-in/out dialog offers.
+// Past three, scanning the buttons is slower than typing a short name.
+const maxAdultSuggestions = 3
+
+// RecentAuthorizedAdults returns the distinct adults who recently signed this
+// student in or out, most recently used first, for the dialog's quick-pick
+// buttons. Empty names are excluded, so students with no history (or only
+// pre-existing rows) simply get no suggestions and the adult types one.
+//
+// The query seeks idx_log_student_ts and scans at most adultScanRows rows, so
+// it stays sub-millisecond and is safe to run each time the pop-up opens.
+func (s *Store) RecentAuthorizedAdults(ctx context.Context, studentID int64) ([]string, error) {
+	got, err := s.q.RecentAuthorizedAdults(ctx, gen.RecentAuthorizedAdultsParams{
+		StudentID: sql.NullInt64{Int64: studentID, Valid: true},
+		Scan:      adultScanRows,
+		Lim:       maxAdultSuggestions,
+	})
+	if err != nil {
+		return nil, err
+	}
+	adults := make([]string, 0, len(got))
+	for _, a := range got {
+		if a.Valid && a.String != "" {
+			adults = append(adults, a.String)
+		}
+	}
+	return adults, nil
 }
 
 // Reset clears today's check-in/out for a student, deleting today's rows.
@@ -303,16 +340,21 @@ func (s *Store) Queries() *gen.Queries { return s.q }
 // need transaction control.
 func (s *Store) DB() *sql.DB { return s.db }
 
+// appendLog writes a row with no authorized adult (Added/Deleted).
 func (s *Store) appendLog(ctx context.Context, id int64, name, action string) error {
-	return s.appendLogAt(ctx, id, name, action, time.Now())
+	return s.appendLogAt(ctx, id, name, action, time.Now(), "")
 }
 
-func (s *Store) appendLogAt(ctx context.Context, id int64, name, action string, t time.Time) error {
+// appendLogAt writes one Log row. An empty adult is stored as NULL, which is
+// the case for actions where it does not apply or where none was entered.
+func (s *Store) appendLogAt(ctx context.Context, id int64, name, action string, t time.Time, adult string) error {
+	adult = strings.TrimSpace(adult)
 	return s.q.AppendLog(ctx, gen.AppendLogParams{
-		Studentid:   sql.NullInt64{Int64: id, Valid: true},
-		Studentname: name,
-		Action:      action,
-		Timestamp:   t.Unix(),
+		Studentid:       sql.NullInt64{Int64: id, Valid: true},
+		Studentname:     name,
+		Action:          action,
+		Timestamp:       t.Unix(),
+		Authorizedadult: sql.NullString{String: adult, Valid: adult != ""},
 	})
 }
 

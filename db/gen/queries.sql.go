@@ -23,14 +23,15 @@ func (q *Queries) AddStudent(ctx context.Context, name string) (Student, error) 
 }
 
 const appendLog = `-- name: AppendLog :exec
-INSERT INTO Log (StudentID, StudentName, Action, Timestamp) VALUES (?, ?, ?, ?)
+INSERT INTO Log (StudentID, StudentName, Action, Timestamp, AuthorizedAdult) VALUES (?, ?, ?, ?, ?)
 `
 
 type AppendLogParams struct {
-	Studentid   sql.NullInt64 `json:"studentid"`
-	Studentname string        `json:"studentname"`
-	Action      string        `json:"action"`
-	Timestamp   int64         `json:"timestamp"`
+	Studentid       sql.NullInt64  `json:"studentid"`
+	Studentname     string         `json:"studentname"`
+	Action          string         `json:"action"`
+	Timestamp       int64          `json:"timestamp"`
+	Authorizedadult sql.NullString `json:"authorizedadult"`
 }
 
 func (q *Queries) AppendLog(ctx context.Context, arg AppendLogParams) error {
@@ -39,6 +40,7 @@ func (q *Queries) AppendLog(ctx context.Context, arg AppendLogParams) error {
 		arg.Studentname,
 		arg.Action,
 		arg.Timestamp,
+		arg.Authorizedadult,
 	)
 	return err
 }
@@ -159,7 +161,7 @@ func (q *Queries) GetStudentByName(ctx context.Context, name string) (Student, e
 }
 
 const historyByName = `-- name: HistoryByName :many
-SELECT StudentName, Action, Timestamp FROM Log
+SELECT StudentName, Action, Timestamp, AuthorizedAdult FROM Log
 WHERE Action IN ('Checked In', 'Checked Out')
   AND (?1 = 0 OR Timestamp >= ?2)
   AND (?3 = 0 OR Timestamp <= ?4)
@@ -179,9 +181,10 @@ type HistoryByNameParams struct {
 }
 
 type HistoryByNameRow struct {
-	Studentname string `json:"studentname"`
-	Action      string `json:"action"`
-	Timestamp   int64  `json:"timestamp"`
+	Studentname     string         `json:"studentname"`
+	Action          string         `json:"action"`
+	Timestamp       int64          `json:"timestamp"`
+	Authorizedadult sql.NullString `json:"authorizedadult"`
 }
 
 func (q *Queries) HistoryByName(ctx context.Context, arg HistoryByNameParams) ([]HistoryByNameRow, error) {
@@ -201,7 +204,12 @@ func (q *Queries) HistoryByName(ctx context.Context, arg HistoryByNameParams) ([
 	var items []HistoryByNameRow
 	for rows.Next() {
 		var i HistoryByNameRow
-		if err := rows.Scan(&i.Studentname, &i.Action, &i.Timestamp); err != nil {
+		if err := rows.Scan(
+			&i.Studentname,
+			&i.Action,
+			&i.Timestamp,
+			&i.Authorizedadult,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -216,7 +224,7 @@ func (q *Queries) HistoryByName(ctx context.Context, arg HistoryByNameParams) ([
 }
 
 const historyByTime = `-- name: HistoryByTime :many
-SELECT StudentName, Action, Timestamp FROM Log
+SELECT StudentName, Action, Timestamp, AuthorizedAdult FROM Log
 WHERE Action IN ('Checked In', 'Checked Out')
   AND (?1 = 0 OR Timestamp >= ?2)
   AND (?3 = 0 OR Timestamp <= ?4)
@@ -236,9 +244,10 @@ type HistoryByTimeParams struct {
 }
 
 type HistoryByTimeRow struct {
-	Studentname string `json:"studentname"`
-	Action      string `json:"action"`
-	Timestamp   int64  `json:"timestamp"`
+	Studentname     string         `json:"studentname"`
+	Action          string         `json:"action"`
+	Timestamp       int64          `json:"timestamp"`
+	Authorizedadult sql.NullString `json:"authorizedadult"`
 }
 
 func (q *Queries) HistoryByTime(ctx context.Context, arg HistoryByTimeParams) ([]HistoryByTimeRow, error) {
@@ -258,7 +267,12 @@ func (q *Queries) HistoryByTime(ctx context.Context, arg HistoryByTimeParams) ([
 	var items []HistoryByTimeRow
 	for rows.Next() {
 		var i HistoryByTimeRow
-		if err := rows.Scan(&i.Studentname, &i.Action, &i.Timestamp); err != nil {
+		if err := rows.Scan(
+			&i.Studentname,
+			&i.Action,
+			&i.Timestamp,
+			&i.Authorizedadult,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -300,7 +314,7 @@ func (q *Queries) ListStudents(ctx context.Context) ([]Student, error) {
 }
 
 const logSince = `-- name: LogSince :many
-SELECT id, studentid, studentname, "action", timestamp FROM Log
+SELECT id, studentid, studentname, "action", timestamp, authorizedadult FROM Log
 WHERE Timestamp >= ? AND Action IN ('Checked In', 'Checked Out')
 ORDER BY Timestamp
 `
@@ -320,6 +334,7 @@ func (q *Queries) LogSince(ctx context.Context, timestamp int64) ([]Log, error) 
 			&i.Studentname,
 			&i.Action,
 			&i.Timestamp,
+			&i.Authorizedadult,
 		); err != nil {
 			return nil, err
 		}
@@ -356,6 +371,54 @@ func (q *Queries) OldestLogIDs(ctx context.Context, arg OldestLogIDsParams) ([]i
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recentAuthorizedAdults = `-- name: RecentAuthorizedAdults :many
+SELECT AuthorizedAdult FROM (
+    SELECT AuthorizedAdult, Timestamp FROM Log
+    WHERE StudentID = ?1
+      AND Action IN ('Checked In', 'Checked Out')
+      AND AuthorizedAdult IS NOT NULL AND AuthorizedAdult <> ''
+    ORDER BY Timestamp DESC
+    LIMIT ?2
+)
+GROUP BY AuthorizedAdult
+ORDER BY MAX(Timestamp) DESC
+LIMIT ?3
+`
+
+type RecentAuthorizedAdultsParams struct {
+	StudentID sql.NullInt64 `json:"student_id"`
+	Scan      int64         `json:"scan"`
+	Lim       int64         `json:"lim"`
+}
+
+// Distinct authorized adults who recently signed this student in or out, most
+// recently used first. The inner query walks idx_log_student_ts backwards and
+// stops after 'scan' rows, so cost does not grow with the student's history;
+// grouping outside it collapses the usual "same adult over and over" case, and
+// MAX(Timestamp) orders the names by their latest use.
+func (q *Queries) RecentAuthorizedAdults(ctx context.Context, arg RecentAuthorizedAdultsParams) ([]sql.NullString, error) {
+	rows, err := q.db.QueryContext(ctx, recentAuthorizedAdults, arg.StudentID, arg.Scan, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []sql.NullString
+	for rows.Next() {
+		var authorizedadult sql.NullString
+		if err := rows.Scan(&authorizedadult); err != nil {
+			return nil, err
+		}
+		items = append(items, authorizedadult)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

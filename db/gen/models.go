@@ -9,11 +9,12 @@ import (
 )
 
 type Log struct {
-	ID          int64         `json:"id"`
-	Studentid   sql.NullInt64 `json:"studentid"`
-	Studentname string        `json:"studentname"`
-	Action      string        `json:"action"`
-	Timestamp   int64         `json:"timestamp"`
+	ID              int64          `json:"id"`
+	Studentid       sql.NullInt64  `json:"studentid"`
+	Studentname     string         `json:"studentname"`
+	Action          string         `json:"action"`
+	Timestamp       int64          `json:"timestamp"`
+	Authorizedadult sql.NullString `json:"authorizedadult"`
 }
 
 type Student struct {

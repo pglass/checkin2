@@ -24,12 +24,6 @@ const (
 // confirmation dialog's "3:04 PM".
 const feedbackTimeFormat = "3:04 PM"
 
-// feedbackWarnColor is the "nothing to do" colour: a scan that was read fine
-// but could not be acted on (the student already checked out today). Amber
-// rather than the success green, and rather than the error red -- nothing has
-// gone wrong.
-var feedbackWarnColor = color.NRGBA{R: 0xE6, G: 0xA2, B: 0x3C, A: 0xFF}
-
 // feedbackBar is the full-width strip above the status bar that reports the
 // most recent scan. It holds the result for feedbackHold, then fades both the
 // colour and the text out over feedbackFade. A new result during either phase
@@ -76,12 +70,6 @@ func (b *feedbackBar) showCheckIn(name string, at time.Time) {
 func (b *feedbackBar) showCheckOut(name string, at time.Time) {
 	b.flash(fmt.Sprintf("%s checked out at %s", name, at.Format(feedbackTimeFormat)),
 		theme.Color(theme.ColorNameSuccess))
-}
-
-// showAlreadyOut flashes the "nothing to do" warning in amber, for a student
-// who has already checked in and out today.
-func (b *feedbackBar) showAlreadyOut(name string) {
-	b.flash(fmt.Sprintf("%s is already checked out", name), feedbackWarnColor)
 }
 
 // flash shows msg on a bar of the given colour, holds it, then fades it out.

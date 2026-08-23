@@ -8,7 +8,11 @@ CREATE TABLE IF NOT EXISTS Log (
     StudentID   INTEGER,               -- not a hard FK so 'Deleted' rows survive student removal
     StudentName TEXT NOT NULL,
     Action      TEXT NOT NULL,         -- 'Added' | 'Checked In' | 'Checked Out' | 'Deleted'
-    Timestamp   INTEGER NOT NULL       -- unix epoch seconds; integer -> fast range scans
+    Timestamp   INTEGER NOT NULL,      -- unix epoch seconds; integer -> fast range scans
+
+    -- Name typed by the parent/authorized adult signing the student in or out.
+    -- NULL where it does not apply ('Added'/'Deleted' rows) or was not entered.
+    AuthorizedAdult TEXT
 );
 
 -- Fast "recent"/"today" range queries and fast prune scan of oldest rows.

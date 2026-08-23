@@ -53,25 +53,6 @@ func TestFeedbackBarCheckOutMessage(t *testing.T) {
 	}
 }
 
-// An already-checked-out student gets a warning on the bar, in its own colour
-// -- not the success green, and not a pop-up.
-func TestFeedbackBarAlreadyOut(t *testing.T) {
-	fa := test.NewApp()
-	defer fa.Quit()
-
-	b := newFeedbackBar()
-	b.showAlreadyOut("TestName")
-
-	if got, want := b.text.Text, "TestName is already checked out"; got != want {
-		t.Errorf("text = %q, want %q", got, want)
-	}
-	if alphaOf(b.fillColor()) == 0 {
-		t.Error("bar is not coloured for an already-checked-out scan")
-	}
-	if b.fillColor() == theme.Color(theme.ColorNameSuccess) {
-		t.Error("already-checked-out used the success colour; want the warning colour")
-	}
-}
 
 // The result is held at full colour, then both the colour and the text fade
 // out, leaving the bar empty rather than showing a stale message forever.
@@ -158,7 +139,7 @@ func TestFeedbackBarNewResultDuringFadeIsOpaque(t *testing.T) {
 // The bar is wired into applyCheckInOut, so it reports scans and dialog
 // confirmations alike.
 func TestFeedbackBarWiredToCheckInOut(t *testing.T) {
-	a := newScanApp(t, false)
+	a := newScanApp(t)
 	a.feedback = newFeedbackBar()
 
 	st, err := a.store.AddStudent(a.ctx, "Alice")
@@ -167,40 +148,14 @@ func TestFeedbackBarWiredToCheckInOut(t *testing.T) {
 	}
 	row := store.StudentRow{ID: st.ID, Name: st.Name}
 
-	a.applyCheckInOut(row)
+	a.applyCheckInOut(row, "Parent")
 	if got, want := a.feedback.text.Text, "Alice checked in at "; len(got) < len(want) || got[:len(want)] != want {
 		t.Errorf("text = %q, want it to start %q", got, want)
 	}
 
-	a.applyCheckInOut(row)
+	a.applyCheckInOut(row, "Parent")
 	if got, want := a.feedback.text.Text, "Alice checked out at "; len(got) < len(want) || got[:len(want)] != want {
 		t.Errorf("text = %q, want it to start %q", got, want)
 	}
 }
 
-// An already-checked-out scan with confirmation off reports on the bar and
-// opens no pop-up.
-func TestScanAlreadyOutUsesFeedbackBarNotPopup(t *testing.T) {
-	a := newScanApp(t, false)
-	a.feedback = newFeedbackBar()
-
-	st, err := a.store.AddStudent(a.ctx, "Alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := a.store.CheckIn(a.ctx, st.ID, st.Name); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.store.CheckOut(a.ctx, st.ID, st.Name); err != nil {
-		t.Fatal(err)
-	}
-
-	scan(t, a, "Alice")
-
-	if a.popupOpen {
-		t.Error("a pop-up was shown; the feedback bar should report this instead")
-	}
-	if got, want := a.feedback.text.Text, "Alice is already checked out"; got != want {
-		t.Errorf("feedback = %q, want %q", got, want)
-	}
-}

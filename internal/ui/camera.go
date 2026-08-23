@@ -170,21 +170,8 @@ func (a *App) routeScan(ev camera.ScanEvent) {
 		// needed here.
 		row := store.StudentRow{ID: st.ID, Name: st.Name}
 
-		// With confirmation off, apply the scan immediately. applyCheckInOut
-		// returns false only when the student has already checked in and out
-		// today, which has no next action -- report that on the feedback bar
-		// rather than interrupting an unattended kiosk with a pop-up.
-		if !a.cfg.ConfirmScan {
-			if a.applyCheckInOut(row) {
-				slog.Info("scan applied without confirmation", "name", row.Name)
-				return
-			}
-			slog.Info("scan ignored; student already checked out", "name", row.Name)
-			if a.feedback != nil {
-				a.feedback.showAlreadyOut(row.Name)
-			}
-			return
-		}
+		// A scan always confirms: the pop-up is where the parent or authorized
+		// adult types their name, which every check-in/out requires.
 		a.showCheckInOutDialog(row)
 	})
 }

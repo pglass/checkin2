@@ -22,14 +22,21 @@ const historyUILimit = 10000
 const maxHistoryStudents = 10
 
 // formatHistoryLine renders one event as
-// "2026-07-19 07:31:30 PM CST -- John Smith checked in".
+// "2026-07-19 07:31:30 PM CST -- John Smith checked in by Jane Smith".
+//
+// The "by <adult>" suffix is dropped for rows with no authorized adult on
+// record -- rows written before the field existed, or where none was entered.
 func formatHistoryLine(r store.HistoryRow) string {
 	verb := "checked in"
 	if r.Action == store.ActionCheckedOut {
 		verb = "checked out"
 	}
-	return fmt.Sprintf("%s -- %s %s",
+	line := fmt.Sprintf("%s -- %s %s",
 		r.Timestamp.Format("2006-01-02 03:04:05 PM MST"), r.StudentName, verb)
+	if r.AuthorizedAdult != "" {
+		line += " by " + r.AuthorizedAdult
+	}
+	return line
 }
 
 // history holds the widgets and state for one History window.

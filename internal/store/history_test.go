@@ -139,3 +139,37 @@ func TestHistoryTotalVsLimit(t *testing.T) {
 		t.Fatalf("rows = %d, want 10 (capped by limit)", len(rows))
 	}
 }
+
+// History carries the authorized adult through from the Log, under both sort
+// orders, and leaves it empty for rows that have none.
+func TestHistoryIncludesAuthorizedAdult(t *testing.T) {
+	ctx := context.Background()
+	s := openHistoryStore(t)
+
+	st, err := s.AddStudent(ctx, "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CheckIn(ctx, st.ID, st.Name, "Jane Parent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CheckOut(ctx, st.ID, st.Name, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, sort := range []HistorySort{SortEventTime, SortStudentName} {
+		rows, _, err := s.History(ctx, HistoryQuery{Sort: sort}, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 2 {
+			t.Fatalf("sort %v: rows = %d, want 2", sort, len(rows))
+		}
+		if got := rows[0].AuthorizedAdult; got != "Jane Parent" {
+			t.Errorf("sort %v: check-in adult = %q, want %q", sort, got, "Jane Parent")
+		}
+		if got := rows[1].AuthorizedAdult; got != "" {
+			t.Errorf("sort %v: check-out adult = %q, want empty (NULL)", sort, got)
+		}
+	}
+}

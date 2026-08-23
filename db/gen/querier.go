@@ -6,6 +6,7 @@ package gen
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
@@ -26,6 +27,12 @@ type Querier interface {
 	ListStudents(ctx context.Context) ([]Student, error)
 	LogSince(ctx context.Context, timestamp int64) ([]Log, error)
 	OldestLogIDs(ctx context.Context, arg OldestLogIDsParams) ([]int64, error)
+	// Distinct authorized adults who recently signed this student in or out, most
+	// recently used first. The inner query walks idx_log_student_ts backwards and
+	// stops after 'scan' rows, so cost does not grow with the student's history;
+	// grouping outside it collapses the usual "same adult over and over" case, and
+	// MAX(Timestamp) orders the names by their latest use.
+	RecentAuthorizedAdults(ctx context.Context, arg RecentAuthorizedAdultsParams) ([]sql.NullString, error)
 }
 
 var _ Querier = (*Queries)(nil)

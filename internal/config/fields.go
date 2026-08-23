@@ -85,17 +85,6 @@ var Fields = []Field{
 		},
 	},
 	{
-		Key:     "confirm_scan",
-		Section: "camera",
-		Desc: "Require confirmation before a scanned QR code checks a student in or out. " +
-			"When off, a scan is applied immediately with no pop-up -- faster for " +
-			"unattended check-in. A scanned code for a student who is not in the " +
-			"database still opens the Add Student pop-up either way. (true or false)",
-		StructField: "ConfirmScan",
-		Get:         func(c Config) string { return strconv.FormatBool(c.ConfirmScan) },
-		Set:         func(c *Config, s string) error { return setBool(&c.ConfirmScan, "confirm_scan", s) },
-	},
-	{
 		Key:         "prune_interval",
 		Section:     "database",
 		Desc:        "Controls how often database pruning is run in the background (e.g. 30m, 1h).",

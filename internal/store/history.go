@@ -33,6 +33,10 @@ type HistoryRow struct {
 	StudentName string
 	Action      string // ActionCheckedIn | ActionCheckedOut
 	Timestamp   time.Time
+	// AuthorizedAdult is the name the parent or authorized adult typed when
+	// signing the student in or out. Empty for rows written before the field
+	// existed, or where none was entered (stored as NULL).
+	AuthorizedAdult string
 }
 
 // History returns up to limit matching rows plus the total match count
@@ -93,7 +97,8 @@ func (s *Store) History(ctx context.Context, q HistoryQuery, limit int) ([]Histo
 		}
 		rows = make([]HistoryRow, len(got))
 		for i, r := range got {
-			rows[i] = HistoryRow{StudentName: r.Studentname, Action: r.Action, Timestamp: time.Unix(r.Timestamp, 0)}
+			rows[i] = HistoryRow{StudentName: r.Studentname, Action: r.Action,
+				Timestamp: time.Unix(r.Timestamp, 0), AuthorizedAdult: r.Authorizedadult.String}
 		}
 	default: // SortEventTime
 		got, err := s.q.HistoryByTime(ctx, gen.HistoryByTimeParams{
@@ -105,7 +110,8 @@ func (s *Store) History(ctx context.Context, q HistoryQuery, limit int) ([]Histo
 		}
 		rows = make([]HistoryRow, len(got))
 		for i, r := range got {
-			rows[i] = HistoryRow{StudentName: r.Studentname, Action: r.Action, Timestamp: time.Unix(r.Timestamp, 0)}
+			rows[i] = HistoryRow{StudentName: r.Studentname, Action: r.Action,
+				Timestamp: time.Unix(r.Timestamp, 0), AuthorizedAdult: r.Authorizedadult.String}
 		}
 	}
 
