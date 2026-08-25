@@ -69,6 +69,11 @@ type App struct {
 	// raises the existing one instead of spawning a duplicate.
 	settingsWin fyne.Window
 
+	// kiosk is true while the kiosk view is showing: the student list is
+	// replaced by a sign-in message and the menubar holds only "Leave Kiosk
+	// Mode". Toggled from the File menu; never persisted.
+	kiosk bool
+
 	// popupOpen is true while a scan-triggered popup (check-in/out, or the
 	// "student not found" Add dialog) is showing. QR scans are ignored while
 	// it is set, so a second scan can't stack another popup on top.
@@ -124,9 +129,7 @@ func NewAppInWindow(ctx context.Context, fa fyne.App, win fyne.Window, s *store.
 	win.SetMainMenu(a.buildMenu())
 	// Student list, then the scan feedback bar, then the status bar along the
 	// bottom; the camera feed opens in its own window.
-	bottom := container.NewVBox(a.feedback.widget(), a.status.widget())
-	win.SetContent(withWindowMargin(
-		container.NewBorder(nil, bottom, nil, nil, a.table.widget())))
+	a.setMainContent()
 	win.Resize(fyne.NewSize(640, 480))
 	win.CenterOnScreen()
 	// The selection window installed a SetOnClosed that quits the app when no
@@ -155,12 +158,22 @@ func (a *App) Window() fyne.Window { return a.win }
 
 // buildMenu constructs the File and Camera menubar menus. About sits at the
 // bottom of File, after a separator, matching the startup window's menu.
+//
+// Kiosk mode gets its own cut-down menubar instead: one item to leave again,
+// and no Camera menu, so nothing else is reachable from the kiosk screen.
 func (a *App) buildMenu() *fyne.MainMenu {
+	if a.kiosk {
+		return fyne.NewMainMenu(fyne.NewMenu("File",
+			fyne.NewMenuItem("Leave Kiosk Mode", a.leaveKiosk),
+		))
+	}
 	file := fyne.NewMenu("File",
 		fyne.NewMenuItem("Add Student…", a.showAddStudentDialog),
 		fyne.NewMenuItem("Import…", a.showImportWindow),
 		fyne.NewMenuItem("Generate QR PDF…", a.showGenerateQRDialog),
 		fyne.NewMenuItem("History…", a.showHistoryWindow),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Enter Kiosk Mode", a.enterKiosk),
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Settings…", a.showSettingsWindow),
 		fyne.NewMenuItemSeparator(),
@@ -250,7 +263,11 @@ func (a *App) refresh() {
 		a.showError(err)
 		return
 	}
-	a.table.setRows(rows)
+	// The list is not on screen in kiosk mode, but the rows still feed the
+	// status bar counts.
+	if !a.kiosk {
+		a.table.setRows(rows)
+	}
 	a.updateStatus(rows)
 }
 
