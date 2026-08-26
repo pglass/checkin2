@@ -230,6 +230,40 @@ const char* QRCodeDetector_Decode(QRCodeDetector qr, Mat input,Mat inputPoints,M
     }
 }
 
+// QRCodeDetectorAruco
+//
+// Aruco-based QR localization (cv::QRCodeDetectorAruco, core objdetect module).
+// Same GraphicalCodeDetector API as QRCodeDetector, so callers swap only the
+// constructor.
+
+QRCodeDetectorAruco QRCodeDetectorAruco_New() {
+    try {
+        return new cv::QRCodeDetectorAruco();
+    } catch(const cv::Exception& e){
+        setExceptionInfo(e.code, e.what());
+        return NULL;
+    }
+}
+
+void QRCodeDetectorAruco_Close(QRCodeDetectorAruco qr) {
+    delete qr;
+}
+
+// Returns a pointer into a thread_local buffer: valid until this thread's next
+// call. cgo's C.GoString copies before returning to Go, so that is long enough.
+// (Unlike QRCodeDetector_DetectAndDecode above, this does not leak a cv::String
+// per call.)
+const char* QRCodeDetectorAruco_DetectAndDecode(QRCodeDetectorAruco qr, Mat input, Mat points, Mat straight_qrcode) {
+    try {
+        static thread_local std::string buf;
+        buf = qr->detectAndDecode(*input, *points, *straight_qrcode);
+        return buf.c_str();
+    } catch(const cv::Exception& e){
+        setExceptionInfo(e.code, e.what());
+        return "";
+    }
+}
+
 bool QRCodeDetector_DetectMulti(QRCodeDetector qr, Mat input, Mat points) {
     try {
         return qr->detectMulti(*input,*points);

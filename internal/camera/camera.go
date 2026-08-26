@@ -5,6 +5,47 @@
 // hands back frames as image.Image. Detection uses OpenCV (via gocv): its QR
 // detector corrects perspective from the symbol contour, so codes held at an
 // angle still decode, which the pure-Go decoders do not manage.
+//
+// # Why cv::QRCodeDetectorAruco
+//
+// OpenCV offers three QR detectors. This package uses QRCodeDetectorAruco: it
+// locates finder patterns with the ArUco marker detector over an image pyramid
+// (unwarping each candidate before matching it), rather than the classical
+// QRCodeDetector's run-length 1:1:3:1:1 scan plus 3-means clustering, and it
+// verifies candidate triples against the QR timing pattern. Both ship in the
+// core objdetect module the build already links, so it costs nothing in build
+// time or binary size.
+//
+// Measured on synthetic 640x480 frames (Apple M4 Pro; see
+// qrdetect_bench_test.go, which still runs these cases against the chosen
+// detector):
+//
+//	                 QRCodeDetector   Aruco    WeChat
+//	hit rate               7/8          8/8      8/8
+//	ideal frame          7.1 ms       5.4 ms   5.2 ms
+//	empty frame          3.3 ms       0.4 ms   4.8 ms
+//	cluttered, no code   7.4 ms       2.4 ms   4.8 ms
+//
+// The classical detector misses a code tilted in perspective outright -- it
+// locates nothing, so no scan fires. Aruco handles rotation, perspective,
+// scale and uneven lighting, and is ~30% faster on every case both detect.
+//
+// The no-code rows matter most: the kiosk runs detection on every paced frame,
+// and almost all of them are empty, so those dominate steady-state CPU. Aruco
+// rejects an empty frame ~8x faster than the classical detector by bailing out
+// low in the pyramid.
+//
+// The contrib wechat_qrcode detector (CNN detector + super-resolution) was
+// also tried and rejected. It matched Aruco's accuracy on these frames but ran
+// at a flat ~4.8 ms regardless of content -- 12x slower on empty frames, which
+// showed up as measurably higher idle CPU on a real webcam -- while adding
+// opencv_dnn plus protobuf, ~9 MB of binary, and 1 MB of model files. Its one
+// real advantage, super-resolution for small or blurry codes, is worth
+// revisiting only if distant badges start failing in the field.
+//
+// Neither the classical nor the WeChat detector produced a false positive on
+// frames containing no QR code, including deliberately finder-pattern-shaped
+// decoys; that was not a differentiator.
 package camera
 
 import (
@@ -167,7 +208,7 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 		"device", deviceID, "name", d.Info().Name, "label", d.Info().Label,
 		"width", p.Width, "height", p.Height, "format", p.FrameFormat)
 
-	detector := gocv.NewQRCodeDetector()
+	detector := gocv.NewQRCodeDetectorAruco()
 	defer detector.Close()
 	points := gocv.NewMat()
 	defer points.Close()
@@ -375,7 +416,7 @@ func (c *Camera) chooseFormat(d driver.Driver) (prop.Media, error) {
 // detected outline for the preview to draw and emits a ScanEvent for a decoded
 // payload that passes the cooldown. The preview is produced separately by the
 // drainer, so detection speed does not affect preview smoothness.
-func (c *Camera) detect(src image.Image, points, straight *gocv.Mat, detector *gocv.QRCodeDetector) {
+func (c *Camera) detect(src image.Image, points, straight *gocv.Mat, detector *gocv.QRCodeDetectorAruco) {
 	// OpenCV wants a Mat. The generic conversion path writes BGR, which is what
 	// the detector expects, and detection runs on the unmirrored frame so the
 	// coordinates it reports match the source.

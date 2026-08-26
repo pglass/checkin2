@@ -562,3 +562,34 @@ func (fr *FaceRecognizerSF) MatchWithParams(faceFeature1 Mat, faceFeature2 Mat, 
 	rv := C.FaceRecognizerSF_Match_WithParams(fr.p, faceFeature1.p, faceFeature2.p, C.int(disType))
 	return float32(rv)
 }
+
+// QRCodeDetectorAruco is an Aruco-based QR code detector. It locates finder
+// patterns with the ArUco marker detector over an image pyramid instead of the
+// classical run-length scan plus 3-means clustering used by QRCodeDetector,
+// and verifies candidates against the timing pattern.
+//
+// It lives in the core objdetect module, so it needs no extra OpenCV modules
+// beyond what QRCodeDetector already requires.
+//
+// For further details, please see:
+// https://docs.opencv.org/4.x/d1/d1b/classcv_1_1QRCodeDetectorAruco.html
+type QRCodeDetectorAruco struct {
+	p C.QRCodeDetectorAruco
+}
+
+func NewQRCodeDetectorAruco() QRCodeDetectorAruco {
+	return QRCodeDetectorAruco{p: C.QRCodeDetectorAruco_New()}
+}
+
+func (a *QRCodeDetectorAruco) Close() error {
+	C.QRCodeDetectorAruco_Close(a.p)
+	a.p = nil
+	return nil
+}
+
+// DetectAndDecode both detects and decodes a QR code. It returns the decoded
+// payload, or "" if no code was found or decoding failed.
+func (a *QRCodeDetectorAruco) DetectAndDecode(input Mat, points *Mat, straight_qrcode *Mat) string {
+	return C.GoString(C.QRCodeDetectorAruco_DetectAndDecode(a.p, input.p, points.p, straight_qrcode.p))
+}
+

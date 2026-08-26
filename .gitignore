@@ -12,3 +12,6 @@ checkin-x86_64
 checkin-arm64
 .DS_Store
 TODO.txt
+
+# Synthetic QR benchmark frames from -qrdump (TestQRDumpFrames).
+qrframes/

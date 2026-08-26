@@ -14,12 +14,14 @@ extern "C" {
 typedef cv::CascadeClassifier* CascadeClassifier;
 typedef cv::HOGDescriptor* HOGDescriptor;
 typedef cv::QRCodeDetector* QRCodeDetector;
+typedef cv::QRCodeDetectorAruco* QRCodeDetectorAruco;
 typedef cv::Ptr<cv::FaceDetectorYN>* FaceDetectorYN;
 typedef cv::Ptr<cv::FaceRecognizerSF>* FaceRecognizerSF;
 #else
 typedef void* CascadeClassifier;
 typedef void* HOGDescriptor;
 typedef void* QRCodeDetector;
+typedef void* QRCodeDetectorAruco;
 typedef void* FaceDetectorYN;
 typedef void* FaceRecognizerSF;
 #endif
@@ -49,6 +51,11 @@ const char* QRCodeDetector_DetectAndDecode(QRCodeDetector qr, Mat input,Mat poin
 bool QRCodeDetector_Detect(QRCodeDetector qr, Mat input,Mat points);
 const char* QRCodeDetector_Decode(QRCodeDetector qr, Mat input,Mat inputPoints,Mat straight_qrcode);
 void QRCodeDetector_Close(QRCodeDetector qr);
+
+// QRCodeDetectorAruco
+QRCodeDetectorAruco QRCodeDetectorAruco_New();
+const char* QRCodeDetectorAruco_DetectAndDecode(QRCodeDetectorAruco qr, Mat input, Mat points, Mat straight_qrcode);
+void QRCodeDetectorAruco_Close(QRCodeDetectorAruco qr);
 bool QRCodeDetector_DetectMulti(QRCodeDetector qr, Mat input, Mat points);
 bool QRCodeDetector_DetectAndDecodeMulti(QRCodeDetector qr, Mat input, CStrings* decoded ,Mat points, struct Mats* mats);
 
