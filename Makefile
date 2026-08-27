@@ -33,7 +33,7 @@ VERSION_LDFLAGS := -X github.com/pglass/checkin/internal/version.Version=$(VERSI
 GO_SOURCES := $(shell find . -name '*.go')
 
 .PHONY: build-windows build-darwin-release run test bench vet generate \
-        seed bundle opencv opencv-windows clean
+        seed bundle opencv opencv-windows bump-version clean
 
 # --- Development ------------------------------------------------------------
 
@@ -62,6 +62,17 @@ generate:
 # The seed tool touches only the DB, so it needs no OpenCV env.
 seed:
 	go build -o seed ./cmd/seed/
+
+# Bump the app version in the Makefile and both build scripts.
+#   make bump-version                 # patch bump (x.y.z -> x.y.z+1)
+#   VERSION=1.2.3 make bump-version   # explicit version
+# Refuses to move the version backwards.
+#
+# `VERSION ?=` above means $(VERSION) is always set, so the script cannot tell an
+# explicit VERSION=x.y.z from the file's own default. $(origin) can: it reports
+# "file" for the default and "environment"/"command line" when the user set it.
+bump-version:
+	@VERSION="$(if $(filter-out file,$(origin VERSION)),$(VERSION))" ./scripts/bump-version
 
 clean:
 	rm -f checkin checkin-* checkin.exe seed

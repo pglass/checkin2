@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Bump the app version.
+#
+#   ./scripts/bump-version              # 0.0.5 -> 0.0.6 (patch bump)
+#   VERSION=1.2.3 ./scripts/bump-version   # set an explicit version
+#
+# The Makefile's `VERSION ?=` line is the single source of truth. The two build
+# scripts each carry a `VERSION="${VERSION:-x.y.z}"` fallback for when they are
+# run directly rather than through make; this rewrites those too, so the three
+# can never drift.
+#
+# Refuses to move the version backwards (or sideways to the same value), since
+# that would silently reissue a release number that is already out.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+MAKEFILE=Makefile
+CURRENT="$(sed -n 's/^VERSION[[:space:]]*?=[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$MAKEFILE" | head -1)"
+[ -n "$CURRENT" ] || { echo "could not read VERSION from $MAKEFILE" >&2; exit 1; }
+
+# semver_parts VERSION LABEL -> sets MAJ/MIN/PAT, exiting on a malformed value.
+#
+# Assigns to globals rather than echoing into $(...): a subshell's `exit 1`
+# only kills the subshell, so a malformed version would sail past the check and
+# get written to the Makefile.
+semver_parts() {
+  local v="$1" label="$2"
+  [[ "$v" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || {
+    echo "$label version is not x.y.z: $v" >&2
+    exit 1
+  }
+  MAJ="${BASH_REMATCH[1]}"; MIN="${BASH_REMATCH[2]}"; PAT="${BASH_REMATCH[3]}"
+}
+
+semver_parts "$CURRENT" current
+CUR_MAJ=$MAJ CUR_MIN=$MIN CUR_PAT=$PAT
+
+if [ -n "${VERSION:-}" ]; then
+  NEW="$VERSION"
+  semver_parts "$NEW" requested
+  NEW_MAJ=$MAJ NEW_MIN=$MIN NEW_PAT=$PAT
+else
+  NEW_MAJ=$CUR_MAJ NEW_MIN=$CUR_MIN NEW_PAT=$((CUR_PAT + 1))
+  NEW="$NEW_MAJ.$NEW_MIN.$NEW_PAT"
+fi
+
+# Compare numerically, field by field: string comparison gets 0.0.10 vs 0.0.9
+# wrong, and that is exactly the case a patch bump reaches first.
+if [ "$NEW_MAJ" -lt "$CUR_MAJ" ] \
+  || { [ "$NEW_MAJ" -eq "$CUR_MAJ" ] && [ "$NEW_MIN" -lt "$CUR_MIN" ]; } \
+  || { [ "$NEW_MAJ" -eq "$CUR_MAJ" ] && [ "$NEW_MIN" -eq "$CUR_MIN" ] && [ "$NEW_PAT" -lt "$CUR_PAT" ]; }; then
+  echo "refusing to move version backwards: $CURRENT -> $NEW" >&2
+  exit 1
+fi
+if [ "$NEW" = "$CURRENT" ]; then
+  echo "version is already $CURRENT" >&2
+  exit 1
+fi
+
+# Rewrite in place. Each pattern is anchored so only the version assignment is
+# touched, never a version string inside a comment or a URL.
+sed -i.bak -E "s/^(VERSION[[:space:]]*\?=[[:space:]]*).*/\1$NEW/" "$MAKEFILE"
+rm -f "$MAKEFILE.bak"
+for f in build-darwin.sh build-windows.sh; do
+  sed -i.bak -E "s/^(VERSION=\"\\\$\{VERSION:-)[0-9]+\.[0-9]+\.[0-9]+(\}\")/\1$NEW\2/" "$f"
+  rm -f "$f.bak"
+done
+
+# Verify every copy actually landed on the new value, so a pattern that silently
+# stops matching after an edit fails here instead of shipping a stale version.
+STALE="$(grep -rn "$CURRENT" Makefile build-darwin.sh build-windows.sh || true)"
+for f in Makefile build-darwin.sh build-windows.sh; do
+  grep -q "$NEW" "$f" || { echo "failed to update $f to $NEW" >&2; exit 1; }
+done
+if [ -n "$STALE" ]; then
+  echo "warning: $CURRENT still appears after the bump:" >&2
+  echo "$STALE" >&2
+fi
+
+echo "Version $CURRENT -> $NEW"
+echo "  Makefile, build-darwin.sh, build-windows.sh"
+echo
+echo "Next: add a '# $NEW' section to CHANGELOG.md, then commit."
