@@ -50,58 +50,12 @@ esac
 OUT="checkin"
 [ "$ARCH" = "$HOST_ARCH" ] || OUT="checkin-$ARCH"
 
-# --- Locate the static OpenCV ----------------------------------------------
-# Must match build-opencv-static-darwin.sh's PREFIX default.
-OPENCV_VERSION="5.0.0"
-OPENCV_STATIC_PREFIX="${OPENCV_STATIC_PREFIX:-$HOME/opencv-static/$OPENCV_VERSION-$ARCH}"
-# `|| true` is required, not decorative: find exits non-zero when the prefix does
-# not exist, and under `set -o pipefail` that failure propagates through head and
-# `set -e` kills the script at this assignment -- before the message below can
-# explain what is wrong. The result is an exit 1 with no output at all.
-PC_FILE="$(find "$OPENCV_STATIC_PREFIX" -name opencv5.pc 2>/dev/null | head -1 || true)"
-if [ -z "$PC_FILE" ]; then
-  echo "No static OpenCV for $ARCH: opencv5.pc not found under $OPENCV_STATIC_PREFIX" >&2
-  echo >&2
-  echo "Build it first (once per arch, takes 20-40 min):" >&2
-  echo "  ARCH=$ARCH ./build-opencv-static-darwin.sh" >&2
-  # Point at any other arch that IS built, since picking the wrong ARCH (or
-  # omitting it) is the likely mistake.
-  OTHER="$(ls -d "$HOME/opencv-static/$OPENCV_VERSION-"* 2>/dev/null | sed "s|.*$OPENCV_VERSION-||" | grep -v "^$ARCH\$" | tr '\n' ' ' || true)"
-  if [ -n "${OTHER// /}" ]; then
-    echo >&2
-    echo "Already built for: ${OTHER% }" >&2
-    echo "To build the app for one of those instead:  ARCH=${OTHER%% *} $0" >&2
-  fi
-  exit 1
-fi
-# PKG_CONFIG_LIBDIR, not PKG_CONFIG_PATH: PATH only prepends to pkg-config's
-# built-in search path, so a Homebrew opencv@4 could still be found and linked
-# dynamically, quietly defeating the point of this script. LIBDIR replaces the
-# search path, making the static OpenCV the only candidate.
-export PKG_CONFIG_LIBDIR="$(dirname "$PC_FILE")"
+# --- OpenCV + cgo environment ----------------------------------------------
+# One shared definition of how this project links OpenCV, used by every build
+# and test entry point. Exports CGO_* (and GOFLAGS for the one Fyne build tag),
+# and handles the ARCH cross-compile flags.
+source "$(dirname "$0")/opencv-env.sh"
 
-# --- cgo environment --------------------------------------------------------
-# The opencvstatic build tag selects third_party/gocv/cgo_static_darwin.go,
-# which is a single `#cgo pkg-config: --static opencv4` -- so the whole link
-# line comes from the opencv5.pc found above. No CGO_LDFLAGS surgery is needed
-# here (unlike the Windows build, which must sanitise MSVC artifacts out of its
-# generated .pc).
-export CGO_ENABLED=1
-export CGO_CXXFLAGS="--std=c++11 -DNDEBUG"
-# Cross-compiling cgo needs the target arch passed to clang for both the
-# compile and the link; Go does not infer it from GOARCH.
-if [ "$ARCH" != "$HOST_ARCH" ]; then
-  export CGO_CFLAGS="-arch $ARCH"
-  export CGO_CXXFLAGS="$CGO_CXXFLAGS -arch $ARCH"
-  export CGO_LDFLAGS="-arch $ARCH"
-fi
-
-echo "OpenCV: $(pkg-config --modversion opencv5) (STATIC $ARCH)  |  $(cc --version | head -1)"
-
-# opencvstatic:    link the static OpenCV via pkg-config --static
-# migrated_fynedo: opts into Fyne 2.8's future main-goroutine behaviour
-#                  (same tag the Makefile uses)
-TAGS="opencvstatic,migrated_fynedo"
 
 # App version. Single source of truth is the Makefile's VERSION; keep this
 # default in sync. Override with `VERSION=x.y.z ./build-darwin.sh`.
@@ -113,8 +67,8 @@ VERSION="${VERSION:-0.0.5}"
 LDFLAGS="-s -w -X github.com/pglass/checkin/internal/version.Version=$VERSION"
 LDFLAGS="$LDFLAGS -extldflags=-Wl,-no_warn_duplicate_libraries"
 
-echo "Building $OUT (GOARCH=$GOARCH, tags: $TAGS)"
-GOARCH="$GOARCH" go build -tags "$TAGS" -ldflags "$LDFLAGS" -o "$OUT" ./cmd/checkin/
+echo "Building $OUT (GOARCH=$GOARCH)"
+GOARCH="$GOARCH" go build -ldflags "$LDFLAGS" -o "$OUT" ./cmd/checkin/
 
 # --- Verify -----------------------------------------------------------------
 echo

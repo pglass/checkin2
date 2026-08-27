@@ -6,14 +6,14 @@
 # Why a custom build: MSYS2's prebuilt OpenCV is shared-only and pulls in ~166 MB
 # of third-party DLLs this app never uses (Qt6/ICU, ffmpeg codecs, OpenBLAS). This
 # build drops those but keeps every OpenCV *module* gocv's wrappers reference, so
-# vanilla (unmodified) gocv still links via its `customenv` build tag. See
+# the vendored gocv fork links via ./opencv-env.sh. See
 # build-windows.sh and the plan for the full rationale.
 #
 # Pinned to the OpenCV version gocv v0.43.0 targets. To update: bump OPENCV_VERSION
 # to the version the installed gocv release targets (check its README), delete the
 # old prefix, and re-run.
 #
-# Output: a static install at $PREFIX (default ~/opencv-static/4.13.0) containing
+# Output: a static install at $PREFIX (default ~/opencv-static/5.0.0) containing
 # lib/libopencv_*.a and lib/pkgconfig/opencv5.pc.
 #
 # Usage:
@@ -91,14 +91,14 @@ fi
 # BUILD_LIST is the minimal set of OpenCV modules the app's (trimmed) gocv fork
 # links. The app only uses gocv's Mat/imgproc helpers and QRCodeDetector, so the
 # fork at third_party/gocv keeps just the core, imgproc and objdetect wrappers and
-# deletes the rest (dnn, video, photo, videoio, imgcodecs, highgui, calib3d,
-# features2d, aruco, svd, ...). With those wrappers gone, nothing references those
+# deletes the rest (dnn, video, photo, videoio, imgcodecs, highgui, calib,
+# stereo, ptcloud, ...). With those wrappers gone, nothing references those
 # OpenCV modules, so they are dropped here too -- most importantly dnn (~20 MB) and
 # its protobuf dependency (~5 MB). The WITH_*/BUILD_* toggles drop the heavy
 # dependency groups (Qt/ICU, ffmpeg codecs, OpenBLAS).
 #
-# Why these six: objdetect (QRCodeDetector) requires core, imgproc and calib3d;
-# calib3d in turn requires features2d and flann. objdetect is OPTIONAL-linked
+# Why these six: objdetect (QRCodeDetectorAruco) requires core, imgproc,
+# features and geometry; geometry in turn requires flann. objdetect is OPTIONAL-linked
 # against dnn -- without it, cv::FaceDetectorYN::create is still defined but
 # CV_Error()s at runtime (see modules/objdetect/src/face_detect.cpp), so the
 # gocv objdetect wrapper still links even though we never call those APIs.

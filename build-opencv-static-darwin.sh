@@ -76,8 +76,8 @@ fi
 # --- Configure --------------------------------------------------------------
 # BUILD_LIST and the WITH_*/BUILD_* toggles are deliberately identical to
 # build-opencv-static.sh: the trimmed gocv fork at third_party/gocv references
-# only core, imgproc and objdetect wrappers, and objdetect pulls in calib3d ->
-# features2d, flann. Everything else (dnn and its protobuf especially) is
+# only core, imgproc and objdetect wrappers, and objdetect pulls in features ->
+# geometry, flann. Everything else (dnn and its protobuf especially) is
 # dropped. Keep the two scripts' module lists in sync.
 #
 # CMAKE_OSX_ARCHITECTURES makes clang emit $ARCH objects; combined with

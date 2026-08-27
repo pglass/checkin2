@@ -4,8 +4,8 @@
 #
 # gocv needs OpenCV built with the same toolchain cgo uses (MinGW/GCC), so
 # opencv.org's MSVC binaries and scoop's `opencv` (v5) do NOT work. This links a
-# custom slim STATIC OpenCV 4.13.0 (the version gocv v0.43.0 targets) built by
-# build-opencv-static.sh, feeding cgo the flags via gocv's `customenv` build tag.
+# custom slim STATIC OpenCV 5.0.0 built by build-opencv-static.sh, feeding cgo
+# the flags via ./opencv-env.sh.
 # The result is one checkin.exe that depends only on Windows system DLLs -- no
 # OpenCV/Qt/MinGW runtime DLLs to bundle.
 #
@@ -33,13 +33,9 @@ for arg in "$@"; do
 done
 
 # --- MinGW toolchain + static-OpenCV cgo environment ------------------------
-# Sets PATH/CGO_* to link the custom slim static OpenCV. Shared with
-# test-windows.sh so builds and tests use the exact same OpenCV lib.
-source "$(dirname "$0")/opencv-env-windows.sh"
-
-# customenv: gocv takes all cgo flags from the CGO_* env above.
-# migrated_fynedo: opts into Fyne 2.8's future main-goroutine behaviour.
-TAGS="customenv,migrated_fynedo"
+# Sets PATH/CGO_*/GOFLAGS to link the slim static OpenCV. Shared with every
+# other build and test entry point, so they cannot disagree.
+source "$(dirname "$0")/opencv-env.sh"
 
 # App version. Single source of truth is the Makefile's VERSION; keep this
 # default in sync. Override with `VERSION=x.y.z ./build-windows.sh`.
@@ -86,7 +82,7 @@ else
   rm -f "$SYSO"
 fi
 
-go build -tags "$TAGS" -ldflags "$LDFLAGS" -o checkin.exe ./cmd/checkin/
+go build -ldflags "$LDFLAGS" -o checkin.exe ./cmd/checkin/
 echo "Built ./checkin.exe (v$VERSION)"
 
 if [ "$RUN" -eq 1 ]; then

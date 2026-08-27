@@ -32,26 +32,11 @@ export VERSION
 EXE_NAME="checkin-$VERSION.exe"
 ZIP_PATH="$OUT_DIR/checkin-$VERSION-windows.zip"
 
-# --- Locate MSYS2 / mingw64 (same discovery as build-windows.sh) ------------
-# Needed so ldd can resolve DLL references when verifying the exe is portable.
-MSYS_ROOT=""
-if command -v scoop >/dev/null 2>&1; then
-  MSYS_ROOT="$(scoop prefix msys2 2>/dev/null | tr -d '\r' || true)"
-fi
-MINGW_UNIX=""
-for cand in "$MSYS_ROOT" "$HOME/scoop/apps/msys2/current" "/c/msys64"; do
-  if [ -n "$cand" ] && [ -x "$cand/mingw64/bin/gcc.exe" ]; then
-    MINGW_UNIX="$cand/mingw64"
-    break
-  fi
-done
-if [ -z "$MINGW_UNIX" ]; then
-  echo "mingw64 not found. Install MSYS2 + the mingw toolchain (see README)." >&2
-  exit 1
-fi
-# mingw64/bin on PATH so ldd can resolve any non-system DLL by loader rules --
-# if the static link leaked one, we want ldd to find it and fail below.
-export PATH="$MINGW_UNIX/bin:$PATH"
+# --- Toolchain on PATH ------------------------------------------------------
+# Sourcing the shared OpenCV env puts mingw64/bin on PATH, which is what ldd
+# needs below to resolve DLL references by loader rules -- if the static link
+# leaked a non-system DLL, ldd must be able to find it so the check fails.
+source "$(dirname "$0")/opencv-env.sh"
 
 # --- Build the single self-contained exe ------------------------------------
 if [ "$BUILD" -eq 1 ]; then

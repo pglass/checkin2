@@ -20,24 +20,25 @@ brew install cmake pkg-config
 go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 go install fyne.io/tools/cmd/fyne@latest
 
-make opencv-static-darwin   # one-time: compile the slim static OpenCV 4.13.0
+make opencv-static          # one-time: compile the slim static OpenCV 5.0.0
 ```
 
 That last step compiles OpenCV from source (20–40 min) and installs it to
-`~/opencv-static/4.13.0-<arch>`, outside the repo. Everything afterwards —
+`~/opencv-static/5.0.0-<arch>`, outside the repo. Everything afterwards —
 `make checkin`, `make test`, `make package` — links it, so builds are
 self-contained and **no Homebrew OpenCV is needed**.
 
 > **Why not `brew install opencv@4`?** It works for compiling, but produces a
 > binary that dynamically links Homebrew dylibs by absolute path, so it only
 > runs on machines with the same install. The static build removes that
-> constraint, and pins OpenCV **4.13.0** — the exact version gocv v0.43.0
-> targets. (Homebrew's default `opencv` formula is OpenCV **5**, which gocv does
-> not support at all.)
+> constraint, and pins OpenCV **5.0.0**. (Upstream gocv targets OpenCV 4; the
+> vendored fork in `third_party/gocv` carries the OpenCV 5 migration — see
+> `internal/camera/camera.go` and the notes in `opencv-env.sh`.)
 >
-> The Makefile sets `PKG_CONFIG_LIBDIR` rather than `PKG_CONFIG_PATH`, which
-> *replaces* pkg-config's search path instead of prepending to it — so an
-> `opencv@4` you happen to have installed can never be picked up by accident.
+> `opencv-env.sh` sets `PKG_CONFIG_LIBDIR` rather than `PKG_CONFIG_PATH`, which
+> *replaces* pkg-config's search path instead of prepending to it — so a
+> Homebrew `opencv` you happen to have installed can never be picked up by
+> accident.
 
 Rebuilding OpenCV is only needed once per architecture. `ARCH=x86_64` builds for
 Intel Macs from an Apple Silicon machine; see "Distribution".
@@ -61,24 +62,25 @@ pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake \
           mingw-w64-x86_64-ninja     mingw-w64-x86_64-pkgconf
 ```
 
-The static build pins OpenCV **4.13.0**, the exact version gocv v0.43.0 targets.
-Build the OpenCV libs once, then the app:
+The static build pins OpenCV **5.0.0**. Build the OpenCV libs once, then the app:
 
 ```shell
-./build-opencv-static.sh    # one-time: compile the slim static OpenCV 4.13.0
+./build-opencv-static.sh    # one-time: compile the slim static OpenCV 5.0.0
 ./build-windows.sh          # -> ./checkin.exe
 ./build-windows.sh --run    # build, then launch
 ./build-windows.sh --gui    # no console window (for distribution)
 ```
 
-> **How the Windows build differs.** Both platforms link a slim static OpenCV,
-> but they feed cgo differently. macOS uses gocv's **`opencvstatic`** tag, which
-> resolves everything through `pkg-config --static opencv4`; Windows uses the
-> **`customenv`** tag and sets the `CGO_*` flags explicitly, because pkg-config
-> discovery does not work there. The Windows build also needs MSYS2's
-> `mingw64\bin` on `PATH` so `gcc` resolves, and links the MinGW runtime into
-> the exe. Either way the result is one self-contained binary that depends only
-> on OS libraries (see "Distribution").
+> **How the Windows build differs.** Both platforms link the slim static OpenCV
+> the same way — every entry point sources **`opencv-env.sh`**, which resolves
+> the flags through `pkg-config` and exports `CGO_*`. There are no linking build
+> tags. What differs is platform detail the script handles internally: Windows
+> needs MSYS2's `mingw64\bin` on `PATH` so `gcc` resolves, links the MinGW
+> runtime into the exe, and strips two MSVC artifacts (`-lRunTmChk`,
+> `-lntdll.a`) that OpenCV's generated `.pc` emits; macOS strips two malformed
+> framework flags instead, and adds the cross-compile `-arch` flags. Either way
+> the result is one self-contained binary that depends only on OS libraries
+> (see "Distribution").
 
 ## Develop
 
@@ -86,11 +88,26 @@ Build the OpenCV libs once, then the app:
 make checkin    # compile the app        -> ./checkin
 make run        # compile, then run it
 make test       # run unit tests (DB, state, QR/PDF)
+make bench      # QR detector benchmarks (internal/camera)
+make vet        # go vet
 make generate   # regenerate db/gen from db/schema.sql + db/queries.sql
 ```
 
-These link the static OpenCV built by `make opencv-static-darwin`; if it is
-missing, the build stops with the command to build it.
+The same targets work on macOS and Windows (Git Bash). Pass extra `go test`
+flags with `ARGS`:
+
+```sh
+make test ARGS="./internal/camera/ -run TestQRDetectHitRate -v"
+make bench ARGS=-benchtime=3s
+```
+
+These link the static OpenCV built by `make opencv-static`; if it is missing,
+the build stops with the command to build it.
+
+> A bare `go test ./...` will **not** work: cgo needs the `CGO_*` flags that
+> `opencv-env.sh` exports to find OpenCV. Use `make test`, or
+> `source ./opencv-env.sh` once in your shell and then run `go` commands
+> directly.
 
 ## Logging
 
@@ -172,7 +189,7 @@ dependencies are macOS system frameworks — it runs on a stock Mac with no
 Homebrew and no OpenCV installed.
 
 ```sh
-make opencv-static-darwin   # once per arch (slow; builds OpenCV 4.13.0)
+make opencv-static          # once per arch (slow; builds OpenCV 5.0.0)
 make package-darwin         # -> ./checkin      (stripped, self-contained)
 make package                # -> ./Checkin.app  (bundle with icon + Info.plist)
 ```
@@ -184,7 +201,7 @@ Cross-build for Intel Macs from an Apple Silicon machine (clang cross-compiles
 natively, so this is not a Rosetta build):
 
 ```sh
-ARCH=x86_64 make opencv-static-darwin   # once
+ARCH=x86_64 make opencv-static          # once
 ARCH=x86_64 make package-darwin         # -> ./checkin-x86_64
 ```
 
@@ -196,7 +213,7 @@ single self-contained `checkin.exe` with no DLLs to ship. One-time, build the
 static OpenCV, then package:
 
 ```sh
-make opencv-static     # once per OpenCV version (slow; builds OpenCV 4.13.0)
+make opencv-static     # once per OpenCV version (slow; builds OpenCV 5.0.0)
 make package-windows   # -> dist/checkin.exe (single self-contained binary)
 ```
 
