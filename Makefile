@@ -1,7 +1,7 @@
 # Build helpers for the checkin app.
 #
 # There is exactly ONE way this project links OpenCV: the slim STATIC OpenCV 5
-# built once by `make opencv-static`, with all cgo flags supplied by
+# built once by `make opencv`, with all cgo flags supplied by
 # ./opencv-env.sh. Every target here, both build scripts and both packaging
 # scripts source that one file, so builds and tests can never disagree about
 # how OpenCV is linked. No Homebrew opencv is required and the binaries are
@@ -9,7 +9,8 @@
 #
 # Build OpenCV before anything else (once; ~20-40 min):
 #
-#     make opencv-static
+#     make opencv           # for this machine
+#     make opencv-windows   # cross-compile for Windows
 #
 # ARCH selects the target on macOS (defaults to this machine's). ARCH=x86_64 on
 # an Apple Silicon Mac cross-builds for Intel Macs.
@@ -31,11 +32,13 @@ VERSION_LDFLAGS := -X github.com/pglass/checkin/internal/version.Version=$(VERSI
 # All Go sources: the checkin binary rebuilds only when one of these changes.
 GO_SOURCES := $(shell find . -name '*.go')
 
-.PHONY: run test bench vet generate seed package package-darwin package-windows \
-        opencv-static clean
+.PHONY: build-windows build-darwin-release run test bench vet generate \
+        seed bundle opencv opencv-windows clean
 
 # --- Development ------------------------------------------------------------
 
+# Dev build for this machine: keeps debug symbols. `make build-darwin-release`
+# is the stripped, verified distributable.
 checkin: $(GO_SOURCES)
 	$(GO_ENV) go build -ldflags="$(VERSION_LDFLAGS) -extldflags=-Wl,-no_warn_duplicate_libraries" -o checkin ./cmd/checkin/
 
@@ -63,36 +66,44 @@ seed:
 clean:
 	rm -f checkin checkin-* checkin.exe seed
 
-# --- Packaging --------------------------------------------------------------
+# --- Distribution -----------------------------------------------------------
 
 # macOS .app bundle. --appVersion stamps CFBundleShortVersionString in
 # Info.plist (the native "About" panel) and makes fyne.CurrentApp().Metadata()
 # .Version return it at runtime, which is what the in-app About dialog and
 # --version read.
-package:
+bundle:
 	$(GO_ENV) fyne package --src ./cmd/checkin --name Checkin \
 		--app-id com.pglass.checkin --icon $(CURDIR)/Icon.png --appVersion $(VERSION)
 
 # macOS: stripped, self-contained binary. Also verifies with otool that nothing
-# outside /usr/lib and /System/Library is linked. `make checkin` produces the
-# same linkage but keeps debug symbols.
-#   make package-darwin              -> ./checkin        (native arch)
-#   ARCH=x86_64 make package-darwin  -> ./checkin-x86_64 (Intel Macs)
-package-darwin:
+# outside /usr/lib and /System/Library is linked. `make build` produces the same
+# linkage but keeps debug symbols.
+#   make build-darwin-release              -> ./checkin        (native arch)
+#   ARCH=x86_64 make build-darwin-release  -> ./checkin-x86_64 (Intel Macs)
+build-darwin:
 	ARCH=$(ARCH) VERSION=$(VERSION) ./build-darwin.sh
 
-# Windows: single self-contained checkin.exe, no bundled DLLs. Run from Git Bash
-# on Windows (needs MSYS2), not macOS.
-package-windows:
-	VERSION=$(VERSION) ./package-windows.sh
+# Cross-compile checkin.exe from macOS/Linux (or build it natively on Windows).
+# Verifies the exe is self-contained and copies it to dist/. Requires
+# `make opencv-windows` once first, plus `brew install mingw-w64` when cross-
+# compiling. A cross-built exe cannot be run here -- verify it on Windows.
+build-windows:
+	VERSION=$(VERSION) ./build-windows.sh
 
 # --- One-time OpenCV build --------------------------------------------------
 
 # Builds the slim static OpenCV every other target links. Picks the right script
 # for this platform. Once per OpenCV version (and per arch on macOS).
-opencv-static:
+opencv:
 ifeq ($(shell uname -s),Darwin)
 	ARCH=$(ARCH) ./build-opencv-static-darwin.sh
 else
 	./build-opencv-static.sh
 endif
+
+# The Windows OpenCV that `make build-windows` links. On Windows this is the
+# same thing as `make opencv`; on macOS/Linux it cross-compiles into a
+# -windows-suffixed prefix alongside the native one.
+opencv-windows:
+	./build-opencv-static.sh

@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Build a slim, STATIC OpenCV 5.0.0 for linking checkin.exe into a single
-# self-contained executable (no bundled DLLs). Run from Git Bash on Windows with
-# MSYS2 + the mingw toolchain installed (same prerequisites as build-windows.sh).
+# self-contained executable (no bundled DLLs).
+#
+# Runs two ways, picked automatically from the host OS:
+#   - natively on Windows, from Git Bash with MSYS2 + the mingw toolchain
+#     (same prerequisites as build-windows.sh)
+#   - cross-compiled from macOS/Linux with the mingw-w64 cross toolchain
+#     (`brew install mingw-w64`), which is how build-windows.sh cross-builds
 #
 # Why a custom build: MSYS2's prebuilt OpenCV is shared-only and pulls in ~166 MB
 # of third-party DLLs this app never uses (Qt6/ICU, ffmpeg codecs, OpenBLAS). This
@@ -13,8 +18,10 @@
 # to the version the installed gocv release targets (check its README), delete the
 # old prefix, and re-run.
 #
-# Output: a static install at $PREFIX (default ~/opencv-static/5.0.0) containing
-# lib/libopencv_*.a and lib/pkgconfig/opencv5.pc.
+# Output: a static install at $PREFIX containing lib/libopencv_*.a and
+# lib/pkgconfig/opencv5.pc. Default prefix is ~/opencv-static/5.0.0 natively, and
+# ~/opencv-static/5.0.0-windows when cross-compiling, so a macOS host can hold
+# both its native OpenCV and the Windows one without collision.
 #
 # Usage:
 #   ./build-opencv-static.sh                 # download (if needed), configure, build, install
@@ -34,28 +41,47 @@ done
 
 # Where sources are unpacked and the result installed. Kept out of the git repo.
 WORK="${WORK:-$HOME/opencv-static}"
-PREFIX="${PREFIX:-$WORK/$OPENCV_VERSION}"
 SRC="$WORK/opencv-$OPENCV_VERSION"
-BUILD="$WORK/build-$OPENCV_VERSION"
 
-# --- Locate MSYS2 / mingw64 (same discovery as build-windows.sh) ------------
-MSYS_ROOT=""
-if command -v scoop >/dev/null 2>&1; then
-  MSYS_ROOT="$(scoop prefix msys2 2>/dev/null | tr -d '\r' || true)"
-fi
-MINGW_UNIX=""
-for cand in "$MSYS_ROOT" "$HOME/scoop/apps/msys2/current" "/c/msys64"; do
-  if [ -n "$cand" ] && [ -x "$cand/mingw64/bin/gcc.exe" ]; then
-    MINGW_UNIX="$cand/mingw64"
-    break
+# --- Toolchain: native MSYS2, or mingw-w64 cross from macOS/Linux -----------
+# CROSS=1 means we are not on Windows and must drive cmake through a toolchain
+# file naming the x86_64-w64-mingw32-* compilers.
+CROSS=0
+[ "$(uname -s)" = "Darwin" ] || [ "$(uname -s)" = "Linux" ] && CROSS=1
+
+if [ "$CROSS" -eq 1 ]; then
+  command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1 || {
+    echo "mingw-w64 cross toolchain not found. Install it:" >&2
+    echo "  brew install mingw-w64        # macOS" >&2
+    echo "  apt install mingw-w64         # Debian/Ubuntu" >&2
+    exit 1
+  }
+  # Separate prefix so a macOS host can keep its native OpenCV alongside this one.
+  PREFIX="${PREFIX:-$WORK/$OPENCV_VERSION-windows}"
+  BUILD="$WORK/build-$OPENCV_VERSION-windows"
+  echo "Toolchain: $(x86_64-w64-mingw32-g++ --version | head -1)  (cross -> windows/amd64)"
+else
+  PREFIX="${PREFIX:-$WORK/$OPENCV_VERSION}"
+  BUILD="$WORK/build-$OPENCV_VERSION"
+  # --- Locate MSYS2 / mingw64 (same discovery as build-windows.sh) ----------
+  MSYS_ROOT=""
+  if command -v scoop >/dev/null 2>&1; then
+    MSYS_ROOT="$(scoop prefix msys2 2>/dev/null | tr -d '\r' || true)"
   fi
-done
-if [ -z "$MINGW_UNIX" ]; then
-  echo "mingw64 not found. Install MSYS2 + the mingw toolchain (see README)." >&2
-  exit 1
+  MINGW_UNIX=""
+  for cand in "$MSYS_ROOT" "$HOME/scoop/apps/msys2/current" "/c/msys64"; do
+    if [ -n "$cand" ] && [ -x "$cand/mingw64/bin/gcc.exe" ]; then
+      MINGW_UNIX="$cand/mingw64"
+      break
+    fi
+  done
+  if [ -z "$MINGW_UNIX" ]; then
+    echo "mingw64 not found. Install MSYS2 + the mingw toolchain (see README)." >&2
+    exit 1
+  fi
+  # Put mingw64/bin first so cmake uses MSYS2's gcc/g++/windres, not any other.
+  export PATH="$MINGW_UNIX/bin:$PATH"
 fi
-# Put mingw64/bin first so cmake uses MSYS2's gcc/g++/windres, not any other.
-export PATH="$MINGW_UNIX/bin:$PATH"
 
 # cmake + a generator are required. Prefer Ninja (fast); fall back to MinGW make.
 if ! command -v cmake >/dev/null 2>&1; then
@@ -64,13 +90,34 @@ if ! command -v cmake >/dev/null 2>&1; then
 fi
 if command -v ninja >/dev/null 2>&1; then
   GENERATOR="Ninja"
+elif [ "$CROSS" -eq 1 ]; then
+  GENERATOR="Unix Makefiles"
 elif command -v mingw32-make >/dev/null 2>&1; then
   GENERATOR="MinGW Makefiles"
 else
   echo "No build generator. Install:  pacman -S mingw-w64-x86_64-ninja  (or mingw-w64-x86_64-make)" >&2
   exit 1
 fi
-echo "Toolchain: $(gcc --version | head -1)  |  generator: $GENERATOR"
+[ "$CROSS" -eq 1 ] || echo "Toolchain: $(gcc --version | head -1)"
+echo "Generator: $GENERATOR"
+
+# When cross-compiling, cmake needs a toolchain file naming the target compilers.
+# CMAKE_FIND_ROOT_PATH_MODE_* keep it from picking up host libraries/headers.
+TOOLCHAIN_ARGS=()
+if [ "$CROSS" -eq 1 ]; then
+  TC="$WORK/mingw-w64-toolchain.cmake"
+  cat > "$TC" <<'CMAKE'
+set(CMAKE_SYSTEM_NAME Windows)
+set(CMAKE_SYSTEM_PROCESSOR x86_64)
+set(CMAKE_C_COMPILER   x86_64-w64-mingw32-gcc)
+set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
+set(CMAKE_RC_COMPILER  x86_64-w64-mingw32-windres)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+CMAKE
+  TOOLCHAIN_ARGS=(-DCMAKE_TOOLCHAIN_FILE="$TC")
+fi
 
 # --- Fetch + unpack OpenCV source (skip if already present) -----------------
 mkdir -p "$WORK"
@@ -80,9 +127,14 @@ if [ ! -d "$SRC" ]; then
   echo "Downloading $URL"
   curl -fL "$URL" -o "$ZIP"
   echo "Extracting..."
-  # Expand-Archive is reliable for GitHub's zip; MSYS tar can't read zip.
-  powershell.exe -NoProfile -NonInteractive -Command \
-    "Expand-Archive -Path '$(cygpath -w "$ZIP")' -DestinationPath '$(cygpath -w "$WORK")' -Force"
+  if [ "$CROSS" -eq 1 ]; then
+    # bsdtar (macOS) and GNU tar (Linux) both read zip natively.
+    tar -xf "$ZIP" -C "$WORK"
+  else
+    # Expand-Archive is reliable for GitHub's zip; MSYS tar can't read zip.
+    powershell.exe -NoProfile -NonInteractive -Command \
+      "Expand-Archive -Path '$(cygpath -w "$ZIP")' -DestinationPath '$(cygpath -w "$WORK")' -Force"
+  fi
   rm -f "$ZIP"
 fi
 [ -f "$SRC/CMakeLists.txt" ] || { echo "OpenCV source missing at $SRC" >&2; exit 1; }
@@ -117,9 +169,13 @@ fi
 # previous (larger) build, leaving stale libs (e.g. dnn) behind. Wiping the prefix
 # guarantees the install reflects exactly what was built this run.
 [ "$CLEAN" -eq 1 ] && rm -rf "$BUILD" "$PREFIX"
-cmake -S "$SRC" -B "$BUILD" -G "$GENERATOR" \
+# cygpath -m converts the MSYS path to the mixed C:/... form cmake wants; it
+# does not exist when cross-compiling, where the path is already native.
+if [ "$CROSS" -eq 1 ]; then CMAKE_PREFIX_ARG="$PREFIX"; else CMAKE_PREFIX_ARG="$(cygpath -m "$PREFIX")"; fi
+
+cmake -S "$SRC" -B "$BUILD" -G "$GENERATOR" ${TOOLCHAIN_ARGS[@]+"${TOOLCHAIN_ARGS[@]}"} \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$(cygpath -m "$PREFIX")" \
+  -DCMAKE_INSTALL_PREFIX="$CMAKE_PREFIX_ARG" \
   -DBUILD_SHARED_LIBS=OFF \
   -DBUILD_LIST=core,imgproc,geometry,features,flann,objdetect \
   -DWITH_QT=OFF -DWITH_GTK=OFF -DWITH_WIN32UI=ON \
@@ -141,7 +197,7 @@ cmake -S "$SRC" -B "$BUILD" -G "$GENERATOR" \
   -Wno-dev
 
 # --- Build + install --------------------------------------------------------
-JOBS="$(nproc 2>/dev/null || echo 4)"
+JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 cmake --build "$BUILD" --target install --parallel "$JOBS"
 
 # --- Verify -----------------------------------------------------------------

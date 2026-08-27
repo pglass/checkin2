@@ -6,7 +6,7 @@
 #     source ./opencv-env.sh
 #
 # Every build and test entry point goes through here -- build-darwin.sh,
-# build-windows.sh, package-windows.sh and the Makefile -- so there is exactly
+# build-windows.sh and the Makefile -- so there is exactly
 # one definition of how this project links OpenCV, and builds and tests can
 # never disagree about it.
 #
@@ -16,6 +16,8 @@
 #
 # Inputs (optional):
 #   ARCH                   target arch, macOS only (defaults to the host's)
+#   TARGET_OS              "windows" to cross-compile a Windows exe from
+#                          macOS/Linux (needs the mingw-w64 cross toolchain)
 #   OPENCV_STATIC_PREFIX   override the OpenCV install prefix
 #
 # Assumes the caller has run `set -euo pipefail`; returns non-zero on a missing
@@ -24,9 +26,15 @@
 OPENCV_VERSION="5.0.0"
 
 case "$(uname -s)" in
-  Darwin) _OCV_OS=darwin ;;
-  *)      _OCV_OS=windows ;;   # Git Bash / MSYS2
+  Darwin) _OCV_HOST=darwin ;;
+  *)      _OCV_HOST=windows ;;   # Git Bash / MSYS2
 esac
+# TARGET_OS=windows on a non-Windows host means cross-compile: use the mingw-w64
+# cross toolchain and the Windows OpenCV that build-opencv-static.sh installs to
+# a -windows-suffixed prefix. Everything else is a native build.
+_OCV_OS="${TARGET_OS:-$_OCV_HOST}"
+_OCV_CROSS=0
+[ "$_OCV_OS" = windows ] && [ "$_OCV_HOST" != windows ] && _OCV_CROSS=1
 
 # --- Locate the static OpenCV ----------------------------------------------
 if [ "$_OCV_OS" = darwin ]; then
@@ -35,11 +43,25 @@ if [ "$_OCV_OS" = darwin ]; then
   ARCH="${ARCH:-$(uname -m)}"
   OPENCV_STATIC_PREFIX="${OPENCV_STATIC_PREFIX:-$HOME/opencv-static/$OPENCV_VERSION-$ARCH}"
   _OCV_BUILD_CMD="ARCH=$ARCH ./build-opencv-static-darwin.sh"
+elif [ "$_OCV_CROSS" -eq 1 ]; then
+  # --- mingw-w64 cross toolchain (macOS/Linux -> Windows) -------------------
+  command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1 || {
+    echo "mingw-w64 cross toolchain not found. Install it:" >&2
+    echo "  brew install mingw-w64        # macOS" >&2
+    echo "  apt install mingw-w64         # Debian/Ubuntu" >&2
+    return 1
+  }
+  # Separate prefix so a macOS host keeps its native OpenCV alongside this one.
+  OPENCV_STATIC_PREFIX="${OPENCV_STATIC_PREFIX:-$HOME/opencv-static/$OPENCV_VERSION-windows}"
+  _OCV_BUILD_CMD="./build-opencv-static.sh"
+  export GOOS=windows GOARCH=amd64
+  export CC=x86_64-w64-mingw32-gcc
+  export CXX=x86_64-w64-mingw32-g++
 else
   OPENCV_STATIC_PREFIX="${OPENCV_STATIC_PREFIX:-$HOME/opencv-static/$OPENCV_VERSION}"
   _OCV_BUILD_CMD="./build-opencv-static.sh"
 
-  # --- MinGW toolchain (Windows only) ---------------------------------------
+  # --- MinGW toolchain (native Windows only) --------------------------------
   # gocv needs OpenCV built with the same toolchain cgo uses, so MSVC binaries
   # do not work. Try `scoop prefix msys2`, the default scoop path, then C:\msys64.
   _MSYS_ROOT=""
@@ -149,4 +171,4 @@ fi
 # the only build tag the project uses; linking needs none.
 export GOFLAGS="-tags=migrated_fynedo${GOFLAGS:+ $GOFLAGS}"
 
-echo "OpenCV: $($_PKGCFG --modversion opencv5) (STATIC${ARCH:+ $ARCH})  |  $(${CC:-cc} --version | head -1)"
+echo "OpenCV: $($_PKGCFG --modversion opencv5) (STATIC ${_OCV_OS}${ARCH:+/$ARCH})  |  $(${CC:-cc} --version | head -1)"
