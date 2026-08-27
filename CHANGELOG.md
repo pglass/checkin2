@@ -6,6 +6,7 @@
   * Observed slightly lower CPU usage with camera running
 * Update to OpenCV 5
 * Support cross-compiling to Windows from macOS
+* Support full screen "kiosk" mode
 
 # 0.0.5
 
