@@ -1904,29 +1904,7 @@ func SepFilter2D(src Mat, dst *Mat, ddepth MatType, kernelX, kernelY Mat, anchor
 	return OpenCVResult(C.SepFilter2D(src.p, dst.p, C.int(ddepth), kernelX.p, kernelY.p, anchorP, C.double(delta), C.int(borderType)))
 }
 
-// LogPolar remaps an image to semilog-polar coordinates space.
-//
-// For further details, please see:
-// https://docs.opencv.org/master/da/d54/group__imgproc__transform.html#gaec3a0b126a85b5ca2c667b16e0ae022d
-func LogPolar(src Mat, dst *Mat, center image.Point, m float64, flags InterpolationFlags) error {
-	centerP := C.struct_Point{
-		x: C.int(center.X),
-		y: C.int(center.Y),
-	}
-	return OpenCVResult(C.LogPolar(src.p, dst.p, centerP, C.double(m), C.int(flags)))
-}
 
-// LinearPolar remaps an image to polar coordinates space.
-//
-// For further details, please see:
-// https://docs.opencv.org/master/da/d54/group__imgproc__transform.html#gaa38a6884ac8b6e0b9bed47939b5362f3
-func LinearPolar(src Mat, dst *Mat, center image.Point, maxRadius float64, flags InterpolationFlags) error {
-	centerP := C.struct_Point{
-		x: C.int(center.X),
-		y: C.int(center.Y),
-	}
-	return OpenCVResult(C.LinearPolar(src.p, dst.p, centerP, C.double(maxRadius), C.int(flags)))
-}
 
 // DistanceTypes types for Distance Transform and M-estimatorss
 //

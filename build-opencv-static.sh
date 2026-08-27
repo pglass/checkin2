@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a slim, STATIC OpenCV 4.13.0 for linking checkin.exe into a single
+# Build a slim, STATIC OpenCV 5.0.0 for linking checkin.exe into a single
 # self-contained executable (no bundled DLLs). Run from Git Bash on Windows with
 # MSYS2 + the mingw toolchain installed (same prerequisites as build-windows.sh).
 #
@@ -14,7 +14,7 @@
 # old prefix, and re-run.
 #
 # Output: a static install at $PREFIX (default ~/opencv-static/4.13.0) containing
-# lib/libopencv_*.a and lib/pkgconfig/opencv4.pc.
+# lib/libopencv_*.a and lib/pkgconfig/opencv5.pc.
 #
 # Usage:
 #   ./build-opencv-static.sh                 # download (if needed), configure, build, install
@@ -23,7 +23,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-OPENCV_VERSION="4.13.0"
+OPENCV_VERSION="5.0.0"
 CLEAN=0
 for arg in "$@"; do
   case "$arg" in
@@ -121,7 +121,7 @@ cmake -S "$SRC" -B "$BUILD" -G "$GENERATOR" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$(cygpath -m "$PREFIX")" \
   -DBUILD_SHARED_LIBS=OFF \
-  -DBUILD_LIST=core,imgproc,calib3d,features2d,flann,objdetect \
+  -DBUILD_LIST=core,imgproc,geometry,features,flann,objdetect \
   -DWITH_QT=OFF -DWITH_GTK=OFF -DWITH_WIN32UI=ON \
   -DWITH_FFMPEG=OFF \
   -DWITH_GSTREAMER=OFF -DWITH_GPHOTO2=OFF -DWITH_1394=OFF \
@@ -155,8 +155,8 @@ fi
 if find "$PREFIX" -name 'libopencv_core*.dll.a' 2>/dev/null | grep -q .; then
   echo "WARNING: found .dll.a import stubs -- this looks like a SHARED build, not static." >&2
 fi
-PC="$(find "$PREFIX" -name opencv4.pc 2>/dev/null | head -1)"
-[ -n "$PC" ] && [ -f "$PC" ] || { echo "FAILED: opencv4.pc not generated under $PREFIX" >&2; exit 1; }
+PC="$(find "$PREFIX" -name opencv5.pc 2>/dev/null | head -1)"
+[ -n "$PC" ] && [ -f "$PC" ] || { echo "FAILED: opencv5.pc not generated under $PREFIX" >&2; exit 1; }
 
 echo
 echo "Static OpenCV $OPENCV_VERSION installed at: $PREFIX"

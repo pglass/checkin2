@@ -52,15 +52,15 @@ OUT="checkin"
 
 # --- Locate the static OpenCV ----------------------------------------------
 # Must match build-opencv-static-darwin.sh's PREFIX default.
-OPENCV_VERSION="4.13.0"
+OPENCV_VERSION="5.0.0"
 OPENCV_STATIC_PREFIX="${OPENCV_STATIC_PREFIX:-$HOME/opencv-static/$OPENCV_VERSION-$ARCH}"
 # `|| true` is required, not decorative: find exits non-zero when the prefix does
 # not exist, and under `set -o pipefail` that failure propagates through head and
 # `set -e` kills the script at this assignment -- before the message below can
 # explain what is wrong. The result is an exit 1 with no output at all.
-PC_FILE="$(find "$OPENCV_STATIC_PREFIX" -name opencv4.pc 2>/dev/null | head -1 || true)"
+PC_FILE="$(find "$OPENCV_STATIC_PREFIX" -name opencv5.pc 2>/dev/null | head -1 || true)"
 if [ -z "$PC_FILE" ]; then
-  echo "No static OpenCV for $ARCH: opencv4.pc not found under $OPENCV_STATIC_PREFIX" >&2
+  echo "No static OpenCV for $ARCH: opencv5.pc not found under $OPENCV_STATIC_PREFIX" >&2
   echo >&2
   echo "Build it first (once per arch, takes 20-40 min):" >&2
   echo "  ARCH=$ARCH ./build-opencv-static-darwin.sh" >&2
@@ -83,7 +83,7 @@ export PKG_CONFIG_LIBDIR="$(dirname "$PC_FILE")"
 # --- cgo environment --------------------------------------------------------
 # The opencvstatic build tag selects third_party/gocv/cgo_static_darwin.go,
 # which is a single `#cgo pkg-config: --static opencv4` -- so the whole link
-# line comes from the opencv4.pc found above. No CGO_LDFLAGS surgery is needed
+# line comes from the opencv5.pc found above. No CGO_LDFLAGS surgery is needed
 # here (unlike the Windows build, which must sanitise MSVC artifacts out of its
 # generated .pc).
 export CGO_ENABLED=1
@@ -96,7 +96,7 @@ if [ "$ARCH" != "$HOST_ARCH" ]; then
   export CGO_LDFLAGS="-arch $ARCH"
 fi
 
-echo "OpenCV: $(pkg-config --modversion opencv4) (STATIC $ARCH)  |  $(cc --version | head -1)"
+echo "OpenCV: $(pkg-config --modversion opencv5) (STATIC $ARCH)  |  $(cc --version | head -1)"
 
 # opencvstatic:    link the static OpenCV via pkg-config --static
 # migrated_fynedo: opts into Fyne 2.8's future main-goroutine behaviour

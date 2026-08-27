@@ -1116,15 +1116,6 @@ OpenCVResult SepFilter2D(Mat src, Mat dst, int ddepth, Mat kernelX, Mat kernelY,
     }
 }
 
-OpenCVResult LogPolar(Mat src, Mat dst, Point center, double m, int flags) {
-    try {
-        cv::Point2f centerPt(center.x, center.y);
-        cv::logPolar(*src, *dst, centerPt, m, flags);
-        return successResult();
-    } catch(const cv::Exception& e) {
-        return errorResult(e.code, e.what());
-    }
-}
 
 OpenCVResult FitLine(PointVector pts, Mat line, int distType, double param, double reps, double aeps) {
     try {
@@ -1135,15 +1126,6 @@ OpenCVResult FitLine(PointVector pts, Mat line, int distType, double param, doub
     }
 }
 
-OpenCVResult LinearPolar(Mat src, Mat dst, Point center, double maxRadius, int flags) {
-    try {
-        cv::Point2f centerPt(center.x, center.y);
-        cv::linearPolar(*src, *dst, centerPt, maxRadius, flags);
-        return successResult();
-    } catch(const cv::Exception& e) {
-        return errorResult(e.code, e.what());
-    }
-}
 
 double MatchShapes(PointVector contour1, PointVector contour2, int method, double parameter) {
     try {

@@ -260,16 +260,6 @@ OpenCVResult Mat_PatchNaNs(Mat m) {
     }
 }
 
-Mat Mat_ConvertFp16(Mat m) {
-    try {
-        Mat dst = new cv::Mat();
-        cv::convertFp16(*m, *dst);
-        return dst;
-    } catch(const cv::Exception& e){
-        setExceptionInfo(e.code, e.what());
-        return new cv::Mat();
-    }
-}
 
 Mat Mat_Sqrt(Mat m) {
     try {
@@ -350,14 +340,16 @@ int Mat_ElemSize(Mat m){
 }
 
 void Mat_Size(Mat m, IntVector* res) {
+    // OpenCV 5: cv::MatSize is a typedef for cv::MatShape, which mimics
+    // std::vector<int> -- dims() became size().
     cv::MatSize ms(m->size);
-    int* ids = new int[ms.dims()];
+    int* ids = new int[ms.size()];
 
-    for (size_t i = 0; i < ms.dims(); ++i) {
+    for (size_t i = 0; i < ms.size(); ++i) {
         ids[i] = ms[i];
     }
 
-    res->length = ms.dims();
+    res->length = (int)ms.size();
     res->val = ids;
     return;
 }

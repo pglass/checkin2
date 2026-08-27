@@ -50,18 +50,25 @@ func OpenCVResult(result C.OpenCVResult) error {
 	return errors.New(C.GoString(result.Message))
 }
 
+// Channel components of a MatType, encoding (channels-1) << CV_CN_SHIFT.
+//
+// OpenCV 5 widened the type field: CV_CN_SHIFT went from 3 to 5 (and CV_CN_MAX
+// from 512 to 128) to make room for the new depths (CV_16BF, CV_32U, CV_64U,
+// CV_64S, CV_Bool). These constants must match the C++ CV_MAKETYPE encoding
+// exactly -- with the 4.x values every multi-channel MatType silently decodes
+// as the wrong type and the image data is misread.
 const (
 	// MatChannels1 is a single channel Mat.
 	MatChannels1 = 0
 
 	// MatChannels2 is 2 channel Mat.
-	MatChannels2 = 8
+	MatChannels2 = 32
 
 	// MatChannels3 is 3 channel Mat.
-	MatChannels3 = 16
+	MatChannels3 = 64
 
 	// MatChannels4 is 4 channel Mat.
-	MatChannels4 = 24
+	MatChannels4 = 96
 )
 
 // MatType is the type for the various different kinds of Mat you can create.
@@ -688,13 +695,6 @@ func (m *Mat) ReshapeWithSize(cn int, dims []int) Mat {
 	return newMat(C.Mat_ReshapeWithSize(m.p, C.int(cn), cDimsVector))
 }
 
-// ConvertFp16 converts a Mat to half-precision floating point.
-//
-// For further details, please see:
-// https://docs.opencv.org/master/d2/de8/group__core__array.html#ga9c25d9ef44a2a48ecc3774b30cb80082
-func (m *Mat) ConvertFp16() Mat {
-	return newMat(C.Mat_ConvertFp16(m.p))
-}
 
 // Mean calculates the mean value M of array elements, independently for each channel, and return it as Scalar
 // For further details, please see:

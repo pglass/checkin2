@@ -5,6 +5,11 @@
 
 #ifdef __cplusplus
 #include <opencv2/opencv.hpp>
+// OpenCV 5 moved contour/shape/transform helpers (approxPolyDP, convexHull,
+// getPerspectiveTransform, minAreaRect, moments, ...) out of imgproc into the
+// new geometry module, and opencv.hpp does not pull geometry.hpp in. Include it
+// explicitly or those names are missing from namespace cv.
+#include <opencv2/geometry.hpp>
 extern "C" {
 #endif
 
@@ -124,9 +129,7 @@ OpenCVResult SpatialGradient(Mat src, Mat dx, Mat dy, int ksize, int borderType)
 OpenCVResult Remap(Mat src, Mat dst, Mat map1, Mat map2, int interpolation, int borderMode, Scalar borderValue);
 OpenCVResult Filter2D(Mat src, Mat dst, int ddepth, Mat kernel, Point anchor, double delta, int borderType);
 OpenCVResult SepFilter2D(Mat src, Mat dst, int ddepth, Mat kernelX, Mat kernelY, Point anchor, double delta, int borderType);
-OpenCVResult LogPolar(Mat src, Mat dst, Point center, double m, int flags);
 OpenCVResult FitLine(PointVector pts, Mat line, int distType, double param, double reps, double aeps);
-OpenCVResult LinearPolar(Mat src, Mat dst, Point center, double maxRadius, int flags);
 double MatchShapes(PointVector contour1, PointVector contour2, int method, double parameter);
 bool ClipLine(Size imgSize, Point pt1, Point pt2);
 CLAHE CLAHE_Create();

@@ -9,7 +9,7 @@
 #
 # ARCH selects the target (defaults to this machine's). ARCH=x86_64 on an Apple
 # Silicon Mac cross-builds for Intel Macs; see build-darwin.sh.
-OPENCV_VERSION := 4.13.0
+OPENCV_VERSION := 5.0.0
 ARCH ?= $(shell uname -m)
 OPENCV_STATIC_PREFIX ?= $(HOME)/opencv-static/$(OPENCV_VERSION)-$(ARCH)
 # PKG_CONFIG_LIBDIR, not PKG_CONFIG_PATH: PATH only *prepends* to pkg-config's
@@ -92,7 +92,7 @@ package-windows:
 # Every build target needs the static OpenCV for $(ARCH); fail with the command
 # that builds it rather than a pkg-config error from deep inside cgo.
 check-opencv:
-	@pkg-config --exists opencv4 || { \
+	@pkg-config --exists opencv5 || { \
 		echo "No static OpenCV for $(ARCH) at $(OPENCV_STATIC_PREFIX)"; \
 		echo ""; \
 		echo "Build it first (once per arch, takes 20-40 min):"; \

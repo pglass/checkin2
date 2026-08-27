@@ -5,46 +5,30 @@
 
 #ifdef __cplusplus
 #include <opencv2/opencv.hpp>
+// OpenCV 5 moved contour/shape/transform helpers (approxPolyDP, convexHull,
+// getPerspectiveTransform, minAreaRect, moments, ...) out of imgproc into the
+// new geometry module, and opencv.hpp does not pull geometry.hpp in. Include it
+// explicitly or those names are missing from namespace cv.
+#include <opencv2/geometry.hpp>
 extern "C" {
 #endif
 
 #include "core.h"
 
 #ifdef __cplusplus
-typedef cv::CascadeClassifier* CascadeClassifier;
-typedef cv::HOGDescriptor* HOGDescriptor;
 typedef cv::QRCodeDetector* QRCodeDetector;
 typedef cv::QRCodeDetectorAruco* QRCodeDetectorAruco;
 typedef cv::Ptr<cv::FaceDetectorYN>* FaceDetectorYN;
 typedef cv::Ptr<cv::FaceRecognizerSF>* FaceRecognizerSF;
 #else
-typedef void* CascadeClassifier;
-typedef void* HOGDescriptor;
 typedef void* QRCodeDetector;
 typedef void* QRCodeDetectorAruco;
 typedef void* FaceDetectorYN;
 typedef void* FaceRecognizerSF;
 #endif
 
-// CascadeClassifier
-CascadeClassifier CascadeClassifier_New();
-void CascadeClassifier_Close(CascadeClassifier cs);
-int CascadeClassifier_Load(CascadeClassifier cs, const char* name);
-struct Rects CascadeClassifier_DetectMultiScale(CascadeClassifier cs, Mat img);
-struct Rects CascadeClassifier_DetectMultiScaleWithParams(CascadeClassifier cs, Mat img,
-        double scale, int minNeighbors, int flags, Size minSize, Size maxSize);
 
-HOGDescriptor HOGDescriptor_New();
-void HOGDescriptor_Close(HOGDescriptor hog);
-int HOGDescriptor_Load(HOGDescriptor hog, const char* name);
-struct Rects HOGDescriptor_DetectMultiScale(HOGDescriptor hog, Mat img);
-struct Rects HOGDescriptor_DetectMultiScaleWithParams(HOGDescriptor hog, Mat img,
-        double hitThresh, Size winStride, Size padding, double scale, double finalThreshold,
-        bool useMeanshiftGrouping);
-Mat HOG_GetDefaultPeopleDetector();
-void HOGDescriptor_SetSVMDetector(HOGDescriptor hog, Mat det);
 
-struct Rects GroupRectangles(struct Rects rects, int groupThreshold, double eps);
 
 QRCodeDetector QRCodeDetector_New();
 const char* QRCodeDetector_DetectAndDecode(QRCodeDetector qr, Mat input,Mat points,Mat straight_qrcode);

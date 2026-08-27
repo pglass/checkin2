@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a slim, STATIC OpenCV 4.13.0 for linking the checkin app into a
+# Build a slim, STATIC OpenCV 5.0.0 for linking the checkin app into a
 # self-contained macOS binary (no OpenCV dylibs to bundle or rewrite).
 #
 # macOS counterpart of build-opencv-static.sh (which is MSYS2/Windows only).
@@ -15,7 +15,7 @@
 #     Rosetta-free cross-compilation: clang targets x86_64 without Rosetta.
 #
 # Output: a static install at $PREFIX containing lib/libopencv_*.a and
-# lib/pkgconfig/opencv4.pc. The prefix is arch-suffixed so an arm64 and an
+# lib/pkgconfig/opencv5.pc. The prefix is arch-suffixed so an arm64 and an
 # x86_64 build can coexist.
 #
 # Usage:
@@ -25,7 +25,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-OPENCV_VERSION="4.13.0"
+OPENCV_VERSION="5.0.0"
 CLEAN=0
 for arg in "$@"; do
   case "$arg" in
@@ -99,7 +99,7 @@ cmake -S "$SRC" -B "$BUILD" -G "$GENERATOR" \
   -DWITH_KLEIDICV=OFF \
   -DWITH_CAROTENE=OFF \
   -DBUILD_SHARED_LIBS=OFF \
-  -DBUILD_LIST=core,imgproc,calib3d,features2d,flann,objdetect \
+  -DBUILD_LIST=core,imgproc,geometry,features,flann,objdetect \
   -DWITH_QT=OFF -DWITH_GTK=OFF \
   -DWITH_FFMPEG=OFF \
   -DWITH_GSTREAMER=OFF -DWITH_GPHOTO2=OFF -DWITH_1394=OFF \
@@ -141,8 +141,8 @@ if ! lipo -info "$CORE_A" 2>/dev/null | grep -q "$ARCH"; then
   echo "FAILED: $CORE_A is not $ARCH: $(lipo -info "$CORE_A" 2>&1)" >&2
   exit 1
 fi
-PC="$(find "$PREFIX" -name opencv4.pc 2>/dev/null | head -1 || true)"
-[ -n "$PC" ] && [ -f "$PC" ] || { echo "FAILED: opencv4.pc not generated under $PREFIX" >&2; exit 1; }
+PC="$(find "$PREFIX" -name opencv5.pc 2>/dev/null | head -1 || true)"
+[ -n "$PC" ] && [ -f "$PC" ] || { echo "FAILED: opencv5.pc not generated under $PREFIX" >&2; exit 1; }
 
 # --- Fix the generated .pc --------------------------------------------------
 # OpenCV's pkg-config generator mishandles macOS frameworks: it emits Apple
