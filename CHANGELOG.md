@@ -1,3 +1,12 @@
+# 0.0.6
+
+* Switch to QRCodeDetectorAruco. On synthetic tests:
+  * 20-30% faster on synthetic images with a QR code
+  * 60-80% faster on synthetic images without a QR code
+  * Observed slightly lower CPU usage with camera running
+* Update to OpenCV 5
+* Support cross-compiling to Windows from macOS
+
 # 0.0.5
 
 * Require authorized adult to check in/out each student

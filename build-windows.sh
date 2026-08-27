@@ -63,7 +63,7 @@ fi
 
 # App version. Single source of truth is the Makefile's VERSION; keep this
 # default in sync. Override with `VERSION=x.y.z ./build-windows.sh`.
-VERSION="${VERSION:-0.0.5}"
+VERSION="${VERSION:-0.0.6}"
 # -X stamps the in-app version (the About dialog, --version, and startup log).
 # -s -w drop the Go symbol table and DWARF debug info: this is a self-contained
 # distributable, not a debug target, and stripping them roughly halves the exe
