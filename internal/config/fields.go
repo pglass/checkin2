@@ -41,6 +41,11 @@ type Field struct {
 	// turned off -- so Set always succeeds. The settings UI still renders it as
 	// a text entry; this only tells the validation test not to expect errors.
 	FreeText bool
+	// Directory marks a setting whose value is a directory path. The settings
+	// UI puts a Browse… button next to the entry so the folder can be picked
+	// rather than typed. Typing remains available: a path on a drive that is not
+	// mounted right now cannot be browsed to, but is still worth saving.
+	Directory bool
 }
 
 // Fields lists every user-editable setting, in the order they appear both in
@@ -96,6 +101,7 @@ var Fields = []Field{
 			"original is lost with it.",
 		StructField: "BackupDir",
 		FreeText:    true,
+		Directory:   true,
 		Get:         func(c Config) string { return c.BackupDir },
 		Set: func(c *Config, s string) error {
 			// Any path is accepted, including one that does not exist yet --

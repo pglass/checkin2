@@ -3,12 +3,14 @@ package ui
 import (
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -200,6 +202,13 @@ func (s *settings) build() fyne.CanvasObject {
 			row.entry.SetText(row.orig)
 			row.entry.OnChanged = func(string) { onChange() }
 			input = row.entry
+			// A directory setting gets a Browse… button beside its entry.
+			// Typing stays available: a path on a drive that is not mounted
+			// right now cannot be browsed to, but is still worth saving.
+			if f.Directory {
+				input = container.NewBorder(nil, nil, nil,
+					widget.NewButton("Browse…", func() { s.browseDir(row) }), row.entry)
+			}
 		}
 
 		// Fixed-width key column keeps every input left-aligned with the others.
@@ -244,6 +253,50 @@ func (s *settings) build() fyne.CanvasObject {
 
 	// The form scrolls so the window stays usable as settings are added.
 	return container.NewBorder(nil, bottom, nil, nil, container.NewVScroll(form))
+}
+
+// browseDir opens a folder picker for a directory setting and puts the chosen
+// path into the row's entry. Setting the text fires the entry's OnChanged, so
+// the value is validated and the restart note updated exactly as if it had been
+// typed.
+//
+// The picker starts in the directory the entry currently names, so reopening it
+// after a mistake does not begin from scratch. An unset or unusable path falls
+// back to the picker's default location rather than failing.
+func (s *settings) browseDir(row *settingsRow) {
+	d := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
+		if err != nil {
+			dialog.ShowError(err, s.win)
+			return
+		}
+		if lu == nil {
+			return // cancelled
+		}
+		row.entry.SetText(lu.Path())
+	}, s.win)
+
+	if start := listableDir(row.entry.Text); start != nil {
+		d.SetLocation(start)
+	}
+
+	// Show before Resize: Resize reaches through the internal window that Show
+	// creates, so resizing first panics (see importer.onBrowse).
+	d.Show()
+	d.Resize(s.win.Canvas().Size())
+}
+
+// listableDir returns path as a listable URI, or nil when it cannot be listed
+// -- empty, missing, not a directory, or on a drive that is not mounted. A nil
+// result means "no starting location", not an error.
+func listableDir(path string) fyne.ListableURI {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	lu, err := storage.ListerForURI(storage.NewFileURI(path))
+	if err != nil {
+		return nil
+	}
+	return lu
 }
 
 // validateRow parses one row's input, showing or clearing its error message.

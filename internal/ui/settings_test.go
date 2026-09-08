@@ -318,3 +318,118 @@ func TestSettingsDescriptionMargins(t *testing.T) {
 		t.Errorf("bottom margin %v should exceed top margin %v", m.bottom, m.top)
 	}
 }
+
+// A directory setting gets a Browse… button beside its entry; other settings
+// keep a bare entry. Driven by the field's Directory flag, so a future
+// directory setting picks this up with no change here.
+func TestSettingsDirectoryFieldHasBrowseButton(t *testing.T) {
+	s, _ := newTestSettings(t)
+
+	// backup_dir names a folder, so it must be pickable rather than only
+	// typeable. Named explicitly: a check that merely agrees with the flag
+	// would still pass if the flag were dropped from the field as well.
+	if !rowFor(t, s, "backup_dir").field.Directory {
+		t.Error("backup_dir is not marked as a directory setting, so it has no picker")
+	}
+
+	for _, row := range s.rows {
+		// block[0] is the key column plus the input; see build().
+		top, ok := row.block[0].(*fyne.Container)
+		if !ok {
+			t.Fatalf("%s: input block is %T, want a container", row.field.Key, row.block[0])
+		}
+		browse := findButton(top, "Browse…")
+
+		if row.field.Directory {
+			if browse == nil {
+				t.Errorf("%s is a directory setting but has no Browse… button", row.field.Key)
+			}
+		} else if browse != nil {
+			t.Errorf("%s is not a directory setting but has a Browse… button", row.field.Key)
+		}
+	}
+}
+
+// The picker writes the chosen path into the entry, and because that goes
+// through the entry the value is saved exactly as a typed one would be.
+func TestSettingsBrowseResultIsSavedLikeTypedInput(t *testing.T) {
+	s, path := newTestSettings(t)
+
+	row := rowFor(t, s, "backup_dir")
+	chosen := t.TempDir()
+
+	// Stands in for the picker's callback, which is what SetText models: the
+	// folder dialog cannot be driven from a test.
+	row.entry.SetText(chosen)
+
+	if !s.dirty() {
+		t.Error("choosing a directory left the window clean, so the restart note stays hidden")
+	}
+	s.save()
+
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.BackupDir != chosen {
+		t.Errorf("saved backup_dir = %q, want %q", loaded.BackupDir, chosen)
+	}
+}
+
+// The picker's starting location is the directory the entry names, and any
+// unusable value simply means "no starting location" rather than an error.
+func TestListableDir(t *testing.T) {
+	dir := t.TempDir()
+	if lu := listableDir(dir); lu == nil {
+		t.Errorf("listableDir(%q) = nil, want the directory itself", dir)
+	} else if lu.Path() != dir {
+		t.Errorf("listableDir(%q).Path() = %q, want %q", dir, lu.Path(), dir)
+	}
+
+	file := filepath.Join(dir, "a-file.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name, path string
+	}{
+		{"empty", ""},
+		{"blank", "   "},
+		{"missing", filepath.Join(dir, "no-such-dir")},
+		{"a file, not a directory", file},
+	} {
+		if lu := listableDir(tc.path); lu != nil {
+			t.Errorf("listableDir(%s) = %v, want nil", tc.name, lu.Path())
+		}
+	}
+}
+
+// findButton returns the first button with the given label anywhere under o.
+func findButton(o fyne.CanvasObject, label string) *widget.Button {
+	switch v := o.(type) {
+	case *widget.Button:
+		if v.Text == label {
+			return v
+		}
+	case *fyne.Container:
+		for _, child := range v.Objects {
+			if b := findButton(child, label); b != nil {
+				return b
+			}
+		}
+	}
+	return nil
+}
+
+// rowFor returns the row for a settings key, failing if there is none.
+func rowFor(t *testing.T, s *settings, key string) *settingsRow {
+	t.Helper()
+	for _, row := range s.rows {
+		if row.field.Key == key {
+			return row
+		}
+	}
+	t.Fatalf("no row for %q", key)
+	return nil
+}
