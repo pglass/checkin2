@@ -217,8 +217,8 @@ func TestRunHandlesCenterWithNoDatabase(t *testing.T) {
 	}
 }
 
-// Progress is reported once per Center plus once for the archive, ending at
-// exactly the total Steps predicted, so a progress bar lands on full.
+// Progress is reported once per Center plus once for the archive, numbered 1..N
+// against the total Steps predicts.
 func TestRunReportsProgressForEveryStep(t *testing.T) {
 	appDir, destDir := t.TempDir(), t.TempDir()
 	newCenter(t, appDir, "Alpha", 1)
@@ -243,6 +243,48 @@ func TestRunReportsProgressForEveryStep(t *testing.T) {
 	for i, s := range steps {
 		if s != i+1 {
 			t.Errorf("progress call %d reported step %d, want %d", i, s, i+1)
+		}
+	}
+}
+
+// Each step is announced as it begins, not once it has finished, so the message
+// names what is happening rather than what already happened. The Center's
+// snapshot must not exist yet at the moment its step is reported.
+func TestRunReportsStepsAtTheirStart(t *testing.T) {
+	appDir, destDir := t.TempDir(), t.TempDir()
+	newCenter(t, appDir, "Alpha", 1)
+	newCenter(t, appDir, "Beta", 1)
+	centers, _ := center.List(appDir)
+
+	var descs []string
+	// Archives present when each step was announced: the archive step must be
+	// reported before the file exists.
+	var archivesAtStep []int
+	_, err := Run(context.Background(), centers, destDir, "test", 7,
+		func(_, _ int, desc string) {
+			descs = append(descs, desc)
+			found, _ := List(destDir)
+			archivesAtStep = append(archivesAtStep, len(found))
+		})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	want := []string{"Backing up Alpha", "Backing up Beta", "Creating archive"}
+	if len(descs) != len(want) {
+		t.Fatalf("descriptions = %v, want %v", descs, want)
+	}
+	for i, w := range want {
+		if descs[i] != w {
+			t.Errorf("step %d description = %q, want %q", i+1, descs[i], w)
+		}
+	}
+	// Reported before the work: no archive exists at any announcement,
+	// including the archive step's own.
+	for i, n := range archivesAtStep {
+		if n != 0 {
+			t.Errorf("at step %d (%q) there were already %d archives; "+
+				"the step was reported after its work, not before", i+1, descs[i], n)
 		}
 	}
 }

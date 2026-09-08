@@ -76,10 +76,17 @@ type CenterInfo struct {
 	StudentCount int64 `json:"student_count"`
 }
 
-// Progress reports a backup's step-by-step progress. step counts completed
-// steps, total is the number Steps returned for the same Center list, and desc
-// names the step just finished. It is called from the goroutine running the
-// backup, so a UI implementation must marshal to its own thread.
+// Progress reports a backup's step-by-step progress as each step *begins*.
+// step is the 1-based number of the step starting, total is the number Steps
+// returned for the same Center list, and desc names what is about to happen.
+//
+// Reporting at the start rather than on completion is what lets a UI name the
+// work while it is happening: "Backing up Maple St…" is only useful before the
+// snapshot is taken. It means step-1 steps are finished when step is reported,
+// so a progress bar should show step-1 and only reach total once Run returns.
+//
+// It is called from the goroutine running the backup, so a UI implementation
+// must marshal to its own thread.
 type Progress func(step, total int, desc string)
 
 // Steps returns how many progress steps a backup of n Centers takes: one per
@@ -139,6 +146,7 @@ func Run(ctx context.Context, centers []center.Center, destDir, version string, 
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
+		report(i+1, fmt.Sprintf("Backing up %s", c.Name))
 		snapPath := filepath.Join(tmpDir, snapshotName(c.Name))
 		info, err := snapshotCenter(ctx, c, snapPath)
 		if err != nil {
@@ -148,14 +156,13 @@ func Run(ctx context.Context, centers []center.Center, destDir, version string, 
 		man.Centers = append(man.Centers, info)
 		slog.Info("center snapshot taken", "center", c.Name,
 			"bytes", info.SizeBytes, "students", info.StudentCount)
-		report(i+1, fmt.Sprintf("Backed up %s", c.Name))
 	}
 
+	report(total, "Creating archive")
 	archivePath := filepath.Join(destDir, ArchivePrefix+now.Format(archiveTimeFormat)+archiveExt)
 	if err := writeArchive(archivePath, man, snapshots); err != nil {
 		return Result{}, err
 	}
-	report(total, "Archived")
 	slog.Info("backup written", "path", archivePath, "centers", len(man.Centers))
 
 	// Pruning failing does not invalidate the backup that was just written, so

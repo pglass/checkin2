@@ -236,3 +236,69 @@ func TestSettingsRestartNoteIsHostSpecific(t *testing.T) {
 		t.Errorf("main window note = %q, want it to ask for a restart", fromApp)
 	}
 }
+
+// Steps that finish faster than the minimum are held so the message can be
+// read; the message itself is delivered at once, only the *next* one waits.
+func TestPacedHoldsFastStepsForTheMinimum(t *testing.T) {
+	const min = 50 * time.Millisecond
+
+	var at []time.Duration
+	start := time.Now()
+	wrapped, wait := paced(func(int, int, string) { at = append(at, time.Since(start)) }, min)
+
+	// Three back-to-back steps, as fast as a small Center actually snapshots.
+	wrapped(1, 3, "one")
+	wrapped(2, 3, "two")
+	wrapped(3, 3, "three")
+	wait()
+
+	if len(at) != 3 {
+		t.Fatalf("got %d messages, want 3", len(at))
+	}
+	// The first is immediate: the user should see step 1 the moment it starts.
+	if at[0] > min {
+		t.Errorf("first message delivered after %v, want immediately", at[0])
+	}
+	// Each later message waits out the previous one's minimum.
+	for i := 1; i < len(at); i++ {
+		gap := at[i] - at[i-1]
+		if gap < min {
+			t.Errorf("message %d came %v after the previous, want at least %v", i+1, gap, min)
+		}
+	}
+	// wait() holds the final message for its own minimum before the summary.
+	if total := time.Since(start); total < 3*min {
+		t.Errorf("run took %v, want at least %v so every message was readable", total, 3*min)
+	}
+}
+
+// A step slower than the minimum is not padded further: pacing makes fast steps
+// readable, it does not make a backup slower than the work it is doing.
+func TestPacedDoesNotDelaySlowSteps(t *testing.T) {
+	const min = 20 * time.Millisecond
+
+	wrapped, wait := paced(func(int, int, string) {}, min)
+	wrapped(1, 2, "one")
+	time.Sleep(3 * min) // the step's own work outlasts the minimum
+
+	start := time.Now()
+	wrapped(2, 2, "two")
+	if waited := time.Since(start); waited > min {
+		t.Errorf("second message waited %v, want no delay after a slow step", waited)
+	}
+
+	start = time.Now()
+	time.Sleep(3 * min)
+	wait()
+	if waited := time.Since(start); waited > 4*min {
+		t.Errorf("wait() blocked for %v after a slow final step, want none", waited)
+	}
+}
+
+// A nil callback is safe: the pacing still applies, so a caller that only wants
+// the delay does not have to supply a no-op.
+func TestPacedToleratesNilCallback(t *testing.T) {
+	wrapped, wait := paced(nil, time.Millisecond)
+	wrapped(1, 1, "only")
+	wait()
+}

@@ -103,6 +103,47 @@ type backupProgress struct {
 	onClose  func()
 }
 
+// minStepDisplay is how long each progress message is held before the next one
+// replaces it. Snapshotting a small Center takes a few milliseconds, so without
+// this the messages flicker past unread and the window looks like it did
+// nothing. Pacing lives here rather than in the backup package because it is a
+// property of showing progress to a person, not of taking a backup: an
+// unattended backup must never slow itself down for a reader who is not there.
+const minStepDisplay = time.Second
+
+// paced wraps a Progress callback so each message stays up for at least
+// minStepDisplay before the next is delivered. The returned wait function
+// blocks until the final message has had its time, so the caller can hold off
+// on replacing it with the summary.
+//
+// It sleeps on the backup's own goroutine, never the UI thread. The work itself
+// is not delayed -- only the delivery of the *next* message is -- so a slow step
+// (a large Center) costs nothing extra, and only steps faster than the minimum
+// are padded.
+func paced(onProgress backup.Progress, min time.Duration) (wrapped backup.Progress, wait func()) {
+	var last time.Time
+	wrapped = func(step, total int, desc string) {
+		if !last.IsZero() {
+			if rest := min - time.Since(last); rest > 0 {
+				time.Sleep(rest)
+			}
+		}
+		last = time.Now()
+		if onProgress != nil {
+			onProgress(step, total, desc)
+		}
+	}
+	wait = func() {
+		if last.IsZero() {
+			return
+		}
+		if rest := min - time.Since(last); rest > 0 {
+			time.Sleep(rest)
+		}
+	}
+	return wrapped, wait
+}
+
 // showBackupProgress runs a backup in the background, showing a progress bar
 // that advances one step per Center plus one for the archive. onClose is called
 // after the user dismisses the window, so the caller can refresh.
@@ -141,15 +182,18 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, destDir str
 	p.dialog.Show()
 
 	go func() {
-		res, err := backup.Run(context.Background(), centers, destDir, version.Resolve(), keep,
-			func(step, total int, desc string) {
-				fyne.Do(func() {
-					p.bar.SetValue(float64(step))
-					// The final step's own description is replaced by the
-					// summary below, so mid-run text is never left on screen.
-					p.status.SetText(desc + "…")
-				})
+		// Progress arrives as each step begins, so step-1 steps are complete
+		// when step is announced; the bar only reaches full once Run returns.
+		onProgress, waitForLastMessage := paced(func(step, _ int, desc string) {
+			fyne.Do(func() {
+				p.bar.SetValue(float64(step - 1))
+				p.status.SetText(desc + "…")
 			})
+		}, minStepDisplay)
+
+		res, err := backup.Run(context.Background(), centers, destDir, version.Resolve(), keep, onProgress)
+		// Let the last step's message be read before the summary replaces it.
+		waitForLastMessage()
 		fyne.Do(func() { p.finish(res, err) })
 	}()
 }
