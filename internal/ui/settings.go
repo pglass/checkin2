@@ -66,11 +66,33 @@ func isBoolField(f config.Field) bool {
 	return err == nil
 }
 
+// settingsHost is what a Settings window needs from whatever opened it: the
+// current settings, where to write them, and somewhere to hand the saved values
+// back to. Both the main window (*App) and the Center selection window
+// (*startup) implement it, so one Settings window serves both rather than the
+// selection screen growing a second copy.
+type settingsHost interface {
+	// settingsConfig is the configuration the window is populated from.
+	settingsConfig() config.Config
+	// settingsPath is the settings.ini that Save writes to.
+	settingsPath() string
+	// applySettings receives the saved configuration. Implementations decide
+	// how much of it can take effect without a restart.
+	applySettings(config.Config)
+	// window supplies the parent for error dialogs and the Fyne app the
+	// Settings window is created from.
+	settingsApp() fyne.App
+	// settingsRestartNote is the warning shown once a value has been edited.
+	// It is per-host because how much of a saved change takes effect right away
+	// depends on where the window was opened from.
+	settingsRestartNote() string
+}
+
 // settings holds the widgets for one Settings window. Rows are generated from
 // config.Fields, so a setting added to that table appears here automatically —
 // there is no per-setting code in this file.
 type settings struct {
-	app  *App
+	host settingsHost
 	win  fyne.Window
 	rows []*settingsRow
 	// restartNote warns that saved settings only take effect at the next
@@ -79,24 +101,48 @@ type settings struct {
 }
 
 // showSettingsWindow opens the Settings window, or raises the existing one.
+// settingsConfig, settingsPath, settingsApp, and applySettings implement
+// settingsHost for the main window.
+func (a *App) settingsConfig() config.Config { return a.cfg }
+func (a *App) settingsPath() string          { return a.cfgPath }
+func (a *App) settingsApp() fyne.App         { return a.fyneApp }
+
+// settingsRestartNote: a Center is open, and the camera and QR scanning keep
+// the values they started with, so every change here waits for a restart.
+func (a *App) settingsRestartNote() string {
+	return "You must close and re-open the application for changed settings to take effect"
+}
+
+// applySettings stores the saved settings. They are not applied to the running
+// app: the camera and QR scanning keep using the values read at startup, which
+// is what the window's restart warning is about.
+func (a *App) applySettings(cfg config.Config) { a.cfg = cfg }
+
 func (a *App) showSettingsWindow() {
 	if a.settingsWin != nil {
 		a.settingsWin.RequestFocus()
 		return
 	}
+	a.settingsWin = showSettingsFor(a, func() { a.settingsWin = nil })
+}
 
-	s := &settings{app: a}
-	s.win = a.fyneApp.NewWindow("Settings")
+// showSettingsFor opens a Settings window over host and returns it, calling
+// onClosed when it goes away so the caller can drop its reference and let the
+// next request open a fresh one. Callers track the returned window to raise the
+// existing window instead of spawning a duplicate.
+func showSettingsFor(host settingsHost, onClosed func()) fyne.Window {
+	s := &settings{host: host}
+	s.win = host.settingsApp().NewWindow("Settings")
 	s.win.SetContent(withWindowMargin(s.build()))
 	s.win.Resize(fyne.NewSize(560, 620))
-	s.win.SetOnClosed(func() { a.settingsWin = nil })
-	a.settingsWin = s.win
+	s.win.SetOnClosed(onClosed)
 	s.win.Show()
+	return s.win
 }
 
 // build lays out one block per setting above the Save/Cancel buttons.
 func (s *settings) build() fyne.CanvasObject {
-	cfg := s.app.cfg
+	cfg := s.host.settingsConfig()
 
 	blocks := []fyne.CanvasObject{}
 	for _, f := range config.Fields {
@@ -183,9 +229,11 @@ func (s *settings) build() fyne.CanvasObject {
 	// Saved settings are read at startup only, so say so where the user is
 	// about to save rather than letting a changed value appear to do nothing.
 	// Red and bold rather than a quiet caption: this is the one thing in the
-	// window a user must not miss.
+	// window a user must not miss. The selection window applies what it reads
+	// per-backup, so it supplies its own, milder wording rather than telling a
+	// user to restart for a setting that already took effect.
 	s.restartNote = canvas.NewText(
-		"You must close and re-open the application for changed settings to take effect",
+		s.host.settingsRestartNote(),
 		theme.Color(theme.ColorNameError))
 	s.restartNote.TextSize = theme.CaptionTextSize()
 	s.restartNote.TextStyle = fyne.TextStyle{Bold: true}
@@ -242,7 +290,7 @@ func (s *settings) dirty() bool {
 // written unless all rows parse, so the file never holds a half-applied edit.
 // The new values take effect at the next startup, not immediately.
 func (s *settings) save() {
-	cfg := s.app.cfg
+	cfg := s.host.settingsConfig()
 	ok := true
 	for _, row := range s.rows {
 		// Validate into the real config so valid rows carry their new value,
@@ -259,16 +307,16 @@ func (s *settings) save() {
 		return // errors are already displayed under the offending inputs
 	}
 
-	if err := config.Write(s.app.cfgPath, cfg); err != nil {
+	if err := config.Write(s.host.settingsPath(), cfg); err != nil {
 		dialog.ShowError(err, s.win)
 		return
 	}
-	slog.Info("settings saved", "path", s.app.cfgPath)
+	slog.Info("settings saved", "path", s.host.settingsPath())
 
 	// Saved values are not applied to the running app: the camera and QR
 	// scanning keep using the settings read at startup. Restarting those in
 	// place proved fragile (a camera cannot be reopened until its driver has
 	// released the device), so the window tells the user to restart instead.
-	s.app.cfg = cfg
+	s.host.applySettings(cfg)
 	s.win.Close()
 }

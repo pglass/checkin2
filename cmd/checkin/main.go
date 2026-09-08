@@ -155,7 +155,7 @@ func main() {
 			ui.ShowFatalError(fa, alreadyOpenMessage(c.Name))
 		}
 	default:
-		ui.ShowStartup(fa, appDir, func(c center.Center, win fyne.Window) error {
+		ui.ShowStartup(fa, appDir, cfg, cfgPath, func(c center.Center, win fyne.Window) error {
 			return run(c, c.DBPath(), win)
 		})
 	}

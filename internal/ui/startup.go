@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/center"
+	"github.com/pglass/checkin/internal/config"
 )
 
 // startup is the Center selection window shown before the main window.
@@ -21,6 +22,16 @@ type startup struct {
 	win     fyne.Window
 	appDir  string
 
+	// cfg is the loaded settings, replaced when the Settings window saves.
+	// The selection window needs them for the backup row, which runs before any
+	// Center is open. cfgPath is the settings.ini it is written back to.
+	cfg     config.Config
+	cfgPath string
+
+	// settingsWin is the Settings window; tracked so reopening raises the
+	// existing one instead of spawning a duplicate, as the main window does.
+	settingsWin fyne.Window
+
 	// about supplies the About window, so version and license information is
 	// reachable before any Center is open.
 	about about
@@ -28,6 +39,7 @@ type startup struct {
 	centers []center.Center
 	list    *widget.List
 	errLbl  *canvas.Text
+	backups *backupBar
 
 	// onOpen receives the chosen Center and this window, and replaces the
 	// window's content with the main view. It returns an error (e.g.
@@ -52,17 +64,20 @@ type startup struct {
 // frees the GLFW handle while fyne's processMouseClicked is still using it, and
 // the driver then panics on a nil view. With one window for the lifetime of the
 // process, that class of crash cannot occur here.
-func ShowStartup(fa fyne.App, appDir string, onOpen func(center.Center, fyne.Window) error) {
-	s := &startup{fyneApp: fa, appDir: appDir, onOpen: onOpen}
+func ShowStartup(fa fyne.App, appDir string, cfg config.Config, cfgPath string, onOpen func(center.Center, fyne.Window) error) {
+	s := &startup{fyneApp: fa, appDir: appDir, cfg: cfg, cfgPath: cfgPath, onOpen: onOpen}
 	s.win = fa.NewWindow("Check-In")
 	s.about = about{fyneApp: fa, parent: s.win}
-	// The selection window has no Center-specific actions yet, so its File menu
-	// holds only About -- but the menu is always present, so the menubar does
-	// not appear and disappear between the two windows.
-	s.win.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu("File", s.about.menuItem())))
+	// Settings belongs here as well as in the main window: backup_dir is set
+	// from Settings and used from this screen, so a user told to "set backup_dir
+	// in Settings" must be able to get there without opening a Center first.
+	s.win.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu("File",
+		fyne.NewMenuItem("Settings…", s.showSettingsWindow),
+		s.about.menuItem(),
+	)))
 	s.build()
 	s.reload()
-	s.win.Resize(fyne.NewSize(360, 320))
+	s.win.Resize(fyne.NewSize(400, 380))
 	s.win.CenterOnScreen()
 	s.win.Show()
 
@@ -95,9 +110,18 @@ func (s *startup) build() {
 
 	addBtn := widget.NewButton("Add Center…", s.showAddDialog)
 
+	// Backups cover every Center at once and need none of them open, so they
+	// belong here rather than inside a Center's own window.
+	s.backups = newBackupBar(s)
+
 	header := widget.NewLabel("Select a Center:")
 	buttons := container.NewHBox(addBtn, layout.NewSpacer())
-	bottom := container.NewVBox(s.errLbl, buttons)
+	bottom := container.NewVBox(
+		s.errLbl,
+		buttons,
+		widget.NewSeparator(),
+		s.backups.view,
+	)
 
 	s.win.SetContent(withWindowMargin(
 		container.NewBorder(header, bottom, nil, nil, s.list),
@@ -109,6 +133,38 @@ func (s *startup) build() {
 			s.fyneApp.Quit()
 		}
 	})
+}
+
+// settingsConfig, settingsPath, settingsApp, and applySettings implement
+// settingsHost for the Center selection window.
+func (s *startup) settingsConfig() config.Config { return s.cfg }
+func (s *startup) settingsPath() string          { return s.cfgPath }
+func (s *startup) settingsApp() fyne.App         { return s.fyneApp }
+
+// settingsRestartNote: the backup settings on this screen are read each time a
+// backup runs, so they apply as soon as they are saved. Everything else belongs
+// to a Center that is not open yet and will be read when one is.
+func (s *startup) settingsRestartNote() string {
+	return "Backup settings apply immediately; other settings take effect when a Center is opened"
+}
+
+// applySettings stores the saved settings and refreshes the backup row. Unlike
+// the main window, this screen can honour a change immediately: the backup
+// directory is read each time a backup runs, so a newly set backup_dir enables
+// the button straight away rather than at the next startup.
+func (s *startup) applySettings(cfg config.Config) {
+	s.cfg = cfg
+	s.backups.refresh()
+}
+
+// showSettingsWindow opens Settings, raising the existing window if it is
+// already up.
+func (s *startup) showSettingsWindow() {
+	if s.settingsWin != nil {
+		s.settingsWin.RequestFocus()
+		return
+	}
+	s.settingsWin = showSettingsFor(s, func() { s.settingsWin = nil })
 }
 
 // reload re-lists the Centers on disk and repaints the list.

@@ -179,6 +179,35 @@ checkin -db-path /tmp/x/checkin.db   # dev escape hatch: open a database directl
   calendar-day rollover.
 - **Retention:** log rows are kept indefinitely. Nothing deletes history.
 
+## Backups
+
+A backup writes **one zip archive covering every Center**, into the directory
+set by `backup_dir`. Backups are run from the Center selection window ("Back Up
+Now"), which is the one place where no Center is open.
+
+- **Configure:** set `backup_dir` in Settings (empty turns backups off) and
+  `backup_count` for how many archives to keep. After each backup the oldest
+  archives beyond that count are deleted; only this app's own
+  `checkin-backup-*.zip` files are ever removed, so other files in the directory
+  are left alone.
+- **Contents:** `manifest.json` at the archive root (program version, timestamp,
+  and per-Center name, size, and student count) plus `centers/<Center>.db`.
+- **Snapshots use `VACUUM INTO`**, which runs inside a read transaction and
+  writes a fresh, self-contained database. This matters because the database
+  runs in WAL mode: copying `checkin.db` on its own would silently omit
+  committed transactions still sitting in the `-wal` sidecar, and copying it
+  while a writer is active could mix pages from different transactions. The
+  snapshot has neither problem and needs no sidecar files alongside it.
+- **A Center open in another window is not backed up** -- the run stops and says
+  so, rather than snapshotting from under a live writer.
+- **Off-machine copies:** point `backup_dir` at a folder your cloud storage app
+  syncs (Google Drive, OneDrive, Dropbox) or at an external drive. The app only
+  writes files; whether and when they upload is up to that app, and it cannot
+  report on it. A backup on the same disk as the original is lost with it.
+
+Restoring from an archive is not automated yet: unzip it and copy the wanted
+`centers/<Center>.db` over a Center's `checkin.db` while the app is closed.
+
 ## QR codes
 
 - Payload: `{"Version":2,"FirstName":"John","LastName":"Smith"}`.

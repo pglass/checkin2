@@ -23,6 +23,15 @@ type Config struct {
 	// QRScanCooldown is how long a scanned code is ignored after a successful
 	// scan, so the same student's dialog is not re-triggered immediately.
 	QRScanCooldown time.Duration
+	// BackupDir is the directory backup archives are written to. It has no
+	// default: a backup location is machine-specific, and writing backups
+	// somewhere the user never chose would be worse than not writing them. An
+	// empty value means backups are not configured, and the startup screen says
+	// so instead of offering to run one.
+	BackupDir string
+	// BackupCount is how many backup archives are kept in BackupDir; older ones
+	// are deleted after each backup.
+	BackupCount int
 }
 
 // Default returns the built-in default settings.
@@ -32,6 +41,8 @@ func Default() Config {
 		CameraRequestWidth:  640,
 		CameraRequestHeight: 480,
 		QRScanCooldown:      8 * time.Second,
+		BackupDir:           "",
+		BackupCount:         7,
 	}
 }
 

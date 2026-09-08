@@ -85,6 +85,11 @@ func TestFieldsSetValidation(t *testing.T) {
 		// What counts as invalid depends on the field's type: "0" and "-1" are
 		// nonsense for a positive int or duration, but "0" is a perfectly good
 		// false for a bool. Key off whether the current value parses as a bool.
+		// A free-text field (e.g. a directory path) has nothing to reject, and
+		// "" is how such an optional setting is turned off.
+		if f.FreeText {
+			continue
+		}
 		bad := []string{"", "abc"}
 		if _, err := strconv.ParseBool(f.Get(Default())); err != nil {
 			bad = append(bad, "-1", "0")

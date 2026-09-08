@@ -4,8 +4,7 @@ main
 seed
 *.exe
 dist/
-**/*.db
-**/*.db-*
+**/*.db*
 **/*.ini
 # Cross-built macOS binaries from build-darwin.sh (ARCH=...).
 checkin-x86_64

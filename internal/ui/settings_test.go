@@ -15,8 +15,17 @@ import (
 )
 
 // newTestSettings builds a Settings window backed by a temp settings.ini,
-// without opening a store or camera.
+// without opening a store or camera. The host is an *App, as in the main
+// window; TestSettingsHostedByStartup covers the selection window's host.
 func newTestSettings(t *testing.T) (*settings, string) {
+	t.Helper()
+	s, _, path := newTestSettingsWithApp(t)
+	return s, path
+}
+
+// newTestSettingsWithApp is newTestSettings for tests that need the hosting
+// *App itself, e.g. to check no camera was started.
+func newTestSettingsWithApp(t *testing.T) (*settings, *App, string) {
 	t.Helper()
 	fa := test.NewApp()
 	t.Cleanup(fa.Quit)
@@ -25,10 +34,10 @@ func newTestSettings(t *testing.T) (*settings, string) {
 	a := &App{fyneApp: fa, cfg: config.Default(), cfgPath: path, camDevice: deviceNone}
 	a.win = fa.NewWindow("main")
 
-	s := &settings{app: a}
+	s := &settings{host: a}
 	s.win = fa.NewWindow("Settings")
 	s.win.SetContent(s.build())
-	return s, path
+	return s, a, path
 }
 
 // The window is generated from config.Fields, so every setting gets a row.
@@ -65,8 +74,8 @@ func TestSettingsSaveRejectsInvalidInput(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("settings.ini written despite invalid input (stat err = %v)", err)
 	}
-	if s.app.cfg != config.Default() {
-		t.Fatalf("live config changed despite invalid input: %+v", s.app.cfg)
+	if s.host.settingsConfig() != config.Default() {
+		t.Fatalf("live config changed despite invalid input: %+v", s.host.settingsConfig())
 	}
 }
 
@@ -109,8 +118,8 @@ func TestSettingsSaveWritesAndApplies(t *testing.T) {
 
 	s.save()
 
-	if s.app.cfg != want {
-		t.Fatalf("live config = %+v, want %+v", s.app.cfg, want)
+	if s.host.settingsConfig() != want {
+		t.Fatalf("live config = %+v, want %+v", s.host.settingsConfig(), want)
 	}
 	got, err := config.Load(path)
 	if err != nil {
@@ -130,8 +139,8 @@ func TestSettingsCancelDoesNotWrite(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("cancel wrote settings.ini (stat err = %v)", err)
 	}
-	if s.app.cfg != config.Default() {
-		t.Fatalf("cancel changed live config: %+v", s.app.cfg)
+	if s.host.settingsConfig() != config.Default() {
+		t.Fatalf("cancel changed live config: %+v", s.host.settingsConfig())
 	}
 }
 
@@ -140,8 +149,8 @@ func TestSettingsCancelDoesNotWrite(t *testing.T) {
 // were started with until the user restarts the app, which is what the note at
 // the bottom of the window tells them.
 func TestSettingsSaveDoesNotRestartSubsystems(t *testing.T) {
-	s, _ := newTestSettings(t)
-	s.app.camDevice = deviceNone
+	s, a, _ := newTestSettingsWithApp(t)
+	a.camDevice = deviceNone
 
 	for _, row := range s.rows {
 		if row.field.Key == "camera_fps" {
@@ -150,12 +159,12 @@ func TestSettingsSaveDoesNotRestartSubsystems(t *testing.T) {
 	}
 	s.save()
 
-	if s.app.cfg.CameraFPS != 30 {
-		t.Fatalf("saved config not stored on App: CameraFPS = %d", s.app.cfg.CameraFPS)
+	if s.host.settingsConfig().CameraFPS != 30 {
+		t.Fatalf("saved config not stored on App: CameraFPS = %d", s.host.settingsConfig().CameraFPS)
 	}
 	// No camera was running and none may be started by a save.
-	if s.app.camDevice != deviceNone {
-		t.Fatalf("save started a camera: camDevice = %d", s.app.camDevice)
+	if a.camDevice != deviceNone {
+		t.Fatalf("save started a camera: camDevice = %d", a.camDevice)
 	}
 }
 

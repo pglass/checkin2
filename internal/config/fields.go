@@ -35,6 +35,12 @@ type Field struct {
 	// StructField is the name of the Config struct field this maps to, used
 	// only by the test that checks every field is covered.
 	StructField string
+	// FreeText marks a setting whose value is arbitrary text (a file path, for
+	// example) rather than a number, duration, or boolean. Such a field has
+	// nothing to validate -- including "" , which is how an optional setting is
+	// turned off -- so Set always succeeds. The settings UI still renders it as
+	// a text entry; this only tells the validation test not to expect errors.
+	FreeText bool
 }
 
 // Fields lists every user-editable setting, in the order they appear both in
@@ -79,6 +85,36 @@ var Fields = []Field{
 		Set: func(c *Config, s string) error {
 			return setPositiveDuration(&c.QRScanCooldown, "qr_scan_cooldown", "8s", s)
 		},
+	},
+	{
+		Key:     "backup_dir",
+		Section: "backup",
+		Desc: "Directory that backup archives are written to. Leave empty to turn backups off. " +
+			"Point this at a folder your cloud storage app syncs (Google Drive, OneDrive, " +
+			"Dropbox) to get off-machine copies, or at an external drive. Do not use a " +
+			"folder inside the application directory: a backup on the same disk as the " +
+			"original is lost with it.",
+		StructField: "BackupDir",
+		FreeText:    true,
+		Get:         func(c Config) string { return c.BackupDir },
+		Set: func(c *Config, s string) error {
+			// Any path is accepted, including one that does not exist yet --
+			// the directory is created when the first backup runs. Validating
+			// existence here would reject a removable drive that is simply not
+			// plugged in at the moment.
+			c.BackupDir = strings.TrimSpace(s)
+			return nil
+		},
+	},
+	{
+		Key:     "backup_count",
+		Section: "backup",
+		Desc: "Number of backup archives to keep. After each backup the oldest archives over " +
+			"this count are deleted. Only this app's own archives are ever deleted; other " +
+			"files in the backup directory are left alone.",
+		StructField: "BackupCount",
+		Get:         func(c Config) string { return strconv.Itoa(c.BackupCount) },
+		Set:         func(c *Config, s string) error { return setPositiveInt(&c.BackupCount, "backup_count", s) },
 	},
 }
 
