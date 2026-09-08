@@ -232,8 +232,27 @@ even after one fails, so a single pass reports everything wrong with an archive.
 An archive written before checksums were recorded says so rather than being
 reported as corrupt.
 
-Restoring from an archive is not automated yet: unzip it and copy the wanted
-`centers/<Center>.db` over a Center's `checkin.db` while the app is closed.
+### Restoring a backup
+
+**Restore** on an archive switches the window to that backup's contents: one row
+per Center, with its name, the backup's timestamp, and its student and log-row
+counts. **Restore Center** asks for confirmation, naming the Center it will
+create, and **Back** returns to the archive list.
+
+- **A restore always adds a new Center and never overwrites one.** The new
+  Center is named `<Center>-<backup timestamp>`, so it says which backup it came
+  from and cannot collide with the live Center. Restoring the same backup twice
+  is refused rather than replacing the first restore.
+- **The snapshot is checked before it is put in place** -- the same four checks
+  Verify runs -- so a damaged archive is refused rather than restored as
+  silently wrong data.
+- Nothing is created until the snapshot has been extracted and checked, and a
+  failure after that removes the part-made Center, so a failed restore never
+  leaves a Center with no database in the selection list.
+
+Once restored, open the new Center from the selection window like any other. To
+replace a live Center with a restored one, close the app and swap the
+directories by hand.
 
 ## QR codes
 

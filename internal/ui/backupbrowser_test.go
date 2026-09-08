@@ -109,9 +109,11 @@ func TestBrowserRowHasVerifyAndRestore(t *testing.T) {
 	if restore == nil {
 		t.Fatal("row has no Restore button")
 	}
-	// Restore does not exist yet, so it must not look usable.
-	if !restore.Disabled() {
-		t.Error("Restore is enabled, but it is not wired up yet")
+	if restore.Disabled() {
+		t.Error("Restore is disabled, but restoring is implemented")
+	}
+	if restore.OnTapped == nil {
+		t.Error("Restore has no action bound")
 	}
 }
 

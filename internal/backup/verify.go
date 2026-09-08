@@ -128,7 +128,7 @@ func Verify(ctx context.Context, archivePath string, onProgress VerifyProgress) 
 		}
 	}
 
-	man, err := readManifest(archivePath)
+	man, err := ReadManifest(archivePath)
 	if err != nil {
 		return VerifyResult{}, err
 	}
@@ -223,9 +223,10 @@ func runCheck(ctx context.Context, check Check, want CenterInfo, path string) Ch
 	return r
 }
 
-// readManifest reads and decodes an archive's manifest without extracting
-// anything else, so a corrupt or foreign zip is rejected before any work.
-func readManifest(archivePath string) (Manifest, error) {
+// ReadManifest reads and decodes an archive's manifest without extracting
+// anything else, so a corrupt or foreign zip is rejected before any work. It is
+// what the restore UI reads to list a backup's Centers without unpacking it.
+func ReadManifest(archivePath string) (Manifest, error) {
 	zr, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("open archive: %w", err)

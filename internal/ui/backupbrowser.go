@@ -6,6 +6,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
@@ -65,6 +66,14 @@ type backupBrowser struct {
 	win fyne.Window
 	// dir is the backup directory being listed, captured when the window opens.
 	dir string
+	// appDir is where a restored Center is created.
+	appDir string
+	// onRestored is called after a Center is restored, so the Center selection
+	// list behind this window picks it up without being reopened.
+	onRestored func()
+	// listView is the archive list view, kept so the restore view can put it
+	// back when the user presses Back.
+	listView fyne.CanvasObject
 	// archives is what the list renders, newest first.
 	archives []backup.Archive
 	list     *widget.List
@@ -77,8 +86,8 @@ type backupBrowser struct {
 // directory, calling onClosed when it goes away so the caller can drop its
 // reference. The returned window is tracked by the caller to raise the existing
 // window instead of opening a second one.
-func showBackupBrowser(fa fyne.App, backupDir string, onClosed func()) fyne.Window {
-	b := &backupBrowser{dir: backupDir}
+func showBackupBrowser(fa fyne.App, backupDir, appDir string, onClosed, onRestored func()) fyne.Window {
+	b := &backupBrowser{dir: backupDir, appDir: appDir, onRestored: onRestored}
 	b.win = fa.NewWindow("Backups")
 	b.build()
 	b.reload()
@@ -129,10 +138,8 @@ func (b *backupBrowser) build() {
 			verify.OnTapped = func() { b.verify(a) }
 			verify.Enable()
 
-			// Restore is not implemented yet. A button that looks available and
-			// does nothing is worse than one that is plainly not ready.
-			restore.OnTapped = nil
-			restore.Disable()
+			restore.OnTapped = func() { b.restore(a) }
+			restore.Enable()
 		},
 	)
 
@@ -141,12 +148,35 @@ func (b *backupBrowser) build() {
 	// The header is its own Border rather than a VBox entry: a VBox gives every
 	// child its minimum height, and a wrapped multi-line path then leaves a gap
 	// between the text and the separator.
-	b.win.SetContent(withWindowMargin(container.NewBorder(
+	b.listView = withWindowMargin(container.NewBorder(
 		container.NewBorder(nil, widget.NewSeparator(), nil, nil, header),
 		container.NewVBox(widget.NewSeparator(), container.NewHBox(layout.NewSpacer(), closeBtn)),
 		nil, nil,
 		container.NewStack(b.list, b.empty),
-	)))
+	))
+	b.win.SetContent(b.listView)
+}
+
+// showList puts the archive list back, from the restore view's Back button.
+// The list is re-read on the way back, so a Center restored in between is
+// reflected without reopening the window.
+func (b *backupBrowser) showList() {
+	b.reload()
+	b.win.SetContent(b.listView)
+}
+
+// restore switches this window to the restore view for one archive, listing the
+// Centers inside it. The manifest is read here rather than in the view so a
+// damaged archive is reported before the view is built.
+func (b *backupBrowser) restore(a backup.Archive) {
+	man, err := backup.ReadManifest(a.Path)
+	if err != nil {
+		slog.Error("could not read backup manifest", "path", a.Path, "err", err)
+		dialog.ShowError(err, b.win)
+		return
+	}
+	slog.Info("browsing backup for restore", "path", a.Path, "centers", len(man.Centers))
+	b.win.SetContent(newRestoreView(b, a, man).view)
 }
 
 // verify checks one archive, showing the progress window over this one.

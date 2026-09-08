@@ -186,7 +186,11 @@ func (s *startup) showBackupBrowser() {
 		s.browserWin.RequestFocus()
 		return
 	}
-	s.browserWin = showBackupBrowser(s.fyneApp, s.cfg.BackupDir, func() { s.browserWin = nil })
+	s.browserWin = showBackupBrowser(s.fyneApp, s.cfg.BackupDir, s.appDir,
+		func() { s.browserWin = nil },
+		// A restored Center is a new directory in appDir, so the selection list
+		// behind this window is stale until it is re-read.
+		func() { fyne.Do(s.reload) })
 }
 
 // reload re-lists the Centers on disk and repaints the list.

@@ -212,7 +212,7 @@ func TestVerifyChecksLogRowsAreRecorded(t *testing.T) {
 	// students has a non-zero log to check.
 	path := makeBackup(t, map[string]int{"Alpha": 4})
 
-	man, err := readManifest(path)
+	man, err := ReadManifest(path)
 	if err != nil {
 		t.Fatalf("readManifest: %v", err)
 	}
