@@ -5,9 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -270,21 +272,35 @@ func TestRunReportsStepsAtTheirStart(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	want := []string{"Backing up Alpha", "Backing up Beta", "Creating archive"}
-	if len(descs) != len(want) {
-		t.Fatalf("descriptions = %v, want %v", descs, want)
+	// The snapshot and archive steps, then the verification pass over what was
+	// just written.
+	want := []string{"Backing up Alpha", "Backing up Beta", "Creating archive", "Unzipping archive"}
+	if len(descs) != Steps(2) {
+		t.Fatalf("got %d descriptions %v, want %d", len(descs), descs, Steps(2))
 	}
 	for i, w := range want {
 		if descs[i] != w {
 			t.Errorf("step %d description = %q, want %q", i+1, descs[i], w)
 		}
 	}
-	// Reported before the work: no archive exists at any announcement,
-	// including the archive step's own.
-	for i, n := range archivesAtStep {
-		if n != 0 {
+	// Every check of every Center is named, so the user can see which one is
+	// being verified.
+	for _, name := range []string{"Alpha", "Beta"} {
+		for _, check := range Checks {
+			want := fmt.Sprintf("Verifying %s backup: %s", name, check.Label())
+			if !slices.Contains(descs, want) {
+				t.Errorf("descriptions %v are missing %q", descs, want)
+			}
+		}
+	}
+
+	// Reported before the work: no archive exists at any announcement up to and
+	// including the archive step's own. Verification runs after the archive is
+	// written, so its steps see one and are not part of this check.
+	for i := 0; i <= 2; i++ {
+		if archivesAtStep[i] != 0 {
 			t.Errorf("at step %d (%q) there were already %d archives; "+
-				"the step was reported after its work, not before", i+1, descs[i], n)
+				"the step was reported after its work, not before", i+1, descs[i], archivesAtStep[i])
 		}
 	}
 }
@@ -410,5 +426,107 @@ func TestLastBackupTime(t *testing.T) {
 func TestRunRequiresADestination(t *testing.T) {
 	if _, err := Run(context.Background(), nil, "", "test", 7, nil); err == nil {
 		t.Fatal("Run with no destination succeeded, want an error")
+	}
+}
+
+// Archives are listed newest first, with the timestamp taken from the file name
+// rather than the filesystem: a synced or copied file keeps its name but not
+// necessarily its modification time.
+func TestListArchivesNewestFirst(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{
+		ArchivePrefix + "2024-01-02-030405" + archiveExt,
+		ArchivePrefix + "2026-05-06-070809" + archiveExt,
+		ArchivePrefix + "2025-03-04-050607" + archiveExt,
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("payload"), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", n, err)
+		}
+	}
+
+	got, err := ListArchives(dir)
+	if err != nil {
+		t.Fatalf("ListArchives: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d archives, want 3", len(got))
+	}
+
+	wantYears := []int{2026, 2025, 2024}
+	for i, want := range wantYears {
+		if y := got[i].CreatedAt.Year(); y != want {
+			t.Errorf("archive %d year = %d, want %d (newest first)", i, y, want)
+		}
+	}
+	if got[0].SizeBytes != int64(len("payload")) {
+		t.Errorf("size = %d, want %d", got[0].SizeBytes, len("payload"))
+	}
+	if got[0].Path != filepath.Join(dir, got[0].Name) {
+		t.Errorf("Path = %q, want it under %q", got[0].Path, dir)
+	}
+}
+
+// Non-archives are not listed, so a backup directory shared with other files
+// shows only this app's backups.
+func TestListArchivesIgnoresOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{
+		"notes.txt",
+		"some-other-archive.zip",
+		ArchivePrefix + "nope" + archiveExt, // prefix right, timestamp unparseable
+		ArchivePrefix + "2025-03-04-050607" + archiveExt + ".partial",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", n, err)
+		}
+	}
+
+	got, err := ListArchives(dir)
+	if err != nil {
+		t.Fatalf("ListArchives: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("listed %d archives, want none: %+v", len(got), got)
+	}
+}
+
+// An unset or missing directory has no backups and is not an error: it is the
+// state of a fresh install, not a fault.
+func TestListArchivesToleratesMissingDirectory(t *testing.T) {
+	for _, dir := range []string{"", filepath.Join(t.TempDir(), "not-created")} {
+		got, err := ListArchives(dir)
+		if err != nil {
+			t.Errorf("ListArchives(%q) = error %v, want none", dir, err)
+		}
+		if len(got) != 0 {
+			t.Errorf("ListArchives(%q) returned %d archives, want none", dir, len(got))
+		}
+	}
+}
+
+// A real backup is listed by the same call the browser window uses.
+func TestListArchivesSeesARealBackup(t *testing.T) {
+	appDir, destDir := t.TempDir(), t.TempDir()
+	newCenter(t, appDir, "Alpha", 2)
+	centers, _ := center.List(appDir)
+
+	res, err := Run(context.Background(), centers, destDir, "test", 7, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got, err := ListArchives(destDir)
+	if err != nil {
+		t.Fatalf("ListArchives: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d archives, want 1", len(got))
+	}
+	if got[0].Path != res.Path {
+		t.Errorf("Path = %q, want %q", got[0].Path, res.Path)
+	}
+	if got[0].SizeBytes <= 0 {
+		t.Errorf("SizeBytes = %d, want > 0", got[0].SizeBytes)
 	}
 }

@@ -302,3 +302,43 @@ func TestPacedToleratesNilCallback(t *testing.T) {
 	wrapped(1, 1, "only")
 	wait()
 }
+
+// A backup's verification tail is paced at the shorter verify interval: those
+// steps are numerous and quick, and pacing them like snapshot steps would make
+// a backup feel far slower than the work it does.
+func TestPacedByUsesPerStepMinimums(t *testing.T) {
+	const slow, fast = 60 * time.Millisecond, 10 * time.Millisecond
+
+	var at []time.Duration
+	start := time.Now()
+	wrapped, wait := pacedBy(
+		func(int, int, string) { at = append(at, time.Since(start)) },
+		func(step int) time.Duration {
+			if step >= 3 { // steps 3+ stand in for the verification tail
+				return fast
+			}
+			return slow
+		})
+
+	for i := 1; i <= 4; i++ {
+		wrapped(i, 4, "step")
+	}
+	wait()
+
+	if len(at) != 4 {
+		t.Fatalf("got %d messages, want 4", len(at))
+	}
+	// Step 2 waits out step 1's slow minimum.
+	if gap := at[1] - at[0]; gap < slow {
+		t.Errorf("gap after step 1 = %v, want at least %v", gap, slow)
+	}
+	// Step 4 waits only step 3's fast minimum, not the slow one.
+	gap := at[3] - at[2]
+	if gap < fast {
+		t.Errorf("gap after step 3 = %v, want at least %v", gap, fast)
+	}
+	if gap >= slow {
+		t.Errorf("gap after step 3 = %v, want the fast minimum (%v), not the slow one (%v)",
+			gap, fast, slow)
+	}
+}

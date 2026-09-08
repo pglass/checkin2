@@ -63,6 +63,11 @@ type Manifest struct {
 }
 
 // CenterInfo describes one Center's snapshot inside the archive.
+//
+// Every field here is recorded at backup time from the snapshot itself, never
+// from the live database: a snapshot is a rebuilt file, so its size and hash do
+// not match the original even when the data is identical. Verify re-derives all
+// four from the extracted file and compares.
 type CenterInfo struct {
 	// Name is the Center's name, which is also its directory name.
 	Name string `json:"name"`
@@ -71,9 +76,18 @@ type CenterInfo struct {
 	// SizeBytes is the snapshot's uncompressed size. Recorded so a restore can
 	// report and check the size without decompressing the whole archive.
 	SizeBytes int64 `json:"size_bytes"`
+	// SHA256 is the hex-encoded SHA-256 of the snapshot file, taken from the
+	// snapshot rather than the source database. It is the check that catches a
+	// silently altered or truncated archive, which a size comparison alone
+	// would miss.
+	SHA256 string `json:"sha256"`
 	// StudentCount is the number of students in the snapshot, shown in the
 	// restore UI so the user can tell backups apart by their contents.
 	StudentCount int64 `json:"student_count"`
+	// LogCount is the number of rows in the append-only Log table. Recorded
+	// alongside StudentCount so verification covers the history, which is the
+	// bulk of the data and the part a truncated snapshot would lose first.
+	LogCount int64 `json:"log_count"`
 }
 
 // Progress reports a backup's step-by-step progress as each step *begins*.
@@ -90,9 +104,10 @@ type CenterInfo struct {
 type Progress func(step, total int, desc string)
 
 // Steps returns how many progress steps a backup of n Centers takes: one per
-// Center snapshot, then one for writing the archive. The manifest is written
-// into the archive as part of that final step, so it is not counted separately.
-func Steps(n int) int { return n + 1 }
+// Center snapshot, one for writing the archive, then the verification pass over
+// the archive that was just written. The manifest is written into the archive
+// as part of the archive step, so it is not counted separately.
+func Steps(n int) int { return n + 1 + VerifySteps(n) }
 
 // Result describes a completed backup.
 type Result struct {
@@ -102,6 +117,9 @@ type Result struct {
 	Manifest Manifest
 	// Pruned lists archives deleted to honour the retention count.
 	Pruned []string
+	// Verify is the verification pass over the archive, run as part of every
+	// backup so a bad archive is caught while the source data is still there.
+	Verify VerifyResult
 }
 
 // Run snapshots every Center in centers, writes them into a single zip archive
@@ -158,12 +176,34 @@ func Run(ctx context.Context, centers []center.Center, destDir, version string, 
 			"bytes", info.SizeBytes, "students", info.StudentCount)
 	}
 
-	report(total, "Creating archive")
+	report(len(centers)+1, "Creating archive")
 	archivePath := filepath.Join(destDir, ArchivePrefix+now.Format(archiveTimeFormat)+archiveExt)
 	if err := writeArchive(archivePath, man, snapshots); err != nil {
 		return Result{}, err
 	}
 	slog.Info("backup written", "path", archivePath, "centers", len(man.Centers))
+
+	// Verify what was just written, rather than trusting that writing it
+	// worked. A backup that cannot be verified is reported as a failed backup:
+	// the whole point of the feature is knowing the archive is good, and an
+	// archive that silently failed its checks is worse than no archive, because
+	// it will be relied on.
+	verifyRes, err := Verify(ctx, archivePath, func(step, _ int, desc string) {
+		// Verification numbers its own steps from 1; offset them so they
+		// continue the backup's progress rather than restarting it.
+		report(len(centers)+1+step, desc)
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("verify the backup just written: %w", err)
+	}
+	res := Result{Path: archivePath, Manifest: man, Verify: verifyRes}
+	if !verifyRes.OK() {
+		slog.Error("backup failed verification", "path", archivePath,
+			"failures", len(verifyRes.Failures()))
+		return res, fmt.Errorf("the backup was written but failed verification: %s",
+			VerifySummary(verifyRes))
+	}
+	slog.Info("backup verified", "path", archivePath, "checks", len(verifyRes.Results))
 
 	// Pruning failing does not invalidate the backup that was just written, so
 	// it is reported but does not fail the run.
@@ -175,7 +215,8 @@ func Run(ctx context.Context, centers []center.Center, destDir, version string, 
 		slog.Info("old backup pruned", "path", p)
 	}
 
-	return Result{Path: archivePath, Manifest: man, Pruned: pruned}, nil
+	res.Pruned = pruned
+	return res, nil
 }
 
 // snapshotName is the file name for a Center's snapshot. Centers live in their
@@ -291,6 +332,53 @@ func List(dir string) ([]os.DirEntry, error) {
 	// Names embed a sortable timestamp, so sorting by name descending is
 	// newest-first without stat-ing every file.
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() > out[j].Name() })
+	return out, nil
+}
+
+// Archive is one backup archive on disk, as listed for the user.
+type Archive struct {
+	// Name is the archive's file name.
+	Name string
+	// Path is its full path.
+	Path string
+	// CreatedAt is when the backup ran, taken from the file name rather than
+	// the filesystem: a copied or synced file keeps its name but not
+	// necessarily its modification time.
+	CreatedAt time.Time
+	// SizeBytes is the archive's compressed size on disk.
+	SizeBytes int64
+}
+
+// ListArchives returns the backup archives in dir, newest first. It is List
+// with the file name already parsed, for callers that want to show archives
+// rather than count them. A missing directory yields no archives and no error.
+//
+// The listing is built from file names alone, so it does not open or validate
+// any archive: an entry here means a file that looks like a backup exists, not
+// that its contents are sound.
+func ListArchives(dir string) ([]Archive, error) {
+	entries, err := List(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Archive, 0, len(entries))
+	for _, e := range entries {
+		at, ok := timeFromName(e.Name())
+		if !ok {
+			continue // List already filtered these; belt and braces
+		}
+		a := Archive{
+			Name:      e.Name(),
+			Path:      filepath.Join(dir, e.Name()),
+			CreatedAt: at,
+		}
+		// A file that vanished between listing and stat-ing is still worth
+		// showing; its size is simply unknown.
+		if info, err := e.Info(); err == nil {
+			a.SizeBytes = info.Size()
+		}
+		out = append(out, a)
+	}
 	return out, nil
 }
 

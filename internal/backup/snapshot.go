@@ -2,8 +2,11 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -36,10 +39,17 @@ func snapshotCenter(ctx context.Context, c center.Center, destPath string) (Cent
 	dbPath := c.DBPath()
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		// Nothing to snapshot: write an empty file so the archive still has an
-		// entry for this Center and the manifest stays in step with it.
+		// entry for this Center and the manifest stays in step with it. It is
+		// still hashed, so verification treats it like any other entry rather
+		// than needing an exception for the empty case.
 		if err := os.WriteFile(destPath, nil, 0o644); err != nil {
 			return CenterInfo{}, err
 		}
+		sum, err := fileSHA256(destPath)
+		if err != nil {
+			return CenterInfo{}, err
+		}
+		info.SHA256 = sum
 		return info, nil
 	} else if err != nil {
 		return CenterInfo{}, err
@@ -81,30 +91,67 @@ func snapshotCenter(ctx context.Context, c center.Center, destPath string) (Cent
 	}
 	info.SizeBytes = st.Size()
 
-	// Counted from the snapshot rather than the live database so the number
-	// always describes what is actually in the archive.
-	count, err := studentCount(ctx, destPath)
+	sum, err := fileSHA256(destPath)
 	if err != nil {
 		return CenterInfo{}, err
 	}
-	info.StudentCount = count
+	info.SHA256 = sum
+
+	// Counted from the snapshot rather than the live database so the numbers
+	// always describe what is actually in the archive.
+	students, logs, err := rowCounts(ctx, destPath)
+	if err != nil {
+		return CenterInfo{}, err
+	}
+	info.StudentCount, info.LogCount = students, logs
 
 	return info, nil
 }
 
-// studentCount opens a snapshot and counts its students, for the manifest.
-func studentCount(ctx context.Context, path string) (int64, error) {
+// rowCounts opens a snapshot and counts its Student and Log rows, for the
+// manifest and for verification to compare against.
+//
+// A zero-length file counts as zero of each rather than an error: that is what
+// a Center created but never opened is snapshotted as, and it is a legitimately
+// empty backup, not a broken one.
+func rowCounts(ctx context.Context, path string) (students, logs int64, err error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	if st.Size() == 0 {
+		return 0, 0, nil
+	}
+
 	db, err := sql.Open("sqlite", snapshotDSN(path))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer db.Close()
 
-	var n int64
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM Student`).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count students: %w", err)
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM Student`).Scan(&students); err != nil {
+		return 0, 0, fmt.Errorf("count students: %w", err)
 	}
-	return n, nil
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM Log`).Scan(&logs); err != nil {
+		return 0, 0, fmt.Errorf("count log rows: %w", err)
+	}
+	return students, logs, nil
+}
+
+// fileSHA256 returns the hex-encoded SHA-256 of the file at path. It streams,
+// so a large snapshot is not read into memory.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // snapshotDSN builds a connection string for reading a database during a

@@ -32,6 +32,9 @@ type startup struct {
 	// existing one instead of spawning a duplicate, as the main window does.
 	settingsWin fyne.Window
 
+	// browserWin is the Browse/Restore window, tracked like settingsWin.
+	browserWin fyne.Window
+
 	// about supplies the About window, so version and license information is
 	// reachable before any Center is open.
 	about about
@@ -71,10 +74,18 @@ func ShowStartup(fa fyne.App, appDir string, cfg config.Config, cfgPath string, 
 	// Settings belongs here as well as in the main window: backup_dir is set
 	// from Settings and used from this screen, so a user told to "set backup_dir
 	// in Settings" must be able to get there without opening a Center first.
-	s.win.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu("File",
-		fyne.NewMenuItem("Settings…", s.showSettingsWindow),
-		s.about.menuItem(),
-	)))
+	// Backups get their own menu rather than sitting under File: they are the
+	// one thing this window does that is not about choosing a Center, and the
+	// menu is where they stay reachable once Verify and Restore are added.
+	s.win.SetMainMenu(fyne.NewMainMenu(
+		fyne.NewMenu("File",
+			fyne.NewMenuItem("Settings…", s.showSettingsWindow),
+			s.about.menuItem(),
+		),
+		fyne.NewMenu("Backups",
+			fyne.NewMenuItem("Browse/Restore…", s.showBackupBrowser),
+		),
+	))
 	s.build()
 	s.reload()
 	s.win.Resize(fyne.NewSize(400, 380))
@@ -165,6 +176,17 @@ func (s *startup) showSettingsWindow() {
 		return
 	}
 	s.settingsWin = showSettingsFor(s, func() { s.settingsWin = nil })
+}
+
+// showBackupBrowser opens the Browse/Restore window, raising the existing one
+// if it is already up. The current backup directory is passed in, so a
+// directory just changed in Settings is the one browsed.
+func (s *startup) showBackupBrowser() {
+	if s.browserWin != nil {
+		s.browserWin.RequestFocus()
+		return
+	}
+	s.browserWin = showBackupBrowser(s.fyneApp, s.cfg.BackupDir, func() { s.browserWin = nil })
 }
 
 // reload re-lists the Centers on disk and repaints the list.

@@ -111,24 +111,39 @@ type backupProgress struct {
 // unattended backup must never slow itself down for a reader who is not there.
 const minStepDisplay = time.Second
 
-// paced wraps a Progress callback so each message stays up for at least
-// minStepDisplay before the next is delivered. The returned wait function
-// blocks until the final message has had its time, so the caller can hold off
-// on replacing it with the summary.
+// minVerifyStepDisplay is the same for verification, which has more steps and
+// shorter ones: a full second each would make checking a backup feel slower
+// than taking one.
+const minVerifyStepDisplay = 500 * time.Millisecond
+
+// paced wraps a progress callback so each message stays up for at least the
+// given minimum before the next is delivered. The returned wait function blocks
+// until the final message has had its time, so the caller can hold off on
+// replacing it with the summary.
+//
+// The minimum is read per message via minFor, so a run whose later steps are
+// shorter -- a backup's verification tail -- can hold those for less time
+// without a second wrapper.
 //
 // It sleeps on the backup's own goroutine, never the UI thread. The work itself
 // is not delayed -- only the delivery of the *next* message is -- so a slow step
 // (a large Center) costs nothing extra, and only steps faster than the minimum
 // are padded.
-func paced(onProgress backup.Progress, min time.Duration) (wrapped backup.Progress, wait func()) {
+func paced(onProgress func(step, total int, desc string), min time.Duration) (wrapped func(step, total int, desc string), wait func()) {
+	return pacedBy(onProgress, func(int) time.Duration { return min })
+}
+
+// pacedBy is paced with a per-step minimum, chosen from the step number.
+func pacedBy(onProgress func(step, total int, desc string), minFor func(step int) time.Duration) (wrapped func(step, total int, desc string), wait func()) {
 	var last time.Time
+	var lastMin time.Duration
 	wrapped = func(step, total int, desc string) {
 		if !last.IsZero() {
-			if rest := min - time.Since(last); rest > 0 {
+			if rest := lastMin - time.Since(last); rest > 0 {
 				time.Sleep(rest)
 			}
 		}
-		last = time.Now()
+		last, lastMin = time.Now(), minFor(step)
 		if onProgress != nil {
 			onProgress(step, total, desc)
 		}
@@ -137,7 +152,7 @@ func paced(onProgress backup.Progress, min time.Duration) (wrapped backup.Progre
 		if last.IsZero() {
 			return
 		}
-		if rest := min - time.Since(last); rest > 0 {
+		if rest := lastMin - time.Since(last); rest > 0 {
 			time.Sleep(rest)
 		}
 	}
@@ -184,12 +199,21 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, destDir str
 	go func() {
 		// Progress arrives as each step begins, so step-1 steps are complete
 		// when step is announced; the bar only reaches full once Run returns.
-		onProgress, waitForLastMessage := paced(func(step, _ int, desc string) {
+		// The verification tail holds each message for the shorter verify
+		// interval: those steps are numerous and quick, and a full second each
+		// would make a backup feel far slower than the work it is doing.
+		firstVerifyStep := len(centers) + 2
+		onProgress, waitForLastMessage := pacedBy(func(step, _ int, desc string) {
 			fyne.Do(func() {
 				p.bar.SetValue(float64(step - 1))
 				p.status.SetText(desc + "…")
 			})
-		}, minStepDisplay)
+		}, func(step int) time.Duration {
+			if step >= firstVerifyStep {
+				return minVerifyStepDisplay
+			}
+			return minStepDisplay
+		})
 
 		res, err := backup.Run(context.Background(), centers, destDir, version.Resolve(), keep, onProgress)
 		// Let the last step's message be read before the summary replaces it.

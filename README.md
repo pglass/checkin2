@@ -191,7 +191,8 @@ Now"), which is the one place where no Center is open.
   `checkin-backup-*.zip` files are ever removed, so other files in the directory
   are left alone.
 - **Contents:** `manifest.json` at the archive root (program version, timestamp,
-  and per-Center name, size, and student count) plus `centers/<Center>.db`.
+  and per-Center name, size, SHA-256, student count, and log-row count) plus
+  `centers/<Center>.db`.
 - **Snapshots use `VACUUM INTO`**, which runs inside a read transaction and
   writes a fresh, self-contained database. This matters because the database
   runs in WAL mode: copying `checkin.db` on its own would silently omit
@@ -200,10 +201,36 @@ Now"), which is the one place where no Center is open.
   snapshot has neither problem and needs no sidecar files alongside it.
 - **A Center open in another window is not backed up** -- the run stops and says
   so, rather than snapshotting from under a live writer.
+- **Every backup is verified as part of taking it**, and a backup that fails
+  verification is reported as a failed backup. Catching a bad archive while the
+  source data is still on disk is the whole point; an archive that silently
+  failed its checks is worse than none, because it will be relied on.
 - **Off-machine copies:** point `backup_dir` at a folder your cloud storage app
   syncs (Google Drive, OneDrive, Dropbox) or at an external drive. The app only
   writes files; whether and when they upload is up to that app, and it cannot
   report on it. A backup on the same disk as the original is lost with it.
+
+### Verifying a backup
+
+**Backups → Browse/Restore…** on the Center selection window lists the archives
+in `backup_dir`, newest first. **Verify** re-checks one archive against what its
+manifest recorded when the backup was made:
+
+1. Extract the archive to a temporary directory.
+2. Per Center: compare the snapshot's **size**, its **SHA-256**, its **Student**
+   row count, and its **Log** row count.
+
+All four are recorded from the snapshot, never from the live database: a
+snapshot is a rebuilt file, so its size and hash do not match the original even
+when the data is identical (see the `VACUUM INTO` note above).
+
+The size check catches truncation; the checksum catches a file altered in place,
+which a size comparison alone would miss; the row counts catch a snapshot that
+is internally valid but is not the one the manifest describes. Every check runs
+even after one fails, so a single pass reports everything wrong with an archive.
+
+An archive written before checksums were recorded says so rather than being
+reported as corrupt.
 
 Restoring from an archive is not automated yet: unzip it and copy the wanted
 `centers/<Center>.db` over a Center's `checkin.db` while the app is closed.
