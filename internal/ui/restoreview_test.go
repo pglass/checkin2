@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -82,16 +83,43 @@ func TestRestoreConfirmTextNamesTheNewCenter(t *testing.T) {
 // Each row names its Center and what is in it, so two backups of the same
 // Center can be told apart.
 func TestRestoreRowShowsCenterAndCounts(t *testing.T) {
-	man := backup.Manifest{
-		CreatedAt: time.Date(2026, 9, 8, 14, 5, 0, 0, time.Local),
-	}
 	ci := backup.CenterInfo{Name: "Maple St", StudentCount: 12, LogCount: 340}
 
-	got := restoreCenterLabel(ci, man)
-	for _, want := range []string{"Maple St", "2026", "12 students", "340 log entries"} {
+	got := restoreCenterLabel(ci)
+	for _, want := range []string{"Maple St", "12 students", "340 log entries"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("row text = %q, want it to contain %q", got, want)
 		}
+	}
+}
+
+// The backup's timestamp belongs to the header, not to every row: all rows in
+// the view come from one archive, so repeating it per row says nothing.
+func TestRestoreRowOmitsTimestamp(t *testing.T) {
+	at := time.Date(2026, 9, 8, 14, 5, 0, 0, time.Local)
+	ci := backup.CenterInfo{Name: "Maple St", StudentCount: 12, LogCount: 340}
+
+	got := restoreCenterLabel(ci)
+	for _, unwanted := range []string{at.Format(archiveListTimeFormat), "2026", "14:05", "2:05"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("row text = %q, want no timestamp (%q)", got, unwanted)
+		}
+	}
+}
+
+// The header says which backup is on screen, in the agreed wording.
+func TestRestoreViewHeaderText(t *testing.T) {
+	r, _, _ := newTestRestoreView(t, map[string]int{"Alpha": 1})
+
+	want := "Displaying centers in backup from " + r.man.CreatedAt.Format(archiveListTimeFormat)
+	var texts []string
+	for _, o := range test.LaidOutObjects(r.view) {
+		if rt, ok := o.(*widget.RichText); ok {
+			texts = append(texts, rt.String())
+		}
+	}
+	if !slices.Contains(texts, want) {
+		t.Errorf("header texts = %q, want %q", texts, want)
 	}
 }
 

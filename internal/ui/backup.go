@@ -19,12 +19,41 @@ import (
 	"github.com/pglass/checkin/internal/version"
 )
 
+// backupInterval is how long a backup may go unrun before the startup screen
+// starts asking for one. A week is short enough that a lost machine costs at
+// most a few days of check-ins, and long enough that the warning still means
+// something when it does appear.
+const backupInterval = 7 * 24 * time.Hour
+
+// backupNeeded reports whether the startup screen should be asking for a
+// backup, and why. The reason is the parenthesised half of the warning, so the
+// caller does not have to know which rule fired.
+//
+// hasData is whether any Center has a database yet: on a fresh install there is
+// nothing to lose, and demanding a backup of nothing would train the user to
+// ignore the warning before they ever have data worth keeping. With backups
+// switched off there is no warning either -- that is a setting, not a lapse.
+func backupNeeded(backupDir string, hasData bool, at time.Time, ok bool, now time.Time) (string, bool) {
+	if backupDir == "" || !hasData {
+		return "", false
+	}
+	if !ok {
+		return "No backup found", true
+	}
+	if now.Sub(at) >= backupInterval {
+		return "Over 7d since last backup", true
+	}
+	return "", false
+}
+
 // lastBackupText renders the "last backup" line for the startup screen. It is
 // separate from the widget so it can be tested without a canvas.
 //
-// The three cases are distinct on purpose: backups switched off, switched on
-// but never run, and run at a known time. "Never" against an unconfigured
-// directory would read as a problem when it is a choice.
+// The four cases are distinct on purpose: backups switched off, switched on but
+// never run, run at a known time, and overdue. "Never" against an unconfigured
+// directory would read as a problem when it is a choice, and the overdue line
+// replaces the date entirely rather than appending to it, since a warning read
+// as a suffix to good news is a warning that gets skipped.
 func lastBackupText(backupDir string, at time.Time, ok bool) string {
 	if backupDir == "" {
 		return "Backups are off. Set backup_dir in Settings to turn them on."
@@ -35,6 +64,12 @@ func lastBackupText(backupDir string, at time.Time, ok bool) string {
 	return "Last backup: " + at.Format("Jan 2, 2006 3:04 PM")
 }
 
+// backupNeededText is the warning shown in place of the "last backup" line
+// when a backup is due.
+func backupNeededText(reason string) string {
+	return "Backup is needed (" + reason + ")"
+}
+
 // backupBar is the startup screen's backup row: when the last backup ran, and
 // a button to run one now.
 type backupBar struct {
@@ -42,6 +77,15 @@ type backupBar struct {
 	label   *canvas.Text
 	button  *widget.Button
 	view    fyne.CanvasObject
+
+	// confirm asks the user before a second backup on a day that already has
+	// one, and calls its argument if they go ahead. start takes the backup.
+	// Both are fields rather than direct calls so tests can drive either answer
+	// without a real dialog and without a real backup running into a temp
+	// directory that is about to be removed. newBackupBar wires them to the
+	// real implementations.
+	confirm func(onConfirm func())
+	start   func()
 }
 
 // newBackupBar builds the row. The button is disabled when no backup directory
@@ -55,6 +99,9 @@ func newBackupBar(s *startup) *backupBar {
 
 	b.button = widget.NewButton("Back Up Now", b.run)
 
+	b.confirm = b.confirmSecondBackup
+	b.start = b.startBackup
+
 	b.view = container.NewBorder(nil, nil, nil, b.button, container.NewVBox(layout.NewSpacer(), b.label))
 	b.refresh()
 	return b
@@ -65,7 +112,19 @@ func newBackupBar(s *startup) *backupBar {
 func (b *backupBar) refresh() {
 	dir := b.startup.cfg.BackupDir
 	at, ok := backup.LastBackupTime(dir)
-	b.label.Text = lastBackupText(dir, at, ok)
+
+	// A due backup is shown at full size in the error colour, where the
+	// reassuring "last backup" line is a caption: the whole point of the
+	// warning is that it is not skimmed past like the line it replaces.
+	if reason, need := backupNeeded(dir, b.startup.hasCenterData(), at, ok, time.Now()); need {
+		b.label.Text = backupNeededText(reason)
+		b.label.TextSize = theme.TextSize()
+		b.label.Color = theme.Color(theme.ColorNameError)
+	} else {
+		b.label.Text = lastBackupText(dir, at, ok)
+		b.label.TextSize = theme.CaptionTextSize()
+		b.label.Color = theme.Color(theme.ColorNameForeground)
+	}
 	b.label.Refresh()
 
 	if dir == "" {
@@ -75,10 +134,67 @@ func (b *backupBar) refresh() {
 	}
 }
 
+// sameDay reports whether a and b fall on the same calendar day in local time.
+// Calendar day, not a 24-hour window: a backup at 11pm and another at 8am the
+// next morning are two different days to the user, and asking "again today?"
+// nine hours later would be wrong.
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
+}
+
+// backedUpToday reports whether the newest archive was taken today, which is
+// what makes a second run worth confirming. ok is false when there is no
+// archive at all, in which case there is nothing to confirm.
+func backedUpToday(at time.Time, ok bool, now time.Time) bool {
+	return ok && sameDay(at, now)
+}
+
 // run starts a backup and shows the progress window. Backups are taken with no
 // Center open, so the button is disabled for the duration rather than allowing
 // a second run to race the first.
+//
+// A backup already taken today is confirmed first: repeat runs are harmless but
+// each one costs a slot in the retention window, so a stray click should not
+// quietly push out an older archive.
 func (b *backupBar) run() {
+	at, ok := backup.LastBackupTime(b.startup.cfg.BackupDir)
+	if backedUpToday(at, ok, time.Now()) {
+		b.confirm(b.start)
+		return
+	}
+	b.start()
+}
+
+// confirmSecondBackup asks before taking a second backup on a day that already
+// has one, running onConfirm if the user goes ahead.
+func (b *backupBar) confirmSecondBackup(onConfirm func()) {
+	var popup dialog.Dialog
+
+	// Hand-rolled buttons rather than dialog.NewConfirm, so the affirmative one
+	// is named for what it does ("Back Up Now", the same words as the button
+	// that opened it) instead of a bare Yes/No.
+	backUpBtn := widget.NewButton("Back Up Now", func() {
+		popup.Hide()
+		onConfirm()
+	})
+	backUpBtn.Importance = widget.HighImportance
+	cancelBtn := widget.NewButton("Cancel", func() { popup.Hide() })
+
+	msg := widget.NewLabel("A backup was already created today. Make another backup?")
+	msg.Wrapping = fyne.TextWrapWord
+
+	body := container.NewVBox(
+		msg,
+		container.NewCenter(container.NewHBox(cancelBtn, backUpBtn)),
+	)
+	popup = dialog.NewCustomWithoutButtons("Backup", body, b.startup.win)
+	popup.Show()
+}
+
+// startBackup runs the backup, with no further confirmation.
+func (b *backupBar) startBackup() {
 	centers, err := center.List(b.startup.appDir)
 	if err != nil {
 		b.startup.showError(err)

@@ -86,7 +86,8 @@ type settingsHost interface {
 	settingsApp() fyne.App
 	// settingsRestartNote is the warning shown once a value has been edited.
 	// It is per-host because how much of a saved change takes effect right away
-	// depends on where the window was opened from.
+	// depends on where the window was opened from. An empty string means every
+	// setting applies as soon as it is saved, and no warning is shown at all.
 	settingsRestartNote() string
 }
 
@@ -98,7 +99,8 @@ type settings struct {
 	win  fyne.Window
 	rows []*settingsRow
 	// restartNote warns that saved settings only take effect at the next
-	// startup. Shown only once a value actually differs from what was loaded.
+	// startup. Shown only once a value actually differs from what was loaded,
+	// and nil when the host has no warning to give.
 	restartNote *canvas.Text
 }
 
@@ -238,18 +240,22 @@ func (s *settings) build() fyne.CanvasObject {
 	// Saved settings are read at startup only, so say so where the user is
 	// about to save rather than letting a changed value appear to do nothing.
 	// Red and bold rather than a quiet caption: this is the one thing in the
-	// window a user must not miss. The selection window applies what it reads
-	// per-backup, so it supplies its own, milder wording rather than telling a
-	// user to restart for a setting that already took effect.
-	s.restartNote = canvas.NewText(
-		s.host.settingsRestartNote(),
-		theme.Color(theme.ColorNameError))
-	s.restartNote.TextSize = theme.CaptionTextSize()
-	s.restartNote.TextStyle = fyne.TextStyle{Bold: true}
-	// Nothing has been edited yet, so there is nothing to warn about.
-	s.restartNote.Hide()
+	// window a user must not miss. A host with nothing to warn about -- the
+	// selection window, where no Center has read a setting yet and every saved
+	// value is live -- gives an empty note and gets no widget at all, rather
+	// than a reassurance nobody needs taking up the same red line.
+	bottomItems := []fyne.CanvasObject{widget.NewSeparator()}
+	if note := s.host.settingsRestartNote(); note != "" {
+		s.restartNote = canvas.NewText(note, theme.Color(theme.ColorNameError))
+		s.restartNote.TextSize = theme.CaptionTextSize()
+		s.restartNote.TextStyle = fyne.TextStyle{Bold: true}
+		// Nothing has been edited yet, so there is nothing to warn about.
+		s.restartNote.Hide()
+		bottomItems = append(bottomItems, s.restartNote)
+	}
+	bottomItems = append(bottomItems, buttons)
 
-	bottom := container.NewVBox(widget.NewSeparator(), s.restartNote, buttons)
+	bottom := container.NewVBox(bottomItems...)
 
 	// The form scrolls so the window stays usable as settings are added.
 	return container.NewBorder(nil, bottom, nil, nil, container.NewVScroll(form))

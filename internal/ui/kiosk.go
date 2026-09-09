@@ -35,6 +35,9 @@ func kioskContent() fyne.CanvasObject {
 func (a *App) enterKiosk() {
 	a.kiosk = true
 	a.applyMode()
+	// The kiosk screen carries its own prompt, so the feedback bar's hint is
+	// dropped; refresh is what recomputes it for the new mode.
+	a.refresh()
 }
 
 // leaveKiosk restores the student list, the full menubar, and the windowed

@@ -10,6 +10,8 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/backup"
 	"github.com/pglass/checkin/internal/center"
@@ -218,22 +220,40 @@ func TestSettingsHostedByStartup(t *testing.T) {
 	}
 }
 
-// The two hosts warn differently, because they differ in what a save actually
-// changes: from the selection window the backup settings are live immediately,
-// so telling the user to restart would be wrong.
+// The two hosts differ in what a save actually changes. From the selection
+// window nothing has read a setting yet, so every saved value is live and there
+// is no warning at all; from an open Center the camera and store are already
+// running on the old values, so the restart warning stays.
 func TestSettingsRestartNoteIsHostSpecific(t *testing.T) {
 	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
-	fromStartup := s.settingsRestartNote()
-	if !strings.Contains(fromStartup, "immediately") {
-		t.Errorf("selection window note = %q, want it to say backup settings apply immediately",
+	if fromStartup := s.settingsRestartNote(); fromStartup != "" {
+		t.Errorf("selection window note = %q, want no note: nothing there needs a restart",
 			fromStartup)
 	}
 
 	a := &App{}
-	if fromApp := a.settingsRestartNote(); fromApp == fromStartup {
-		t.Error("the main window and the selection window should not share one note")
-	} else if !strings.Contains(fromApp, "re-open") {
+	if fromApp := a.settingsRestartNote(); !strings.Contains(fromApp, "re-open") {
 		t.Errorf("main window note = %q, want it to ask for a restart", fromApp)
+	}
+}
+
+// A host with no warning gets no widget, so editing a value from the selection
+// window cannot light up a note that was never built.
+func TestSettingsFromStartupHasNoRestartNote(t *testing.T) {
+	host, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
+
+	s := &settings{host: host}
+	s.win = host.fyneApp.NewWindow("Settings")
+	s.win.SetContent(s.build())
+
+	if s.restartNote != nil {
+		t.Fatalf("restart note built for a host with no warning: %q", s.restartNote.Text)
+	}
+
+	// Editing must not panic on the absent note.
+	s.rows[0].entry.SetText("99")
+	if !s.dirty() {
+		t.Error("editing a row did not mark the window dirty")
 	}
 }
 
@@ -340,5 +360,279 @@ func TestPacedByUsesPerStepMinimums(t *testing.T) {
 	if gap >= slow {
 		t.Errorf("gap after step 3 = %v, want the fast minimum (%v), not the slow one (%v)",
 			gap, fast, slow)
+	}
+}
+
+// backupNeeded fires on the two lapses that matter -- data with no backup at
+// all, and a backup that has gone stale -- and stays quiet when there is
+// nothing to back up or backups are switched off by choice.
+func TestBackupNeeded(t *testing.T) {
+	now := time.Date(2026, 3, 4, 15, 6, 0, 0, time.Local)
+	dir := "/some/dir"
+
+	cases := []struct {
+		name       string
+		backupDir  string
+		hasData    bool
+		at         time.Time
+		ok         bool
+		wantReason string
+	}{
+		{"data but never backed up", dir, true, time.Time{}, false, "No backup found"},
+		{"stale backup", dir, true, now.Add(-8 * 24 * time.Hour), true, "Over 7d since last backup"},
+		{"exactly at the interval", dir, true, now.Add(-backupInterval), true, "Over 7d since last backup"},
+		{"recent backup", dir, true, now.Add(-24 * time.Hour), true, ""},
+		{"just inside the interval", dir, true, now.Add(-backupInterval + time.Minute), true, ""},
+		// A fresh install has Centers but no databases: nothing to lose yet.
+		{"no data yet", dir, false, time.Time{}, false, ""},
+		// Backups off is a setting, not a lapse, however old the data.
+		{"backups off", "", true, time.Time{}, false, ""},
+		{"backups off with stale backup", "", true, now.Add(-30 * 24 * time.Hour), true, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reason, need := backupNeeded(tc.backupDir, tc.hasData, tc.at, tc.ok, now)
+			if need != (tc.wantReason != "") {
+				t.Fatalf("need = %v, want %v (reason %q)", need, tc.wantReason != "", reason)
+			}
+			if reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", reason, tc.wantReason)
+			}
+		})
+	}
+}
+
+// The warning names the rule that fired, so the user knows whether they have
+// never backed up or merely let one go stale.
+func TestBackupNeededText(t *testing.T) {
+	got := backupNeededText("No backup found")
+	if got != "Backup is needed (No backup found)" {
+		t.Errorf("text = %q", got)
+	}
+}
+
+// A Center directory on its own is not data: the database file is. Otherwise a
+// fresh install would demand a backup of nothing.
+func TestHasCenterData(t *testing.T) {
+	s, dir := newTestStartupWithConfig(t, config.Default(), "Alpha")
+	if s.hasCenterData() {
+		t.Error("hasCenterData with no database file = true, want false")
+	}
+
+	db := filepath.Join(dir, "Alpha", center.DBFileName)
+	if err := os.WriteFile(db, []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed db: %v", err)
+	}
+	s.reload()
+	if !s.hasCenterData() {
+		t.Error("hasCenterData with a database file = false, want true")
+	}
+}
+
+// A due backup takes over the row: full-size error-coloured warning in place of
+// the caption-sized date, so it is not skimmed past.
+func TestBackupBarWarnsWhenBackupNeeded(t *testing.T) {
+	backupDir := t.TempDir()
+	cfg := config.Default()
+	cfg.BackupDir = backupDir
+
+	s, dir := newTestStartupWithConfig(t, cfg, "Alpha")
+	if err := os.WriteFile(filepath.Join(dir, "Alpha", center.DBFileName), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed db: %v", err)
+	}
+	s.reload()
+
+	if got := s.backups.label.Text; got != "Backup is needed (No backup found)" {
+		t.Errorf("label = %q, want the no-backup warning", got)
+	}
+	if s.backups.label.TextSize == theme.CaptionTextSize() {
+		t.Error("warning is caption-sized, want normal size")
+	}
+	if s.backups.label.Color != theme.Color(theme.ColorNameError) {
+		t.Error("warning is not the error colour")
+	}
+
+	// A fresh archive clears it, and the row goes back to the quiet caption.
+	name := backup.ArchivePrefix + time.Now().Format("2006-01-02-150405") + ".zip"
+	if err := os.WriteFile(filepath.Join(backupDir, name), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed archive: %v", err)
+	}
+	s.backups.refresh()
+
+	if got := s.backups.label.Text; !strings.HasPrefix(got, "Last backup: ") {
+		t.Errorf("label = %q, want the last-backup line once a backup exists", got)
+	}
+	if s.backups.label.TextSize != theme.CaptionTextSize() {
+		t.Error("cleared row is not caption-sized")
+	}
+	if s.backups.label.Color != theme.Color(theme.ColorNameForeground) {
+		t.Error("cleared row is not the foreground colour")
+	}
+}
+
+// A second backup on a day that already has one is worth confirming; the first
+// of the day, or a run against an empty directory, is not.
+func TestBackedUpToday(t *testing.T) {
+	now := time.Date(2026, 3, 4, 15, 6, 0, 0, time.Local)
+
+	cases := []struct {
+		name string
+		at   time.Time
+		ok   bool
+		want bool
+	}{
+		{"earlier today", now.Add(-2 * time.Hour), true, true},
+		{"first thing this morning", time.Date(2026, 3, 4, 0, 1, 0, 0, time.Local), true, true},
+		{"last thing tonight", time.Date(2026, 3, 4, 23, 59, 0, 0, time.Local), true, true},
+		// Calendar day, not a rolling 24 hours: late last night is yesterday.
+		{"late yesterday", time.Date(2026, 3, 3, 23, 0, 0, 0, time.Local), true, false},
+		{"a week ago", now.Add(-7 * 24 * time.Hour), true, false},
+		{"no backup at all", time.Time{}, false, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := backedUpToday(tc.at, tc.ok, now); got != tc.want {
+				t.Errorf("backedUpToday = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// newTestBackupBarWithArchive builds a selection window whose backup directory
+// holds one archive stamped at `at`, with the confirmation dialog replaced by a
+// recorder. The returned pointers report whether the user was asked, and
+// whether the backup itself was reached.
+//
+// The real dialog is stubbed and start() is replaced, so no backup ever runs:
+// a real one writes into the temp directory from its own goroutine and races
+// t.TempDir()'s cleanup.
+func newTestBackupBarWithArchive(t *testing.T, at time.Time, answer bool) (asked, started *bool) {
+	t.Helper()
+
+	backupDir := t.TempDir()
+	if !at.IsZero() {
+		name := backup.ArchivePrefix + at.Format("2006-01-02-150405") + ".zip"
+		if err := os.WriteFile(filepath.Join(backupDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("seed archive: %v", err)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.BackupDir = backupDir
+	s, _ := newTestStartupWithConfig(t, cfg, "Alpha")
+
+	asked, started = new(bool), new(bool)
+	s.backups.confirm = func(onConfirm func()) {
+		*asked = true
+		if answer {
+			onConfirm()
+		}
+	}
+	// Stand in for start(), so the decision is observed without a real backup.
+	s.backups.start = func() { *started = true }
+
+	s.backups.run()
+	return asked, started
+}
+
+// Pressing Back Up Now with today's archive already present asks first, and
+// goes ahead only once the user confirms.
+func TestBackupRunConfirmsWhenAlreadyBackedUpToday(t *testing.T) {
+	asked, started := newTestBackupBarWithArchive(t, time.Now(), true)
+	if !*asked {
+		t.Error("no confirmation shown for a second backup on the same day")
+	}
+	if !*started {
+		t.Error("confirmed backup did not start")
+	}
+}
+
+// Cancelling the confirmation leaves the backup untaken.
+func TestBackupRunCancelledConfirmationDoesNotBackUp(t *testing.T) {
+	asked, started := newTestBackupBarWithArchive(t, time.Now(), false)
+	if !*asked {
+		t.Error("no confirmation shown for a second backup on the same day")
+	}
+	if *started {
+		t.Error("backup ran even though the confirmation was cancelled")
+	}
+}
+
+// With yesterday's archive the only one there, the backup runs straight away
+// rather than asking.
+func TestBackupRunDoesNotConfirmWhenLastBackupWasEarlier(t *testing.T) {
+	asked, started := newTestBackupBarWithArchive(t, time.Now().Add(-24*time.Hour), false)
+	if *asked {
+		t.Error("confirmation shown when the last backup was not today")
+	}
+	if !*started {
+		t.Error("backup did not start; want it to run without confirmation")
+	}
+}
+
+// An empty backup directory has nothing to confirm against.
+func TestBackupRunDoesNotConfirmWithNoExistingBackup(t *testing.T) {
+	asked, started := newTestBackupBarWithArchive(t, time.Time{}, false)
+	if *asked {
+		t.Error("confirmation shown with no existing backup")
+	}
+	if !*started {
+		t.Error("backup did not start; want it to run without confirmation")
+	}
+}
+
+// The real confirmation dialog builds and carries the exact wording, with both
+// buttons present. Driven through the real dialog rather than the stub, so a
+// change to the message or the buttons is caught here.
+func TestConfirmSecondBackupDialog(t *testing.T) {
+	cfg := config.Default()
+	cfg.BackupDir = t.TempDir()
+	s, _ := newTestStartupWithConfig(t, cfg, "Alpha")
+
+	confirmed := false
+	s.backups.confirmSecondBackup(func() { confirmed = true })
+
+	if s.win.Canvas().Overlays().Top() == nil {
+		t.Fatal("no dialog shown")
+	}
+
+	var texts []string
+	var buttons []*widget.Button
+	for _, top := range s.win.Canvas().Overlays().List() {
+		for _, o := range test.LaidOutObjects(top) {
+			switch v := o.(type) {
+			case *widget.Label:
+				texts = append(texts, v.Text)
+			case *widget.Button:
+				buttons = append(buttons, v)
+			}
+		}
+	}
+
+	const want = "A backup was already created today. Make another backup?"
+	if !slices.Contains(texts, want) {
+		t.Errorf("dialog text = %q, want it to contain %q", texts, want)
+	}
+
+	var backUp *widget.Button
+	var names []string
+	for _, b := range buttons {
+		names = append(names, b.Text)
+		if b.Text == "Back Up Now" {
+			backUp = b
+		}
+	}
+	if !slices.Contains(names, "Cancel") {
+		t.Errorf("buttons = %q, want a Cancel button", names)
+	}
+	if backUp == nil {
+		t.Fatalf("buttons = %q, want a Back Up Now button", names)
+	}
+
+	backUp.OnTapped()
+	if !confirmed {
+		t.Error("tapping Back Up Now did not confirm")
 	}
 }

@@ -62,6 +62,31 @@ var ErrAlreadyOpen = errors.New("this Center is already open in another window")
 // that carries the exclusive advisory lock enforcing one process per Center.
 const lockSuffix = ".lock"
 
+// IsOpenElsewhere reports whether another process currently holds the Center
+// lock for the database at path, i.e. the Center is open in another window.
+//
+// It answers by trying to take the lock and releasing it again immediately, so
+// the answer is a snapshot: a Center can be opened the instant after this
+// returns false. Callers that must not race an opener (renaming a Center's
+// directory) should treat it as a courtesy check that catches the common case,
+// not as a mutual exclusion primitive -- the authority remains Open's own lock.
+//
+// A lock file that cannot be created (a directory with no database yet, on a
+// read-only medium) is reported as not open rather than as an error: there is
+// no process to conflict with.
+func IsOpenElsewhere(path string) bool {
+	lock := flock.New(path + lockSuffix)
+	locked, err := lock.TryLock()
+	if err != nil {
+		return false
+	}
+	if !locked {
+		return true
+	}
+	_ = lock.Unlock()
+	return false
+}
+
 // Status describes a student's check-in/out state for the current day.
 type Status int
 

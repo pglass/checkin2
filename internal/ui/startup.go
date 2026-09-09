@@ -3,6 +3,8 @@ package ui
 import (
 	"errors"
 	"log/slog"
+	"os"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -108,14 +110,13 @@ func (s *startup) build() {
 	// widget.List recycles row objects across indices.
 	s.list = widget.NewList(
 		func() int { return len(s.centers) },
-		func() fyne.CanvasObject { return widget.NewButton("", nil) },
+		func() fyne.CanvasObject { return newCenterRow() },
 		func(i widget.ListItemID, o fyne.CanvasObject) {
-			btn := o.(*widget.Button)
+			row := o.(*centerRow)
 			c := s.centers[i]
-			btn.SetText(c.Name)
-			btn.Alignment = widget.ButtonAlignLeading
-			btn.Importance = widget.LowImportance
-			btn.OnTapped = func() { s.open(c) }
+			row.SetText(c.Name)
+			row.OnTapped = func() { s.open(c) }
+			row.onSecondary = func(pos fyne.Position) { s.showCenterContextMenu(c, pos) }
 		},
 	)
 
@@ -125,7 +126,7 @@ func (s *startup) build() {
 	// belong here rather than inside a Center's own window.
 	s.backups = newBackupBar(s)
 
-	header := widget.NewLabel("Select a Center:")
+	header := widget.NewLabel("Select a center to open:")
 	buttons := container.NewHBox(addBtn, layout.NewSpacer())
 	bottom := container.NewVBox(
 		s.errLbl,
@@ -152,12 +153,12 @@ func (s *startup) settingsConfig() config.Config { return s.cfg }
 func (s *startup) settingsPath() string          { return s.cfgPath }
 func (s *startup) settingsApp() fyne.App         { return s.fyneApp }
 
-// settingsRestartNote: the backup settings on this screen are read each time a
-// backup runs, so they apply as soon as they are saved. Everything else belongs
-// to a Center that is not open yet and will be read when one is.
-func (s *startup) settingsRestartNote() string {
-	return "Backup settings apply immediately; other settings take effect when a Center is opened"
-}
+// settingsRestartNote is empty: nothing saved from this screen needs a restart.
+// No Center is open, so no setting has been read into a running component yet
+// -- the camera and the store read theirs when a Center is opened, which cannot
+// have happened before this window closes -- and the backup settings are re-read
+// on every run. There is nothing to warn about, so nothing is shown.
+func (s *startup) settingsRestartNote() string { return "" }
 
 // applySettings stores the saved settings and refreshes the backup row. Unlike
 // the main window, this screen can honour a change immediately: the backup
@@ -193,6 +194,20 @@ func (s *startup) showBackupBrowser() {
 		func() { fyne.Do(s.reload) })
 }
 
+// hasCenterData reports whether any Center has a database yet. A Center is a
+// directory, created before it is ever opened, so its mere existence does not
+// mean there is anything to back up; the database file is what says data
+// exists. Used by the backup row to decide whether an overdue backup is worth
+// warning about.
+func (s *startup) hasCenterData() bool {
+	for _, c := range s.centers {
+		if _, err := os.Stat(c.DBPath()); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // reload re-lists the Centers on disk and repaints the list.
 func (s *startup) reload() {
 	centers, err := center.List(s.appDir)
@@ -202,6 +217,12 @@ func (s *startup) reload() {
 	}
 	s.centers = centers
 	s.list.Refresh()
+	// The backup row's warning depends on which Centers have databases, so it
+	// is re-evaluated with the list rather than only when a backup is taken.
+	// build() runs before the first reload, so the row may not exist yet.
+	if s.backups != nil {
+		s.backups.refresh()
+	}
 }
 
 // open opens c, keeping the selection view up with a message if it cannot be
@@ -262,6 +283,115 @@ func (s *startup) showAddDialog() {
 	entry.OnSubmitted = func(string) { confirm() }
 	popup.Show()
 	s.win.Canvas().Focus(entry)
+}
+
+// centerContextMenu builds the right-click menu for one Center in the selection
+// list. Separate from showing it so the items can be tested without a canvas.
+func (s *startup) centerContextMenu(c center.Center) *fyne.Menu {
+	return fyne.NewMenu("",
+		fyne.NewMenuItem("Rename", func() { s.showRenameDialog(c) }),
+	)
+}
+
+// showCenterContextMenu pops up the right-click menu under the pointer.
+func (s *startup) showCenterContextMenu(c center.Center, pos fyne.Position) {
+	widget.ShowPopUpMenuAtPosition(s.centerContextMenu(c), s.win.Canvas(), pos)
+}
+
+// showRenameDialog renames one Center. The name is checked as it is typed, so
+// a clash with another Center disables Confirm and says why rather than letting
+// the user press it and be refused.
+//
+// Validation is live but the rename itself is still checked on confirm: the
+// directory is shared with anything else on this machine, so a name free when
+// it was typed can be taken by the time it is used.
+func (s *startup) showRenameDialog(c center.Center) {
+	entry := widget.NewEntry()
+	entry.SetText(c.Name)
+
+	errLabel := canvas.NewText("", theme.Color(theme.ColorNameError))
+	errLabel.TextSize = theme.CaptionTextSize()
+
+	var popup dialog.Dialog
+	confirmBtn := widget.NewButton("Confirm", nil)
+	confirmBtn.Importance = widget.HighImportance
+
+	// showProblem puts a message under the entry and disables Confirm; an empty
+	// message clears it and enables Confirm again.
+	showProblem := func(msg string) {
+		errLabel.Text = msg
+		errLabel.Refresh()
+		if msg == "" {
+			confirmBtn.Enable()
+		} else {
+			confirmBtn.Disable()
+		}
+	}
+
+	entry.OnChanged = func(name string) { showProblem(s.renameProblem(c, name)) }
+	// The entry starts at the Center's current name, which is valid, so Confirm
+	// starts enabled. Stated rather than left to the order of the calls above.
+	showProblem(s.renameProblem(c, entry.Text))
+
+	confirm := func() {
+		if problem := s.renameProblem(c, entry.Text); problem != "" {
+			showProblem(problem)
+			return
+		}
+		renamed, err := center.Rename(s.appDir, c.Name, entry.Text)
+		if err != nil {
+			if errors.Is(err, center.ErrExists) {
+				showProblem("Center already exists")
+			} else {
+				showProblem(err.Error())
+			}
+			return
+		}
+		slog.Info("center renamed", "from", c.Name, "to", renamed.Name, "dir", renamed.Dir)
+		popup.Hide()
+		s.reload()
+	}
+	confirmBtn.OnTapped = confirm
+	entry.OnSubmitted = func(string) { confirm() }
+
+	cancelBtn := widget.NewButton("Cancel", func() { popup.Hide() })
+
+	body := container.NewVBox(
+		widget.NewLabel("Rename center "+c.Name),
+		entry,
+		errLabel,
+		container.NewHBox(cancelBtn, confirmBtn),
+	)
+	popup = dialog.NewCustomWithoutButtons("Rename Center", body, s.win)
+	popup.Show()
+	s.win.Canvas().Focus(entry)
+}
+
+// renameProblem reports why c cannot be renamed to name, or "" if it can. It
+// drives both the live check as the user types and the check on confirm, so the
+// two can never disagree.
+//
+// The Center's own current name is not a clash: reopening the dialog and
+// confirming without editing is a no-op, not an error. Comparison is
+// case-insensitive because the app dir may sit on a case-insensitive
+// filesystem, where "alpha" and "Alpha" are one directory -- except against the
+// Center's own name, where a change of case is a legitimate rename.
+func (s *startup) renameProblem(c center.Center, name string) string {
+	if strings.TrimSpace(name) == "" {
+		return "Enter a name"
+	}
+	if err := center.ValidateName(name); err != nil {
+		return err.Error()
+	}
+	for _, other := range s.centers {
+		if other.Name == c.Name {
+			continue
+		}
+		if strings.EqualFold(other.Name, name) {
+			return "Center already exists"
+		}
+	}
+	return ""
 }
 
 func (s *startup) showError(err error) {

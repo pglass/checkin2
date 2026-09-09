@@ -240,3 +240,82 @@ func TestTurnOffCameraClosesWindowWhenAlreadyOff(t *testing.T) {
 		t.Error("camera window still open after turning the camera off")
 	}
 }
+
+// findItem returns the named item in a menu.
+func findItem(t *testing.T, m *fyne.Menu, label string) *fyne.MenuItem {
+	t.Helper()
+	for _, it := range m.Items {
+		if it.Label == label {
+			return it
+		}
+	}
+	t.Fatalf("no %q item in the %q menu", label, m.Label)
+	return nil
+}
+
+// Kiosk mode is a QR-scanning screen, so with no camera running there is
+// nothing it can do: the menu item is disabled.
+func TestKioskMenuItemDisabledWithoutCamera(t *testing.T) {
+	a := newTestCameraApp(t) // camDevice is deviceNone
+
+	item := findItem(t, findMenu(t, a.buildMenu(), "File"), "Enter Kiosk Mode")
+	if !item.Disabled {
+		t.Error("Enter Kiosk Mode is enabled with no camera, want disabled")
+	}
+}
+
+// With a camera running the item is live.
+func TestKioskMenuItemEnabledWithCamera(t *testing.T) {
+	a := newTestCameraApp(t)
+	a.camDevice = 0
+
+	item := findItem(t, findMenu(t, a.buildMenu(), "File"), "Enter Kiosk Mode")
+	if item.Disabled {
+		t.Error("Enter Kiosk Mode is disabled with a camera running, want enabled")
+	}
+}
+
+// Starting and stopping the camera flips the item in place, without the
+// menubar being rebuilt (which is unsafe from a menu callback).
+func TestKioskMenuItemFollowsCameraState(t *testing.T) {
+	a := newTestCameraApp(t)
+	item := findItem(t, findMenu(t, a.buildMenu(), "File"), "Enter Kiosk Mode")
+	if !item.Disabled {
+		t.Fatal("item should start disabled with no camera")
+	}
+
+	// A camera starts: updateResLabel runs on every camera transition.
+	a.camDevice = 0
+	a.updateResLabel()
+	if item.Disabled {
+		t.Error("item still disabled after a camera started")
+	}
+
+	// And stops again.
+	a.camDevice = deviceNone
+	a.updateResLabel()
+	if !item.Disabled {
+		t.Error("item still enabled after the camera stopped")
+	}
+}
+
+// The kiosk menubar has no Enter Kiosk Mode item, so the retained pointer is
+// dropped rather than left dangling for a later camera event to mutate.
+func TestKioskMenuItemClearedInKioskMode(t *testing.T) {
+	a := newTestCameraApp(t)
+	a.camDevice = 0
+	a.buildMenu()
+	if a.kioskMenuItem == nil {
+		t.Fatal("normal menubar should retain the kiosk item")
+	}
+
+	a.kiosk = true
+	a.buildMenu()
+	if a.kioskMenuItem != nil {
+		t.Error("kiosk menubar should not retain an Enter Kiosk Mode item")
+	}
+
+	// A camera event while the kiosk menubar is up must not panic.
+	a.camDevice = deviceNone
+	a.updateResLabel()
+}

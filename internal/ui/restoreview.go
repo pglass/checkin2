@@ -18,12 +18,15 @@ import (
 )
 
 // restoreCenterLabel is the text for one Center row in the restore view: what
-// it is called, when the backup was taken, and how much is in it. The counts
-// are what let a user tell two backups of the same Center apart.
-func restoreCenterLabel(ci backup.CenterInfo, man backup.Manifest) string {
-	return fmt.Sprintf("%s   %s   %d students, %d log entries",
+// it is called and how much is in it. The counts are what let a user tell two
+// backups of the same Center apart.
+//
+// The backup's timestamp is not repeated here: every row in this view comes
+// from the one archive named in the header, so per-row it is the same value
+// over and over, crowding out the counts that actually differ.
+func restoreCenterLabel(ci backup.CenterInfo) string {
+	return fmt.Sprintf("%s   %d students, %d log entries",
 		ci.Name,
-		man.CreatedAt.Format(archiveListTimeFormat),
 		ci.StudentCount,
 		ci.LogCount)
 }
@@ -50,7 +53,7 @@ func newRestoreView(b *backupBrowser, a backup.Archive, man backup.Manifest) *re
 	r := &restoreView{browser: b, archive: a, man: man}
 
 	header := widget.NewRichText(&widget.TextSegment{
-		Text: "Centers in the backup from " + man.CreatedAt.Format(archiveListTimeFormat),
+		Text: "Displaying centers in backup from " + man.CreatedAt.Format(archiveListTimeFormat),
 	})
 	header.Wrapping = fyne.TextWrapWord
 
@@ -77,7 +80,7 @@ func newRestoreView(b *backupBrowser, a backup.Archive, man backup.Manifest) *re
 			row := o.(*fyne.Container)
 			ci := man.Centers[i]
 
-			row.Objects[0].(*widget.Label).SetText(restoreCenterLabel(ci, man))
+			row.Objects[0].(*widget.Label).SetText(restoreCenterLabel(ci))
 
 			btn := row.Objects[1].(*widget.Button)
 			btn.OnTapped = func() { r.confirm(ci) }

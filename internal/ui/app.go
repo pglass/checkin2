@@ -40,6 +40,10 @@ type App struct {
 	// Select Camera item, so the checkmark can be moved without rebuilding the
 	// menubar.
 	camMenuItems map[int]*fyne.MenuItem
+	// kioskMenuItem is File > Enter Kiosk Mode, retained for the same reason:
+	// it is disabled and re-enabled as the camera stops and starts, in place.
+	// Nil while the kiosk menubar is showing, which has no such item.
+	kioskMenuItem *fyne.MenuItem
 
 	// cfg is the live settings, seeded at startup and replaced when the
 	// Settings window saves. Camera restarts read from it, so a save takes
@@ -142,8 +146,12 @@ func NewAppInWindow(ctx context.Context, fa fyne.App, win fyne.Window, s *store.
 	a.startStatusClock(ctx)
 	a.startCamera(ctx)
 	// The menu was built before a device was chosen, so its checkmark still says
-	// "off"; move it now that startCamera has picked one.
+	// "off"; move it now that startCamera has picked one. Enter Kiosk Mode is
+	// settled the same way: it was built disabled, and stays that way when no
+	// camera was found, since startCamera returns early in that case without
+	// touching the menu.
 	a.markCameraMenuItem()
+	a.markKioskMenuItem()
 	return a
 }
 
@@ -163,17 +171,25 @@ func (a *App) Window() fyne.Window { return a.win }
 // and no Camera menu, so nothing else is reachable from the kiosk screen.
 func (a *App) buildMenu() *fyne.MainMenu {
 	if a.kiosk {
+		// The cut-down menubar has no Enter Kiosk Mode item; drop the pointer to
+		// the old one so nothing mutates a menu item that is no longer on screen.
+		a.kioskMenuItem = nil
 		return fyne.NewMainMenu(fyne.NewMenu("File",
 			fyne.NewMenuItem("Leave Kiosk Mode", a.leaveKiosk),
 		))
 	}
+	// Retained so the camera paths can enable and disable it in place; see
+	// markKioskMenuItem for why it is not rebuilt.
+	a.kioskMenuItem = fyne.NewMenuItem("Enter Kiosk Mode", a.enterKiosk)
+	a.kioskMenuItem.Disabled = !a.cameraRunning()
+
 	file := fyne.NewMenu("File",
 		fyne.NewMenuItem("Add Student…", a.showAddStudentDialog),
 		fyne.NewMenuItem("Import…", a.showImportWindow),
 		fyne.NewMenuItem("Generate QR PDF…", a.showGenerateQRDialog),
 		fyne.NewMenuItem("History…", a.showHistoryWindow),
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Enter Kiosk Mode", a.enterKiosk),
+		a.kioskMenuItem,
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("Settings…", a.showSettingsWindow),
 		fyne.NewMenuItemSeparator(),
@@ -255,6 +271,28 @@ func (a *App) markCameraMenuItem() {
 	// destroys the window mid-click (see cameraMenu).
 }
 
+// cameraRunning reports whether a camera device is currently capturing. The
+// same test the status bar and the idle hint use.
+func (a *App) cameraRunning() bool { return a.camDevice != deviceNone }
+
+// markKioskMenuItem enables or disables "Enter Kiosk Mode" for the current
+// camera state. Kiosk mode is a QR-scanning screen -- it replaces the student
+// list with "Scan your QR code to sign in or out" and there is nothing to
+// double-click -- so with no camera running it is a mode the user cannot get
+// out of any useful work, and entering it would strand them on a screen that
+// cannot do anything.
+//
+// The item is mutated in place rather than rebuilt, for the same reason
+// markCameraMenuItem does: fyne reads Disabled when it next renders the menu,
+// and calling SetMainMenu from inside a menu callback (choosing a camera device
+// is one) tears the menubar down mid-click and panics in the driver.
+func (a *App) markKioskMenuItem() {
+	if a.kioskMenuItem == nil {
+		return // menubar not built yet, or kiosk mode's cut-down one is showing
+	}
+	a.kioskMenuItem.Disabled = !a.cameraRunning()
+}
+
 // refresh reloads rows from the store and repaints the table. Safe to call
 // from the UI goroutine only; background callers must wrap in fyne.Do.
 func (a *App) refresh() {
@@ -269,6 +307,36 @@ func (a *App) refresh() {
 		a.table.setRows(rows)
 	}
 	a.updateStatus(rows)
+	a.updateFeedbackHint(rows)
+}
+
+// updateFeedbackHint recomputes the feedback bar's standing message from the
+// current rows and camera state. Called from refresh, so it tracks students
+// being added or imported, and from the camera paths, where starting or
+// stopping a device changes which hint applies.
+func (a *App) updateFeedbackHint(rows []store.StudentRow) {
+	if a.feedback == nil {
+		return // tests may build an App without the main view
+	}
+	a.feedback.setHint(feedbackHint(a.kiosk, len(rows), a.cameraRunning()))
+}
+
+// feedbackHint chooses the bar's standing message.
+//
+// Kiosk mode gets none: that screen already carries its own large prompt, and a
+// second set of instructions under it would contradict the first (there is no
+// student list to double-click in kiosk mode).
+func feedbackHint(kiosk bool, students int, cameraRunning bool) string {
+	if kiosk {
+		return ""
+	}
+	if students == 0 {
+		return noStudentsMsg
+	}
+	if cameraRunning {
+		return idleMsgWithCamera
+	}
+	return idleMsgWithoutCamera
 }
 
 // updateStatus refreshes the status bar from the rows just loaded, plus the
@@ -279,7 +347,7 @@ func (a *App) updateStatus(rows []store.StudentRow) {
 	}
 	a.status.setRows(rows)
 	a.status.setClock(time.Now())
-	a.status.setCamera(a.camDevice != deviceNone)
+	a.status.setCamera(a.cameraRunning())
 }
 
 // startStatusClock ticks the status bar's clock once a second until ctx is
@@ -350,8 +418,18 @@ func (a *App) updateResLabel() {
 	// every one of them (start, stop, device switch), so it is updated here
 	// rather than from each call site.
 	if a.status != nil {
-		a.status.setCamera(a.camDevice != deviceNone)
+		a.status.setCamera(a.cameraRunning())
 	}
+	// The idle hint names QR scanning only when a camera is running, so it
+	// changes on exactly these transitions too. The row count it also depends on
+	// cannot have changed here, so the cached table rows are reused rather than
+	// re-reading the store on every camera event.
+	if a.feedback != nil && a.table != nil {
+		a.updateFeedbackHint(a.table.rows)
+	}
+	// Kiosk mode needs a camera, and this runs on every start, stop and device
+	// switch, so the menu item's enabled state is kept here too.
+	a.markKioskMenuItem()
 	if a.resLabel == nil {
 		return
 	}
