@@ -26,7 +26,7 @@ GO_ENV := ARCH=$(ARCH) ./scripts/with-opencv-env
 # App version. Bump here (single source of truth); it is stamped into the binary
 # via -ldflags -X and into the macOS bundle's Info.plist via --appVersion. The
 # build scripts read it from the environment, so this stays the only copy.
-VERSION ?= 0.0.6
+VERSION ?= 0.0.7
 VERSION_LDFLAGS := -X github.com/pglass/checkin/internal/version.Version=$(VERSION)
 
 # All Go sources: the checkin binary rebuilds only when one of these changes.

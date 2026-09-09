@@ -1,3 +1,14 @@
+# Unreleased
+
+Backup support
+
+* Add `backup_dir` and `backup_count` settings
+* Each backup is zip of all Center databases + a manifest in the `backup_dir`
+* Backup retention: keep `backup_count` recent archives plus one per calendar month
+* Add Browse/Restore screen for backups verification and restore
+* Add last backup time and Backup Now button to startup screen
+* Switch to single top-level log file instead of per-center log files
+
 # 0.0.6
 
 * Switch to QRCodeDetectorAruco. On synthetic tests:
