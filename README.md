@@ -163,8 +163,15 @@ A backup creates an archive of all Center databases into a separate directory
 (`backup_dir`). The `backup_dir` can be placed on separate storage or synced
 to cloud storage.
 
-- **Configuration:** set `backup_dir` and `backup_count` for then number of
-  archives to keep.
+- **Configuration:** set `backup_dir` and `backup_count` for the number of
+  recent archives to keep.
+- **Retention** keeps an archive if either rule applies: it is one of the
+  `backup_count` most recent, or it is the newest archive of its calendar month.
+  Recent backups stay dense while older ones thin out to one per month, instead
+  of the history ending a few days back. Pruning runs after each backup, and
+  only this app's own `checkin-backup-*.zip` files are ever removed. With
+  the default `backup_count = 14` and a daily backup, two years leaves 37
+  archives: the last 14 days plus the final backup of each preceding month.
 - **Contents:** `manifest.json` at the archive root, plus `centers/<Center>.db`.
   The manifest holds the program version, the timestamp, and for each Center its
   name, size, SHA-256, student count, and log-row count.

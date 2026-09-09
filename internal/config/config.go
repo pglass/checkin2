@@ -29,8 +29,9 @@ type Config struct {
 	// empty value means backups are not configured, and the startup screen says
 	// so instead of offering to run one.
 	BackupDir string
-	// BackupCount is how many backup archives are kept in BackupDir; older ones
-	// are deleted after each backup.
+	// BackupCount is how many recent backup archives are kept in BackupDir.
+	// Retention also keeps the newest archive of each calendar month, so the
+	// total kept exceeds this: see the backup package's prune.
 	BackupCount int
 }
 
@@ -42,7 +43,7 @@ func Default() Config {
 		CameraRequestHeight: 480,
 		QRScanCooldown:      8 * time.Second,
 		BackupDir:           "",
-		BackupCount:         7,
+		BackupCount:         14,
 	}
 }
 

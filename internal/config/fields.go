@@ -95,10 +95,8 @@ var Fields = []Field{
 		Key:     "backup_dir",
 		Section: "backup",
 		Desc: "Directory that backup archives are written to. Leave empty to turn backups off. " +
-			"Point this at a folder your cloud storage app syncs (Google Drive, OneDrive, " +
-			"Dropbox) to get off-machine copies, or at an external drive. Do not use a " +
-			"folder inside the application directory: a backup on the same disk as the " +
-			"original is lost with it.",
+			"You can place this directory on a separate drive or sync it into cloud storage to " +
+			"preserve the backup archives.",
 		StructField: "BackupDir",
 		FreeText:    true,
 		Directory:   true,
@@ -115,9 +113,9 @@ var Fields = []Field{
 	{
 		Key:     "backup_count",
 		Section: "backup",
-		Desc: "Number of backup archives to keep. After each backup the oldest archives over " +
-			"this count are deleted. Only this app's own archives are ever deleted; other " +
-			"files in the backup directory are left alone.",
+		Desc: "Number of recent backup archives to keep. The newest archive from each calendar " +
+			"month is also kept, so you will have this many recent backups, while older backups thin " +
+			"down to one per month.",
 		StructField: "BackupCount",
 		Get:         func(c Config) string { return strconv.Itoa(c.BackupCount) },
 		Set:         func(c *Config, s string) error { return setPositiveInt(&c.BackupCount, "backup_count", s) },

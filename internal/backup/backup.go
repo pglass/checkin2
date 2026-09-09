@@ -413,27 +413,77 @@ func timeFromName(name string) (time.Time, bool) {
 	return t, true
 }
 
-// prune deletes the oldest archives in dir until at most keep remain, returning
-// the paths removed. keep <= 0 disables pruning, so a misconfigured retention
-// count never deletes everything.
+// prune deletes archives in dir that neither retention rule keeps, returning
+// the paths removed.
+//
+// Two rules, and an archive survives if either keeps it:
+//
+//   - the keep most recent archives, so a mistake noticed within a few days can
+//     still be undone from a recent backup;
+//   - the newest archive of each calendar month, so the history thins out with
+//     age instead of ending a few days back.
+//
+// Together they give dense cover over the recent past and one restore point per
+// month before that, at a cost that grows by one file a month rather than one
+// per backup.
+//
+// keep <= 0 disables pruning entirely, so a misconfigured retention count never
+// deletes anything.
 func prune(dir string, keep int) ([]string, error) {
 	if keep <= 0 {
 		return nil, nil
 	}
-	archives, err := List(dir)
+	archives, err := ListArchives(dir)
 	if err != nil {
 		return nil, err
 	}
-	if len(archives) <= keep {
-		return nil, nil
-	}
+
+	survivors := keepers(archives, keep)
+
 	var pruned []string
-	for _, e := range archives[keep:] {
-		path := filepath.Join(dir, e.Name())
-		if err := os.Remove(path); err != nil {
+	for _, a := range archives {
+		if survivors[a.Name] {
+			continue
+		}
+		if err := os.Remove(a.Path); err != nil {
 			return pruned, err
 		}
-		pruned = append(pruned, path)
+		pruned = append(pruned, a.Path)
 	}
 	return pruned, nil
+}
+
+// keepers returns the names of the archives retention keeps, given archives
+// newest first. It is separate from prune so the policy can be tested without
+// touching the filesystem.
+func keepers(archives []Archive, keep int) map[string]bool {
+	out := make(map[string]bool, len(archives))
+	if keep <= 0 {
+		// Not a policy prune understands; keep everything rather than guess.
+		for _, a := range archives {
+			out[a.Name] = true
+		}
+		return out
+	}
+
+	// Rule 1: the keep most recent.
+	for i, a := range archives {
+		if i >= keep {
+			break
+		}
+		out[a.Name] = true
+	}
+
+	// Rule 2: the newest archive of each calendar month. archives is newest
+	// first, so the first one seen for a month is that month's newest.
+	seenMonth := map[string]bool{}
+	for _, a := range archives {
+		key := a.CreatedAt.Format("2006-01")
+		if seenMonth[key] {
+			continue
+		}
+		seenMonth[key] = true
+		out[a.Name] = true
+	}
+	return out
 }
