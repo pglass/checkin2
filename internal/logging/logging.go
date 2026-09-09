@@ -1,5 +1,5 @@
 // Package logging configures the application's slog logger, writing either to
-// stdout or to a rotating log file next to the database.
+// stdout or to a rotating log file in the application directory.
 package logging
 
 import (
@@ -13,7 +13,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// LogFileName is the default log file, created alongside the database.
+// LogFileName is the log file created in the application directory.
 const LogFileName = "checkin.log"
 
 // Rotation settings keep log files from growing without bound.
@@ -44,8 +44,13 @@ func ParseLevel(name string) (slog.Level, error) {
 // underlying file (nil when logging to stdout).
 //
 // logFile == "-" logs to stdout with no rotation. Any other value is treated as
-// a directory in which the default rotating log file is created; pass the
-// database's directory to co-locate the log with the DB.
+// a directory in which the rotating log file is created; the application
+// directory is what the app passes, so one log covers the whole run.
+//
+// Setup is called once, at startup, before a Center is chosen. Work done with
+// no Center open -- choosing one, changing settings, taking or restoring a
+// backup -- is logged to the same file as everything else. Once a Center is
+// open, SetCenter adds it as a field rather than redirecting the log.
 func Setup(logFile string, level slog.Level) (io.Closer, error) {
 	var writer io.Writer
 	var closer io.Closer
@@ -68,6 +73,29 @@ func Setup(logFile string, level slog.Level) (io.Closer, error) {
 	}
 
 	handler := slog.NewTextHandler(writer, &slog.HandlerOptions{Level: level})
-	slog.SetDefault(slog.New(handler))
+	base = slog.New(handler)
+	slog.SetDefault(base)
 	return closer, nil
+}
+
+// base is the logger Setup installed, without any Center attached. SetCenter
+// derives from it rather than from the current default, so switching Centers
+// cannot stack one "center" field on top of another.
+var base *slog.Logger
+
+// SetCenter makes name appear as a "center" field on every later log line, for
+// telling one Center's activity from another in a shared log file. An empty
+// name clears it, restoring the logger Setup installed.
+//
+// It is a no-op before Setup runs, so a caller that logs before configuring
+// still writes to the standard-library default rather than panicking.
+func SetCenter(name string) {
+	if base == nil {
+		return
+	}
+	if name == "" {
+		slog.SetDefault(base)
+		return
+	}
+	slog.SetDefault(base.With("center", name))
 }

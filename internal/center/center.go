@@ -1,6 +1,6 @@
 // Package center manages "Centers": independent data sets, each living in its
-// own sub-directory of the application directory. A Center owns its database
-// and log files; only one Center is open at a time. Settings (settings.ini)
+// own sub-directory of the application directory. A Center owns its database;
+// only one Center is open at a time. Settings (settings.ini) and the log file
 // remain at the top level of the app directory and are shared by all Centers.
 package center
 
@@ -32,9 +32,6 @@ type Center struct {
 
 // DBPath is the path to this Center's database file.
 func (c Center) DBPath() string { return filepath.Join(c.Dir, DBFileName) }
-
-// LogDir is the directory this Center's log files are written to.
-func (c Center) LogDir() string { return c.Dir }
 
 // AppDir returns the durable per-OS application directory, creating it if
 // needed. Centers are sub-directories of this directory.

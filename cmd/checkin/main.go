@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -23,7 +22,7 @@ import (
 
 func main() {
 	logFileFlag := flag.String("log-file", "",
-		`directory for the rotating log file (default: inside the open Center's directory); "-" logs to stdout only`)
+		`directory for the rotating log file (default: the application directory); "-" logs to stdout only`)
 	logLevelFlag := flag.String("log-level", "INFO", "log level: DEBUG, INFO, WARN, or ERROR")
 	centerFlag := flag.String("center", "", "open this Center directly, skipping the selection window (created if absent)")
 	dbPathFlag := flag.String("db-path", "", "open this database file directly, skipping the selection window")
@@ -45,10 +44,17 @@ func main() {
 		log.Fatalf("resolve app directory: %v", err)
 	}
 
-	// Until a Center is open there is no per-Center log directory, so selection
-	// logs to stdout. Once the Center is chosen, logging is reconfigured to that
-	// Center's directory (unless -log-file overrides the destination).
-	if _, err := logging.Setup("-", level); err != nil {
+	// One log file for the whole run, in the app directory, configured before
+	// anything else happens. Work done with no Center open -- choosing one,
+	// changing settings, taking or restoring a backup -- is logged like
+	// everything else rather than being lost on a packaged build with no
+	// terminal attached.
+	logDest := *logFileFlag
+	if logDest == "" {
+		logDest = appDir
+	}
+	logCloser, err := logging.Setup(logDest, level)
+	if err != nil {
 		log.Fatalf("setup logging: %v", err)
 	}
 	slog.Info("starting checkin", "version", version.Version, "app_dir", appDir)
@@ -67,13 +73,11 @@ func main() {
 
 	fa := ui.NewFyneApp()
 
-	// The log file and database outlive run(): they are opened when a Center is
-	// selected and must stay open for as long as the UI is running, so they are
-	// closed here after fa.Run() returns rather than deferred inside run().
-	var (
-		logCloser io.Closer
-		openStore *store.Store
-	)
+	// The database outlives run(): it is opened when a Center is selected and
+	// must stay open for as long as the UI is running, so it is closed here
+	// after fa.Run() returns rather than deferred inside run(). The log file is
+	// open from startup and closed alongside it.
+	var openStore *store.Store
 	defer func() {
 		if openStore != nil {
 			openStore.Close()
@@ -83,7 +87,7 @@ func main() {
 		}
 	}()
 
-	// run opens the Center's database and log file, then shows the main view.
+	// run opens the Center's database, then shows the main view.
 	// It does not block: the caller drives the event loop via fa.Run(). It
 	// returns store.ErrAlreadyOpen (and opens nothing) when the Center is already
 	// held by another instance, so the caller can report that and stay running;
@@ -95,9 +99,8 @@ func main() {
 	// driver. A nil win means there is no selection window (-center / -db-path),
 	// so one is created.
 	run := func(c center.Center, dbPath string, win fyne.Window) error {
-		// Open (which takes the one-process-per-Center lock) before switching
-		// logging to the Center directory: if the Center is already open we don't
-		// want to have redirected this instance's log into it.
+		// Open takes the one-process-per-Center lock before anything else, so an
+		// instance that loses the race has changed nothing.
 		s, err := store.Open(dbPath)
 		if errors.Is(err, store.ErrAlreadyOpen) {
 			slog.Warn("center already open in another instance", "name", c.Name, "dir", c.Dir)
@@ -109,16 +112,12 @@ func main() {
 		}
 		openStore = s
 
-		logDest := *logFileFlag
-		if logDest == "" {
-			logDest = c.LogDir()
-		}
-		closer, err := logging.Setup(logDest, level)
-		if err != nil {
-			log.Fatalf("setup logging: %v", err)
-		}
-		logCloser = closer // nil when logging to stdout
-		slog.Info("center opened", "name", c.Name, "dir", c.Dir)
+		// The log file does not change with the Center; the Center becomes a
+		// field on every later line instead.
+		logging.SetCenter(c.Name)
+		// The name is already on every line from here on, so only the directory
+		// is worth adding.
+		slog.Info("center opened", "dir", c.Dir)
 		slog.Info("database opened", "path", absPath(dbPath))
 
 		var app *ui.App
@@ -138,7 +137,7 @@ func main() {
 	switch {
 	case *dbPathFlag != "":
 		// Escape hatch for development: the database's parent directory stands in
-		// for the Center, so logs land next to the file.
+		// for the Center, which names it in the log.
 		dir := filepath.Dir(*dbPathFlag)
 		c := center.Center{Name: filepath.Base(dir), Dir: dir}
 		if err := run(c, *dbPathFlag, nil); errors.Is(err, store.ErrAlreadyOpen) {
