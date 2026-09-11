@@ -97,6 +97,8 @@ MIT License
       Copyright (c) 2005-2008 Dustin Sallings
   github.com/fredbi/uri                   v1.1.1
       Copyright (c) 2018 Frederic Bidon
+  github.com/go-gl/gl                     v0.0.0-20260331235117-4566fea9a276
+      Copyright (c) 2014 Eric Woroshow
   github.com/go-pdf/fpdf                  v0.9.0
       Copyright (c) 2021 The Go-PDF authors; (c) 2013-2016 Kurt Jung
   github.com/jeandeaual/go-locale         v0.0.0-20250612000132-0ef82f21eade
@@ -133,26 +135,32 @@ ISC License
       Copyright (c) 2012 Jan Schlicht
 
 ================================================================================
-2. BUNDLED NATIVE LIBRARIES (statically linked into checkin.exe)
+2. BUNDLED NATIVE LIBRARIES (statically linked into the checkin executable)
 ================================================================================
 
 The camera / QR-decoding features use OpenCV via gocv (a trimmed fork; see
-third_party/gocv). The Windows build links a slimmed static OpenCV cut down to
-the six modules QR detection needs: core, imgproc, calib3d, features2d, flann,
-objdetect. The FFmpeg/GStreamer backends, the Qt GUI, the dnn module, and the
+third_party/gocv). Every build links a slimmed static OpenCV cut down to the six
+modules QR detection needs: core, imgproc, geometry, features, flann, objdetect.
+The FFmpeg/GStreamer backends, the Qt GUI, the dnn module, and the
 image-codec/highgui modules are NOT built, so their dependencies (protobuf,
 libpng, libjpeg) are not linked either. The native code linked into the
 executable is:
 
-  OpenCV 4.13.0 — Apache License 2.0
-      Copyright (c) 2000-2024, OpenCV team and contributors.
-      Includes this third-party library bundled with OpenCV:
+  OpenCV 5.0.0 — Apache License 2.0
+      Copyright (c) 2000-2025, OpenCV team and contributors.
+      Includes these third-party libraries bundled with OpenCV:
         - zlib      — zlib License   — (c) Jean-loup Gailly and Mark Adler
+        - ittnotify — BSD 3-Clause License — (c) 2019 Intel Corporation
+              Intel publishes ittnotify under a choice of GPL-2.0-only OR
+              BSD-3-Clause. This distribution elects the BSD 3-Clause terms,
+              whose full text appears in section 3; no GPL obligation attaches.
 
   GLFW (via github.com/go-gl/glfw, used by Fyne) — zlib/libpng License
       Copyright (c) 2002-2006 Marcus Geelnard; (c) 2006-2019 Camilla Lowy
 
-  GCC runtime: libstdc++, libgcc, libwinpthread (MinGW-w64)
+  GCC runtime: libstdc++, libgcc, libwinpthread (MinGW-w64) — Windows builds only
+      The macOS build links Apple's libc++ and libSystem from the platform SDK
+      instead, which are covered by the OS licence and are not redistributed here.
       GNU GPL v3 WITH the GCC Runtime Library Exception (libstdc++/libgcc) and
       the MinGW-w64 runtime licenses (permissive). The GCC Runtime Library
       Exception expressly permits statically linking these runtime components
