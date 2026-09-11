@@ -636,3 +636,39 @@ func TestConfirmSecondBackupDialog(t *testing.T) {
 		t.Error("tapping Back Up Now did not confirm")
 	}
 }
+
+// Deactivated Centers are not backed up: the backup path lists Centers through
+// center.List, which leaves them out.
+func TestBackupExcludesDeactivatedCenters(t *testing.T) {
+	cfg := config.Default()
+	cfg.BackupDir = t.TempDir()
+	s, dir := newTestStartupWithConfig(t, cfg, "Alpha")
+
+	// Alpha has real data, so "no data" cannot be why the checks below pass.
+	if err := os.WriteFile(filepath.Join(dir, "Alpha", center.DBFileName), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed db: %v", err)
+	}
+	s.reload()
+	if !s.hasCenterData() {
+		t.Fatal("precondition: Alpha's database should count while it is active")
+	}
+
+	if _, err := center.Deactivate(dir, "Alpha", time.Now()); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+
+	centers, err := center.List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(centers) != 0 {
+		t.Fatalf("backup would cover %+v, want nothing once Alpha is deactivated", centers)
+	}
+
+	// The "backup needed" warning follows the same rule: a deactivated Center's
+	// data must not be what asks for a backup that would not include it.
+	s.reload()
+	if s.hasCenterData() {
+		t.Error("hasCenterData counts a deactivated Center's database")
+	}
+}

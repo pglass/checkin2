@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -41,10 +42,18 @@ type startup struct {
 	// reachable before any Center is open.
 	about about
 
-	centers []center.Center
-	list    *widget.List
-	errLbl  *canvas.Text
-	backups *backupBar
+	// centers is what the list shows: the active Centers, plus the deactivated
+	// ones when showDeactivated is set. anyDeactivated records whether any exist
+	// at all, which is what decides whether the checkbox is on screen -- it
+	// cannot be derived from centers, which hides them when the box is clear.
+	centers         []center.Center
+	anyDeactivated  bool
+	showDeactivated bool
+
+	list       *widget.List
+	errLbl     *canvas.Text
+	backups    *backupBar
+	deactCheck *widget.Check
 
 	// onOpen receives the chosen Center and this window, and replaces the
 	// window's content with the main view. It returns an error (e.g.
@@ -114,20 +123,39 @@ func (s *startup) build() {
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			row := o.(*centerRow)
 			c := s.centers[i]
-			row.SetText(c.Name)
-			row.OnTapped = func() { s.open(c) }
+			row.SetText(centerRowLabel(c))
+			// A deactivated Center cannot be opened until it is reactivated, so
+			// its row is inert rather than reporting a failure after the click.
+			// Right-click still works: that is where Re-activate lives.
+			if c.Deactivated() {
+				row.OnTapped = nil
+				row.Disable()
+			} else {
+				row.OnTapped = func() { s.open(c) }
+				row.Enable()
+			}
 			row.onSecondary = func(pos fyne.Position) { s.showCenterContextMenu(c, pos) }
 		},
 	)
 
 	addBtn := widget.NewButton("Add Center…", s.showAddDialog)
 
+	// Only on screen when there is something to show: with no deactivated
+	// Centers the checkbox would be a control that does nothing, and it would
+	// advertise a feature the user has not used.
+	s.deactCheck = widget.NewCheck("Show Deactivated", func(on bool) {
+		s.showDeactivated = on
+		s.reload()
+	})
+	s.deactCheck.Hide()
+
 	// Backups cover every Center at once and need none of them open, so they
 	// belong here rather than inside a Center's own window.
 	s.backups = newBackupBar(s)
 
 	header := widget.NewLabel("Select a center to open:")
-	buttons := container.NewHBox(addBtn, layout.NewSpacer())
+	// Add Center on the left, the checkbox pushed to the right by the spacer.
+	buttons := container.NewHBox(addBtn, layout.NewSpacer(), s.deactCheck)
 	bottom := container.NewVBox(
 		s.errLbl,
 		buttons,
@@ -201,6 +229,12 @@ func (s *startup) showBackupBrowser() {
 // warning about.
 func (s *startup) hasCenterData() bool {
 	for _, c := range s.centers {
+		// Backups skip deactivated Centers, so their data must not be what makes
+		// the screen ask for a backup -- it would ask for one that then would not
+		// cover the data that prompted it.
+		if c.Deactivated() {
+			continue
+		}
 		if _, err := os.Stat(c.DBPath()); err == nil {
 			return true
 		}
@@ -208,21 +242,69 @@ func (s *startup) hasCenterData() bool {
 	return false
 }
 
+// centerRowLabel is the text for one row of the selection list. A deactivated
+// Center says so, and when: the timestamp is what tells two deactivations of
+// the same Center apart, and it is already in the directory name.
+func centerRowLabel(c center.Center) string {
+	if !c.Deactivated() {
+		return c.Name
+	}
+	return c.Name + " (Deactivated at " + c.DeactivatedAt.Format(archiveListTimeFormat) + ")"
+}
+
 // reload re-lists the Centers on disk and repaints the list.
+//
+// Everything on disk is read every time, and the deactivated ones filtered out
+// here rather than by calling the narrower List: the checkbox's visibility
+// depends on whether any exist, which a list that omits them cannot answer.
 func (s *startup) reload() {
-	centers, err := center.List(s.appDir)
+	all, err := center.ListAll(s.appDir)
 	if err != nil {
 		s.showError(err)
 		return
 	}
+
+	s.anyDeactivated = false
+	centers := make([]center.Center, 0, len(all))
+	for _, c := range all {
+		if c.Deactivated() {
+			s.anyDeactivated = true
+			if !s.showDeactivated {
+				continue
+			}
+		}
+		centers = append(centers, c)
+	}
 	s.centers = centers
 	s.list.Refresh()
+	s.refreshDeactCheck()
 	// The backup row's warning depends on which Centers have databases, so it
 	// is re-evaluated with the list rather than only when a backup is taken.
 	// build() runs before the first reload, so the row may not exist yet.
 	if s.backups != nil {
 		s.backups.refresh()
 	}
+}
+
+// refreshDeactCheck shows or hides the "Show Deactivated" checkbox to match
+// whether any deactivated Centers exist.
+//
+// Reactivating the last one clears the box as well as hiding it: leaving it
+// ticked would mean the next deactivation silently showed up in a list the user
+// last saw as active-only.
+func (s *startup) refreshDeactCheck() {
+	if s.deactCheck == nil {
+		return // build() has not run yet
+	}
+	if !s.anyDeactivated {
+		if s.showDeactivated {
+			s.showDeactivated = false
+			s.deactCheck.SetChecked(false)
+		}
+		s.deactCheck.Hide()
+		return
+	}
+	s.deactCheck.Show()
 }
 
 // open opens c, keeping the selection view up with a message if it cannot be
@@ -233,6 +315,13 @@ func (s *startup) reload() {
 // is what keeps this path free of the destroy-during-click crash described on
 // ShowStartup.
 func (s *startup) open(c center.Center) {
+	// The row for a deactivated Center is disabled, so this is unreachable from
+	// a click; it is here because "deactivated Centers cannot be opened" is a
+	// rule about opening, not about one widget's enabled state.
+	if c.Deactivated() {
+		s.showError(errors.New("this Center is deactivated; re-activate it first"))
+		return
+	}
 	slog.Info("center selected", "name", c.Name, "dir", c.Dir)
 	if err := s.onOpen(c, s.win); err != nil {
 		// The Center could not be opened (already open in another instance):
@@ -288,9 +377,167 @@ func (s *startup) showAddDialog() {
 // centerContextMenu builds the right-click menu for one Center in the selection
 // list. Separate from showing it so the items can be tested without a canvas.
 func (s *startup) centerContextMenu(c center.Center) *fyne.Menu {
-	return fyne.NewMenu("",
-		fyne.NewMenuItem("Rename", func() { s.showRenameDialog(c) }),
+	// Deactivate and Re-activate are the same slot: a Center is one or the
+	// other, so offering both would always leave one of them inapplicable.
+	toggle := fyne.NewMenuItem("Deactivate", func() { s.showDeactivateDialog(c) })
+	if c.Deactivated() {
+		toggle = fyne.NewMenuItem("Re-activate", func() { s.showReactivateDialog(c) })
+	}
+
+	items := []*fyne.MenuItem{}
+	// Renaming a deactivated Center is not offered: its directory name carries
+	// the deactivation stamp, so a rename would have to rebuild that name, and
+	// the name it is being given only matters once it is active again. Re-
+	// activate first, then rename.
+	if !c.Deactivated() {
+		items = append(items, fyne.NewMenuItem("Rename", func() { s.showRenameDialog(c) }))
+	}
+	items = append(items, toggle)
+	return fyne.NewMenu("", items...)
+}
+
+// deactivateMessage is the confirmation shown before a Center is hidden. It
+// says the data survives, since "deactivate" on its own reads like a delete.
+func deactivateMessage(c center.Center) string {
+	return "This center " + c.Name + " will be deactivated. The center will be hidden. " +
+		"It can be re-activated later, if needed."
+}
+
+// reactivateMessage is the confirmation shown before a Center is restored.
+func reactivateMessage(c center.Center) string {
+	return "Reactivate the Center " + c.Name + "?"
+}
+
+// reactivateBlockedMessage explains why a deactivated Center cannot take its
+// name back, and what to do about it. Reaching this is ordinary rather than
+// exceptional: deactivating a Center to free its name for a restored backup is
+// exactly what leaves two Centers wanting the same name.
+func reactivateBlockedMessage(c center.Center) string {
+	return "Cannot reactivate this Center because there is already a Center named " + c.Name +
+		". To re-activate this center, first rename or deactivate the existing " + c.Name + " Center."
+}
+
+// showDeactivateDialog confirms, then hides the Center.
+func (s *startup) showDeactivateDialog(c center.Center) {
+	var popup dialog.Dialog
+
+	msg := widget.NewLabel(deactivateMessage(c))
+	msg.Wrapping = fyne.TextWrapWord
+
+	deactivateBtn := widget.NewButton("Deactivate", func() {
+		popup.Hide()
+		s.deactivate(c)
+	})
+	// Not DangerImportance: nothing is destroyed, and dressing a reversible
+	// action as a destructive one teaches the user to ignore the red buttons
+	// that do delete things.
+	deactivateBtn.Importance = widget.HighImportance
+	cancelBtn := widget.NewButton("Cancel", func() { popup.Hide() })
+
+	body := container.NewVBox(
+		msg,
+		container.NewCenter(container.NewHBox(cancelBtn, deactivateBtn)),
 	)
+	popup = dialog.NewCustomWithoutButtons("Deactivate Center", body, s.win)
+	popup.Resize(fyne.NewSize(460, 200))
+	popup.Show()
+}
+
+// deactivate hides c and repaints the list.
+func (s *startup) deactivate(c center.Center) {
+	deact, err := center.Deactivate(s.appDir, c.Name, time.Now())
+	if err != nil {
+		s.showError(err)
+		return
+	}
+	slog.Info("center deactivated", "name", c.Name, "dir", deact.Dir)
+	s.reload()
+}
+
+// showReactivateDialog either confirms the reactivation, or explains why it
+// cannot happen. Which one is decided before the dialog is built: a user who
+// cannot proceed is shown the reason and a way out, not a Confirm button that
+// will refuse them.
+func (s *startup) showReactivateDialog(c center.Center) {
+	if s.nameTaken(c) {
+		s.showReactivateBlocked(c)
+		return
+	}
+
+	var popup dialog.Dialog
+
+	msg := widget.NewLabel(reactivateMessage(c))
+	msg.Wrapping = fyne.TextWrapWord
+
+	confirmBtn := widget.NewButton("Confirm", func() {
+		popup.Hide()
+		s.reactivate(c)
+	})
+	confirmBtn.Importance = widget.HighImportance
+	cancelBtn := widget.NewButton("Cancel", func() { popup.Hide() })
+
+	body := container.NewVBox(
+		msg,
+		container.NewCenter(container.NewHBox(cancelBtn, confirmBtn)),
+	)
+	popup = dialog.NewCustomWithoutButtons("Re-activate Center", body, s.win)
+	popup.Resize(fyne.NewSize(460, 180))
+	popup.Show()
+}
+
+// showReactivateBlocked reports that the Center's name is taken. One button:
+// there is no action to take here, only something to go and do first.
+func (s *startup) showReactivateBlocked(c center.Center) {
+	var popup dialog.Dialog
+
+	msg := widget.NewLabel(reactivateBlockedMessage(c))
+	msg.Wrapping = fyne.TextWrapWord
+
+	backBtn := widget.NewButton("Back", func() { popup.Hide() })
+
+	body := container.NewVBox(
+		msg,
+		container.NewCenter(container.NewHBox(backBtn)),
+	)
+	popup = dialog.NewCustomWithoutButtons("Re-activate Center", body, s.win)
+	popup.Resize(fyne.NewSize(480, 210))
+	popup.Show()
+}
+
+// nameTaken reports whether an active Center already holds c's name, which is
+// what stops c from being reactivated under it.
+func (s *startup) nameTaken(c center.Center) bool {
+	all, err := center.ListAll(s.appDir)
+	if err != nil {
+		// Reading the directory failed, so this cannot be answered. Say taken:
+		// the reactivation would fail anyway, and an explanation is a better
+		// outcome than an error dialog from the rename underneath.
+		slog.Warn("could not list Centers while checking a name", "err", err)
+		return true
+	}
+	for _, other := range all {
+		if !other.Deactivated() && strings.EqualFold(other.Name, c.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// reactivate restores c to its original name and repaints the list.
+func (s *startup) reactivate(c center.Center) {
+	restored, err := center.Reactivate(s.appDir, c)
+	if err != nil {
+		// The name was free a moment ago when the dialog was built; if it is
+		// taken now, say so in the same words rather than as a raw error.
+		if errors.Is(err, center.ErrExists) {
+			s.showReactivateBlocked(c)
+			return
+		}
+		s.showError(err)
+		return
+	}
+	slog.Info("center reactivated", "name", restored.Name, "dir", restored.Dir)
+	s.reload()
 }
 
 // showCenterContextMenu pops up the right-click menu under the pointer.
@@ -384,6 +631,12 @@ func (s *startup) renameProblem(c center.Center, name string) string {
 		return err.Error()
 	}
 	for _, other := range s.centers {
+		// A deactivated Center's directory carries its timestamp, so it does not
+		// occupy the plain name and cannot collide with a rename. It gets its
+		// name back only on reactivation, which does its own check.
+		if other.Deactivated() {
+			continue
+		}
 		if other.Name == c.Name {
 			continue
 		}

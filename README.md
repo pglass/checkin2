@@ -105,6 +105,35 @@ make bench ARGS=-benchtime=3s
 > Bare `go test ./...` doesn't work without cgo flags. Use `make test`, or
 > run `source ./opencv-env.sh` once in your shell.
 
+## Distribution
+
+Every build links the slim static OpenCV, so the only dynamic dependencies are
+OS libraries. The binaries run on a stock machine with no OpenCV installed.
+
+```sh
+make build-darwin   # -> ./checkin       (stripped, self-contained)
+make bundle         # -> ./Checkin.app   (icon + Info.plist, via Fyne)
+make build-windows  # -> dist/checkin-<version>.exe
+```
+
+`build-darwin` strips debug symbols and uses `otool -L` to check that every
+entry is under `/usr/lib` or `/System/Library`. `build-windows` checks that the
+exe imports only system DLLs. Both fail rather than ship an unverified binary.
+
+To cross-build for Intel Macs from Apple Silicon (clang cross-compiles natively;
+this is not a Rosetta build):
+
+```sh
+ARCH=x86_64 make opencv         # once
+ARCH=x86_64 make build-darwin   # -> ./checkin-x86_64
+```
+
+Third-party open-source license notices are embedded in the app itself under
+**About → Licenses**, so no separate license file needs to ship alongside the
+exe.
+
+
+
 ## Application Logging
 
 The app logs at `INFO` to a rotating file `checkin.log` at the top of the
@@ -157,6 +186,16 @@ checkin -db-path /tmp/x/checkin.db   # dev escape hatch: open a database directl
   at each calendar-day rollover.
 - **Retention:** log rows are kept indefinitely. Nothing deletes history.
 
+## QR codes
+
+- Payload: `{"Version":2,"FirstName":"John","LastName":"Smith"}`.
+- **Version 1 codes are not accepted.** v1 carried a single joined `Name` field.
+- **Admin → Generate QR PDF…** produces a printable grid PDF, for all students
+  or a selected subset, and opens it in the system viewer.
+- With a webcam connected, a scanned code opens the same check-in/out popup as a
+  double-click. An unknown code opens the Add-student dialog with the name
+  filled in. Each student has an 8s scan cooldown.
+
 ## Backups
 
 A backup creates an archive of all Center databases into a separate directory
@@ -200,59 +239,9 @@ manifest recorded when the backup was made:
 
 ### Restoring a backup
 
-**Restore** on an archive switches the window to that backup's contents: one row
-per Center, showing its name, the backup's timestamp, and its student and
-log-row counts. **Restore Center** asks for confirmation and names the Center it
-will create. **Back** returns to the archive list.
+Backup archives can be browsed, verified, and restored. Restoring a backup adds a new
+Center named `<CenterName>-<backupTimestamp>`. No Center data is overwritten during a restore.
 
-- **A restore always adds a new Center and never overwrites one.** The new
-  Center is named `<Center>-<backup timestamp>`, so it records which backup it
-  came from and cannot collide with the live Center. Restoring the same backup
-  twice is refused rather than replacing the first restore.
-- **The snapshot is checked before it is put in place**, using the same four
-  checks Verify runs. A damaged archive is refused rather than restored as
-  silently wrong data.
-- Nothing is created until the snapshot has been extracted and checked, and a
-  failure after that point removes the part-made Center. A failed restore never
-  leaves a Center with no database in the selection list.
+Center names must be unique, so Centers can be deactivated and renamed to facilitate backup exploration and restoration. Deactivating a Center hides the Center from the default view, and frees up the Center name without deleting any data. A deactivated Center can be re-activated later if needed.
 
-Once restored, open the new Center from the selection window like any other. To
-replace a live Center with a restored one, close the app and swap the
-directories by hand.
-
-## QR codes
-
-- Payload: `{"Version":2,"FirstName":"John","LastName":"Smith"}`.
-- **Version 1 codes are not accepted.** v1 carried a single joined `Name` field.
-- **Admin → Generate QR PDF…** produces a printable grid PDF, for all students
-  or a selected subset, and opens it in the system viewer.
-- With a webcam connected, a scanned code opens the same check-in/out popup as a
-  double-click. An unknown code opens the Add-student dialog with the name
-  filled in. Each student has an 8s scan cooldown.
-
-## Distribution
-
-Every build links the slim static OpenCV, so the only dynamic dependencies are
-OS libraries. The binaries run on a stock machine with no OpenCV installed.
-
-```sh
-make build-darwin   # -> ./checkin       (stripped, self-contained)
-make bundle         # -> ./Checkin.app   (icon + Info.plist, via Fyne)
-make build-windows  # -> dist/checkin-<version>.exe
-```
-
-`build-darwin` strips debug symbols and uses `otool -L` to check that every
-entry is under `/usr/lib` or `/System/Library`. `build-windows` checks that the
-exe imports only system DLLs. Both fail rather than ship an unverified binary.
-
-To cross-build for Intel Macs from Apple Silicon (clang cross-compiles natively;
-this is not a Rosetta build):
-
-```sh
-ARCH=x86_64 make opencv         # once
-ARCH=x86_64 make build-darwin   # -> ./checkin-x86_64
-```
-
-Third-party open-source license notices are embedded in the app itself under
-**About → Licenses**, so no separate license file needs to ship alongside the
-exe.
+For example, if you want a Center restored from backup to replace an existing Center of the same name, you can deactivate the existing Center and rename the restored Center. Or, alternatively, if you finish exploring a Center restored from backup, you can deactivate the restored Center to hide it from view.

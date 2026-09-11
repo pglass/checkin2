@@ -7,6 +7,7 @@ Backup support
 * Backup retention: keep `backup_count` recent archives plus one per calendar month
 * Add Browse/Restore screen for backups verification and restore
 * Add last backup time and Backup Now button to startup screen
+* Support renaming and deactivating Centers
 * Switch to single top-level log file instead of per-center log files
 
 # 0.0.6
