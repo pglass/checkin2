@@ -2,7 +2,7 @@
 # Build a slim, STATIC OpenCV 5.0.0 for linking the checkin app into a
 # self-contained macOS binary (no OpenCV dylibs to bundle or rewrite).
 #
-# macOS counterpart of build-opencv-static.sh (which is MSYS2/Windows only).
+# macOS counterpart of scripts/build-opencv-static.sh (which is MSYS2/Windows only).
 # Same module list and same trimming rationale -- see that script's comments for
 # why these six modules and no more. The differences here are all platform:
 #   - clang instead of mingw gcc, so no MSYS2 discovery
@@ -19,11 +19,12 @@
 # x86_64 build can coexist.
 #
 # Usage:
-#   ./build-opencv-static-darwin.sh                  # native arch
-#   ARCH=x86_64 ./build-opencv-static-darwin.sh      # for Intel Macs
-#   ./build-opencv-static-darwin.sh --clean          # wipe build dir + prefix first
+#   ./scripts/build-opencv-static-darwin.sh                  # native arch
+#   ARCH=x86_64 ./scripts/build-opencv-static-darwin.sh      # for Intel Macs
+#   ./scripts/build-opencv-static-darwin.sh --clean          # wipe build dir + prefix first
 set -euo pipefail
-cd "$(dirname "$0")"
+# Scripts live in scripts/; every path below is relative to the repo root.
+cd "$(dirname "$0")/.."
 
 OPENCV_VERSION="5.0.0"
 CLEAN=0
@@ -34,7 +35,7 @@ for arg in "$@"; do
   esac
 done
 
-[ "$(uname -s)" = "Darwin" ] || { echo "This script is macOS only. On Windows use build-opencv-static.sh." >&2; exit 1; }
+[ "$(uname -s)" = "Darwin" ] || { echo "This script is macOS only. On Windows use scripts/build-opencv-static.sh." >&2; exit 1; }
 
 # Target architecture. Defaults to the host's; set ARCH=x86_64 on an Apple
 # Silicon machine to produce libraries for an Intel Mac.
@@ -75,7 +76,7 @@ fi
 
 # --- Configure --------------------------------------------------------------
 # BUILD_LIST and the WITH_*/BUILD_* toggles are deliberately identical to
-# build-opencv-static.sh: the trimmed gocv fork at third_party/gocv references
+# scripts/build-opencv-static.sh: the trimmed gocv fork at third_party/gocv references
 # only core, imgproc and objdetect wrappers, and objdetect pulls in features ->
 # geometry, flann. Everything else (dnn and its protobuf especially) is
 # dropped. Keep the two scripts' module lists in sync.
@@ -167,4 +168,4 @@ fi
 echo
 echo "Static OpenCV $OPENCV_VERSION ($ARCH) installed at: $PREFIX"
 echo "pkg-config file: $PC"
-echo "Next: build the app with  ARCH=$ARCH ./build-darwin.sh"
+echo "Next: build the app with  ARCH=$ARCH ./scripts/build-darwin.sh"

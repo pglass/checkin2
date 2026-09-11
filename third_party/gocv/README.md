@@ -18,7 +18,7 @@ them or not. Those references drag the matching OpenCV modules — most expensiv
 This app only uses `Mat`, the `imgproc` helpers, and `QRCodeDetector`. So the
 fork keeps just the wrappers for the modules we link and **deletes the rest**.
 With no wrapper referencing them, those OpenCV modules are dropped from the
-custom static build too (see `build-opencv-static.sh`'s `BUILD_LIST`), taking
+custom static build too (see `scripts/build-opencv-static.sh`'s `BUILD_LIST`), taking
 ~11 MB off the final binary.
 
 ## What was changed vs. upstream v0.43.0
@@ -43,5 +43,5 @@ perspective correction; we just don't expose their Go APIs.
 
 To move to a newer gocv: re-copy the root package's `.go`/`.cpp`/`.h` files from
 the upstream release, re-apply the deletions above, restore this minimal
-`go.mod`, and re-run `build-opencv-static.sh --clean`. The QR decode smoke test
+`go.mod`, and re-run `scripts/build-opencv-static.sh --clean`. The QR decode smoke test
 (`internal/camera/qrdecode_test.go`) guards against a trim that breaks decoding.

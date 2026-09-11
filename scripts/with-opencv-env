@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Source opencv-env.sh, then exec the given command with that environment.
+# Source scripts/opencv-env.sh, then exec the given command with that environment.
 #
 # Make runs every recipe line in a fresh shell, so the CGO_* exports cannot be
 # set once at the top of the Makefile. This wrapper keeps the setup in one place
@@ -8,5 +8,5 @@
 #     ./scripts/with-opencv-env go test ./...
 set -euo pipefail
 cd "$(dirname "$0")/.."
-source ./opencv-env.sh
+source ./scripts/opencv-env.sh
 exec "$@"

@@ -2,7 +2,7 @@
 #
 # There is exactly ONE way this project links OpenCV: the slim STATIC OpenCV 5
 # built once by `make opencv`, with all cgo flags supplied by
-# ./opencv-env.sh. Every target here, both build scripts and both packaging
+# ./scripts/opencv-env.sh. Every target here, both build scripts and both packaging
 # scripts source that one file, so builds and tests can never disagree about
 # how OpenCV is linked. No Homebrew opencv is required and the binaries are
 # self-contained.
@@ -16,11 +16,11 @@
 # an Apple Silicon Mac cross-builds for Intel Macs.
 #
 # Every Go target runs through `scripts/with-opencv-env`, a thin wrapper that
-# sources opencv-env.sh and then execs its arguments. Make runs each recipe line
+# sources scripts/opencv-env.sh and then execs its arguments. Make runs each recipe line
 # in its own shell, so the environment cannot be exported once at the top.
 
 ARCH ?= $(shell uname -m)
-# Sources opencv-env.sh, then runs the rest of the command line with that env.
+# Sources scripts/opencv-env.sh, then runs the rest of the command line with that env.
 GO_ENV := ARCH=$(ARCH) ./scripts/with-opencv-env
 
 # App version. Bump here (single source of truth); it is stamped into the binary
@@ -33,7 +33,8 @@ VERSION_LDFLAGS := -X github.com/pglass/checkin/internal/version.Version=$(VERSI
 GO_SOURCES := $(shell find . -name '*.go')
 
 .PHONY: build-windows build-darwin-release run test bench vet generate \
-        seed bundle opencv opencv-windows bump-version clean
+        seed bundle opencv opencv-windows bump-version clean sign-windows \
+        verify-windows
 
 # --- Development ------------------------------------------------------------
 
@@ -93,14 +94,25 @@ bundle:
 #   make build-darwin-release              -> ./checkin        (native arch)
 #   ARCH=x86_64 make build-darwin-release  -> ./checkin-x86_64 (Intel Macs)
 build-darwin:
-	ARCH=$(ARCH) VERSION=$(VERSION) ./build-darwin.sh
+	ARCH=$(ARCH) VERSION=$(VERSION) ./scripts/build-darwin.sh
 
 # Cross-compile checkin.exe from macOS/Linux (or build it natively on Windows).
 # Verifies the exe is self-contained and copies it to dist/. Requires
 # `make opencv-windows` once first, plus `brew install mingw-w64` when cross-
 # compiling. A cross-built exe cannot be run here -- verify it on Windows.
 build-windows:
-	VERSION=$(VERSION) ./build-windows.sh
+	VERSION=$(VERSION) ./scripts/build-windows.sh
+
+# Authenticode-sign the release exe so Windows does not report an unknown
+# developer. Separate from build-windows on purpose: the build must work with no
+# signing key present, and re-running it would discard a signature. Needs the
+# .p12 (see scripts/sign-windows.sh for the environment it reads).
+sign-windows:
+	VERSION=$(VERSION) ./scripts/sign-windows.sh
+
+# Check an existing signature without needing the signing key.
+verify-windows:
+	VERSION=$(VERSION) ./scripts/sign-windows.sh --verify dist/checkin-$(VERSION).exe
 
 # --- One-time OpenCV build --------------------------------------------------
 
@@ -108,13 +120,13 @@ build-windows:
 # for this platform. Once per OpenCV version (and per arch on macOS).
 opencv:
 ifeq ($(shell uname -s),Darwin)
-	ARCH=$(ARCH) ./build-opencv-static-darwin.sh
+	ARCH=$(ARCH) ./scripts/build-opencv-static-darwin.sh
 else
-	./build-opencv-static.sh
+	./scripts/build-opencv-static.sh
 endif
 
 # The Windows OpenCV that `make build-windows` links. On Windows this is the
 # same thing as `make opencv`; on macOS/Linux it cross-compiles into a
 # -windows-suffixed prefix alongside the native one.
 opencv-windows:
-	./build-opencv-static.sh
+	./scripts/build-opencv-static.sh

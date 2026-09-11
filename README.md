@@ -1,7 +1,7 @@
 # Checkin
 
-A local desktop app for checking students in and out each day. It supports
-QR code check-ins using a webcam. All data is stored in a local SQLite file.
+A (vibecoded) local desktop app for checking students in and out each day. It
+supports QR code check-ins using a webcam. All data is stored in a local SQLite file.
 
 ## Stack
 
@@ -59,12 +59,33 @@ Then, from Git Bash:
 make opencv          # one-time: compile the slim static OpenCV 5.0.0
 make build-windows   # -> ./checkin.exe + dist/checkin-<version>.exe
 
-./build-windows.sh --run       # build, then launch
-./build-windows.sh --console   # keep the console window (stdout logging)
+./scripts/build-windows.sh --run       # build, then launch
+./scripts/build-windows.sh --console   # keep the console window (stdout logging)
 ```
 
 The exe is built with `-H=windowsgui` by default, so no console window appears
 behind the UI.
+
+### Code signing
+
+For now, releases are signed with a self-issued certificate chain: a long-lived
+root CA kept offline, and a short-lived leaf that does the signing.
+
+```sh
+make build-windows   # produces dist/checkin-<version>.exe
+make sign-windows    # signs it in place
+make verify-windows  # checks the signature
+```
+
+Signing needs `osslsigncode` (`brew install osslsigncode`) and the PKCS#12
+bundle, read from `CHECKIN_P12` (default `~/.checkin-signing/checkin-signing.p12`).
+The password comes from `CHECKIN_P12_PASS` or an interactive prompt; it is never
+passed on the command line. Signing is a separate step from the build so that
+building needs no secrets, and so a rebuild cannot silently discard a signature.
+
+Signatures are timestamped, so an exe stays valid after the signing certificate
+expires. Renewing means issuing a new leaf from the same root — machines that
+already trust the root need no action.
 
 </details>
 
@@ -103,7 +124,7 @@ make bench ARGS=-benchtime=3s
 ```
 
 > Bare `go test ./...` doesn't work without cgo flags. Use `make test`, or
-> run `source ./opencv-env.sh` once in your shell.
+> run `source ./scripts/opencv-env.sh` once in your shell.
 
 ## Distribution
 
@@ -239,9 +260,16 @@ manifest recorded when the backup was made:
 
 ### Restoring a backup
 
-Backup archives can be browsed, verified, and restored. Restoring a backup adds a new
-Center named `<CenterName>-<backupTimestamp>`. No Center data is overwritten during a restore.
+Backup archives can be browsed, verified, and restored. Restoring a backup adds
+a new Center named `<CenterName>-<backupTimestamp>`. No Center data is
+overwritten during a restore.
 
-Center names must be unique, so Centers can be deactivated and renamed to facilitate backup exploration and restoration. Deactivating a Center hides the Center from the default view, and frees up the Center name without deleting any data. A deactivated Center can be re-activated later if needed.
+Center names must be unique, so Centers can be deactivated and renamed to
+facilitate backup exploration and restoration. Deactivating a Center hides the
+Center from the default view, and frees up the Center name without deleting any
+data. A deactivated Center can be re-activated later if needed.
 
-For example, if you want a Center restored from backup to replace an existing Center of the same name, you can deactivate the existing Center and rename the restored Center. Or, alternatively, if you finish exploring a Center restored from backup, you can deactivate the restored Center to hide it from view.
+For example, if you want a Center restored from backup to replace an existing
+Center of the same name, you can deactivate the existing Center and rename the
+restored Center. Or, alternatively, if you finish exploring a Center restored
+from backup, you can deactivate the restored Center to hide it from view.

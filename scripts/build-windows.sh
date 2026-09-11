@@ -14,8 +14,8 @@
 #
 # gocv needs OpenCV built with the same toolchain cgo uses (MinGW/GCC), so
 # opencv.org's MSVC binaries and scoop's `opencv` (v5) do NOT work. This links a
-# custom slim STATIC OpenCV 5.0.0 built by build-opencv-static.sh, feeding cgo
-# the flags via ./opencv-env.sh.
+# custom slim STATIC OpenCV 5.0.0 built by scripts/build-opencv-static.sh, feeding cgo
+# the flags via ./scripts/opencv-env.sh.
 # The result is one checkin.exe that depends only on Windows system DLLs -- no
 # OpenCV/Qt/MinGW runtime DLLs to bundle.
 #
@@ -23,18 +23,19 @@
 #   scoop install msys2
 #   <msys2> pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake \
 #                     mingw-w64-x86_64-ninja      mingw-w64-x86_64-pkgconf
-#   ./build-opencv-static.sh    # build the static OpenCV this script links
+#   ./scripts/build-opencv-static.sh    # build the static OpenCV this script links
 #
 # Usage:
-#   ./build-windows.sh            # -> ./checkin.exe + dist/checkin-$VERSION.exe
-#   ./build-windows.sh --run      # build, then launch (native Windows only)
-#   ./build-windows.sh --console  # keep the console window, for debugging
+#   ./scripts/build-windows.sh            # -> ./checkin.exe + dist/checkin-$VERSION.exe
+#   ./scripts/build-windows.sh --run      # build, then launch (native Windows only)
+#   ./scripts/build-windows.sh --console  # keep the console window, for debugging
 #
 # The exe is built with -H=windowsgui by default: this is a kiosk app, and
 # without it Windows opens a console box behind the UI on every launch. Pass
 # --console when you need `-log-file -` (stdout logging) to be visible.
 set -euo pipefail
-cd "$(dirname "$0")"
+# Scripts live in scripts/; every path below is relative to the repo root.
+cd "$(dirname "$0")/.."
 
 RUN=0
 CONSOLE=0
@@ -49,11 +50,11 @@ done
 # --- MinGW toolchain + static-OpenCV cgo environment ------------------------
 # Sets PATH/CGO_*/GOFLAGS to link the slim static OpenCV. Shared with every
 # other build and test entry point, so they cannot disagree.
-# TARGET_OS=windows makes opencv-env.sh select the mingw-w64 cross toolchain and
+# TARGET_OS=windows makes scripts/opencv-env.sh select the mingw-w64 cross toolchain and
 # the -windows OpenCV prefix when the host is not Windows; on Windows it is a
 # no-op and the native MSYS2 toolchain is used.
 export TARGET_OS=windows
-source "$(dirname "$0")/opencv-env.sh"
+source ./scripts/opencv-env.sh
 
 if [ "$(uname -s)" != "MINGW"* ] && [ "$RUN" -eq 1 ] && [ "${GOOS:-}" = "windows" ] && [ "$(uname -s)" != "Windows_NT" ]; then
   case "$(uname -s)" in
@@ -62,7 +63,7 @@ if [ "$(uname -s)" != "MINGW"* ] && [ "$RUN" -eq 1 ] && [ "${GOOS:-}" = "windows
 fi
 
 # App version. Single source of truth is the Makefile's VERSION; keep this
-# default in sync. Override with `VERSION=x.y.z ./build-windows.sh`.
+# default in sync. Override with `VERSION=x.y.z ./scripts/build-windows.sh`.
 VERSION="${VERSION:-0.0.7}"
 # -X stamps the in-app version (the About dialog, --version, and startup log).
 # -s -w drop the Go symbol table and DWARF debug info: this is a self-contained
@@ -159,6 +160,29 @@ fi
 mkdir -p dist
 cp checkin.exe "dist/checkin-$VERSION.exe"
 echo "Release exe -> dist/checkin-$VERSION.exe ($(du -h checkin.exe | cut -f1))"
+
+# The exe this produced is unsigned, so Windows greets it with a SmartScreen
+# "unknown developer" prompt. Signing is a separate step (it needs the key, and
+# this build must work without one), which makes it easy to forget -- and the
+# failure is silent here and only visible to whoever downloads it. So say so.
+#
+# Skipped when the artifact already carries a signature, which happens when this
+# script is re-run over a signed exe: the copy above has just discarded that
+# signature, and the note below is what says to put it back.
+# Output is captured before matching rather than piped into grep: `verify`
+# always exits non-zero here (this chain is not publicly rooted), and under
+# `set -o pipefail` a pipeline would inherit that and invert the test.
+_SIG_OUT=""
+if command -v osslsigncode >/dev/null 2>&1; then
+  _SIG_OUT="$(osslsigncode verify -in "dist/checkin-$VERSION.exe" 2>&1 || true)"
+fi
+if [ -z "$_SIG_OUT" ] || [[ "$_SIG_OUT" == *"No signature found"* ]]; then
+  echo
+  echo "This exe is UNSIGNED. For a release, sign and verify it:"
+  echo "    make sign-windows"
+  echo "    make verify-windows"
+  echo "(Rebuilding discards a signature, so sign after the final build.)"
+fi
 
 if [ "$RUN" -eq 1 ]; then
   echo "Running..."

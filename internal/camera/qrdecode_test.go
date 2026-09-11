@@ -10,7 +10,7 @@ import (
 // TestQRCodeDetectorDecodes is a smoke test over the real OpenCV link: it
 // generates a QR code and runs it through the same gocv detector the capture
 // loop uses. Its real job is to guard the trimmed OpenCV build (see
-// build-opencv-static.sh BUILD_LIST and third_party/gocv) -- if a future trim
+// scripts/build-opencv-static.sh BUILD_LIST and third_party/gocv) -- if a future trim
 // drops a module the QRCodeDetectorAruco/decoder needs, decoding breaks here
 // rather than silently in the field where nothing would ever scan.
 func TestQRCodeDetectorDecodes(t *testing.T) {

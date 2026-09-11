@@ -4,15 +4,15 @@
 #
 # Runs two ways, picked automatically from the host OS:
 #   - natively on Windows, from Git Bash with MSYS2 + the mingw toolchain
-#     (same prerequisites as build-windows.sh)
+#     (same prerequisites as scripts/build-windows.sh)
 #   - cross-compiled from macOS/Linux with the mingw-w64 cross toolchain
-#     (`brew install mingw-w64`), which is how build-windows.sh cross-builds
+#     (`brew install mingw-w64`), which is how scripts/build-windows.sh cross-builds
 #
 # Why a custom build: MSYS2's prebuilt OpenCV is shared-only and pulls in ~166 MB
 # of third-party DLLs this app never uses (Qt6/ICU, ffmpeg codecs, OpenBLAS). This
 # build drops those but keeps every OpenCV *module* gocv's wrappers reference, so
-# the vendored gocv fork links via ./opencv-env.sh. See
-# build-windows.sh and the plan for the full rationale.
+# the vendored gocv fork links via ./scripts/opencv-env.sh. See
+# scripts/build-windows.sh and the plan for the full rationale.
 #
 # Pinned to the OpenCV version gocv v0.43.0 targets. To update: bump OPENCV_VERSION
 # to the version the installed gocv release targets (check its README), delete the
@@ -24,11 +24,12 @@
 # both its native OpenCV and the Windows one without collision.
 #
 # Usage:
-#   ./build-opencv-static.sh                 # download (if needed), configure, build, install
-#   PREFIX=/c/opt/opencv-static ./build-opencv-static.sh
-#   ./build-opencv-static.sh --clean         # wipe the build dir first (fresh configure)
+#   ./scripts/build-opencv-static.sh                 # download (if needed), configure, build, install
+#   PREFIX=/c/opt/opencv-static ./scripts/build-opencv-static.sh
+#   ./scripts/build-opencv-static.sh --clean         # wipe the build dir first (fresh configure)
 set -euo pipefail
-cd "$(dirname "$0")"
+# Scripts live in scripts/; every path below is relative to the repo root.
+cd "$(dirname "$0")/.."
 
 OPENCV_VERSION="5.0.0"
 CLEAN=0
@@ -63,7 +64,7 @@ if [ "$CROSS" -eq 1 ]; then
 else
   PREFIX="${PREFIX:-$WORK/$OPENCV_VERSION}"
   BUILD="$WORK/build-$OPENCV_VERSION"
-  # --- Locate MSYS2 / mingw64 (same discovery as build-windows.sh) ----------
+  # --- Locate MSYS2 / mingw64 (same discovery as scripts/build-windows.sh) ----------
   MSYS_ROOT=""
   if command -v scoop >/dev/null 2>&1; then
     MSYS_ROOT="$(scoop prefix msys2 2>/dev/null | tr -d '\r' || true)"
@@ -217,4 +218,4 @@ PC="$(find "$PREFIX" -name opencv5.pc 2>/dev/null | head -1)"
 echo
 echo "Static OpenCV $OPENCV_VERSION installed at: $PREFIX"
 echo "pkg-config file: $PC"
-echo "Next: build the single-exe with  ./build-windows.sh"
+echo "Next: build the single-exe with  ./scripts/build-windows.sh"

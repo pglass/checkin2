@@ -11,7 +11,7 @@ const devVersion = "dev"
 //
 //	-ldflags "-X github.com/pglass/checkin/internal/version.Version=x.y.z"
 //
-// See the Makefile (macOS) and build-windows.sh (Windows) for the injection.
+// See the Makefile (macOS) and scripts/build-windows.sh (Windows) for the injection.
 // The Makefile's VERSION is the single source of truth, so a stamped value
 // always wins in Resolve().
 //

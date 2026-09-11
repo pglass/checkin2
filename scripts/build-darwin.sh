@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the checkin app on macOS as a self-contained binary, linking the slim
-# STATIC OpenCV produced by build-opencv-static-darwin.sh.
+# STATIC OpenCV produced by scripts/build-opencv-static-darwin.sh.
 #
 # Why: `make checkin` links Homebrew's opencv@4 dylibs by absolute path, so the
 # binary only runs on machines with the same Homebrew install (see README
@@ -13,14 +13,15 @@
 #
 # One-time setup:
 #   brew install cmake pkg-config
-#   ARCH=x86_64 ./build-opencv-static-darwin.sh    # ~20-40 min, once per arch
+#   ARCH=x86_64 ./scripts/build-opencv-static-darwin.sh    # ~20-40 min, once per arch
 #
 # Usage:
-#   ./build-darwin.sh                 # -> ./checkin (native arch, static OpenCV)
-#   ARCH=x86_64 ./build-darwin.sh     # -> ./checkin-x86_64 for Intel Macs
-#   ./build-darwin.sh --run           # build, then launch (native only)
+#   ./scripts/build-darwin.sh                 # -> ./checkin (native arch, static OpenCV)
+#   ARCH=x86_64 ./scripts/build-darwin.sh     # -> ./checkin-x86_64 for Intel Macs
+#   ./scripts/build-darwin.sh --run           # build, then launch (native only)
 set -euo pipefail
-cd "$(dirname "$0")"
+# Scripts live in scripts/; every path below is relative to the repo root.
+cd "$(dirname "$0")/.."
 
 RUN=0
 for arg in "$@"; do
@@ -54,11 +55,11 @@ OUT="checkin"
 # One shared definition of how this project links OpenCV, used by every build
 # and test entry point. Exports CGO_* (and GOFLAGS for the one Fyne build tag),
 # and handles the ARCH cross-compile flags.
-source "$(dirname "$0")/opencv-env.sh"
+source ./scripts/opencv-env.sh
 
 
 # App version. Single source of truth is the Makefile's VERSION; keep this
-# default in sync. Override with `VERSION=x.y.z ./build-darwin.sh`.
+# default in sync. Override with `VERSION=x.y.z ./scripts/build-darwin.sh`.
 VERSION="${VERSION:-0.0.7}"
 # -X stamps the in-app version (About window, --version, startup log).
 # -s -w drop the symbol table and DWARF: this is a distributable, not a debug

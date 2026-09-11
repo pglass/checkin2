@@ -6,7 +6,7 @@ seed
 dist/
 **/*.db*
 **/*.ini
-# Cross-built macOS binaries from build-darwin.sh (ARCH=...).
+# Cross-built macOS binaries from scripts/build-darwin.sh (ARCH=...).
 checkin-x86_64
 checkin-arm64
 .DS_Store
@@ -14,3 +14,14 @@ TODO.txt
 
 # Synthetic QR benchmark frames from -qrdump (TestQRDumpFrames).
 qrframes/
+
+# Code-signing key material. These must never enter the repo: the leaf key and
+# the .p12 that wraps it can sign releases as this publisher, and the root key
+# can mint new signing certs that every customer machine already trusts.
+# Keep them outside the working tree (see scripts/sign-windows.sh); these
+# patterns are a backstop against an accidental copy.
+*.key
+*.p12
+*.pfx
+*.csr
+*.srl

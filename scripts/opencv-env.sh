@@ -1,12 +1,12 @@
 # shellcheck shell=bash
 # Set up the cgo environment to link the slim STATIC OpenCV 5 that
-# build-opencv-static.sh (Windows) / build-opencv-static-darwin.sh (macOS)
+# scripts/build-opencv-static.sh (Windows) / scripts/build-opencv-static-darwin.sh (macOS)
 # installs. SOURCE this file, do not execute it:
 #
-#     source ./opencv-env.sh
+#     source ./scripts/opencv-env.sh
 #
-# Every build and test entry point goes through here -- build-darwin.sh,
-# build-windows.sh and the Makefile -- so there is exactly
+# Every build and test entry point goes through here -- scripts/build-darwin.sh,
+# scripts/build-windows.sh and the Makefile -- so there is exactly
 # one definition of how this project links OpenCV, and builds and tests can
 # never disagree about it.
 #
@@ -30,7 +30,7 @@ case "$(uname -s)" in
   *)      _OCV_HOST=windows ;;   # Git Bash / MSYS2
 esac
 # TARGET_OS=windows on a non-Windows host means cross-compile: use the mingw-w64
-# cross toolchain and the Windows OpenCV that build-opencv-static.sh installs to
+# cross toolchain and the Windows OpenCV that scripts/build-opencv-static.sh installs to
 # a -windows-suffixed prefix. Everything else is a native build.
 _OCV_OS="${TARGET_OS:-$_OCV_HOST}"
 _OCV_CROSS=0
@@ -39,10 +39,10 @@ _OCV_CROSS=0
 # --- Locate the static OpenCV ----------------------------------------------
 if [ "$_OCV_OS" = darwin ]; then
   # Arch-suffixed prefix: an arm64 and an x86_64 build coexist. Must match
-  # build-opencv-static-darwin.sh's PREFIX default.
+  # scripts/build-opencv-static-darwin.sh's PREFIX default.
   ARCH="${ARCH:-$(uname -m)}"
   OPENCV_STATIC_PREFIX="${OPENCV_STATIC_PREFIX:-$HOME/opencv-static/$OPENCV_VERSION-$ARCH}"
-  _OCV_BUILD_CMD="ARCH=$ARCH ./build-opencv-static-darwin.sh"
+  _OCV_BUILD_CMD="ARCH=$ARCH ./scripts/build-opencv-static-darwin.sh"
 elif [ "$_OCV_CROSS" -eq 1 ]; then
   # --- mingw-w64 cross toolchain (macOS/Linux -> Windows) -------------------
   command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1 || {
@@ -53,13 +53,13 @@ elif [ "$_OCV_CROSS" -eq 1 ]; then
   }
   # Separate prefix so a macOS host keeps its native OpenCV alongside this one.
   OPENCV_STATIC_PREFIX="${OPENCV_STATIC_PREFIX:-$HOME/opencv-static/$OPENCV_VERSION-windows}"
-  _OCV_BUILD_CMD="./build-opencv-static.sh"
+  _OCV_BUILD_CMD="./scripts/build-opencv-static.sh"
   export GOOS=windows GOARCH=amd64
   export CC=x86_64-w64-mingw32-gcc
   export CXX=x86_64-w64-mingw32-g++
 else
   OPENCV_STATIC_PREFIX="${OPENCV_STATIC_PREFIX:-$HOME/opencv-static/$OPENCV_VERSION}"
-  _OCV_BUILD_CMD="./build-opencv-static.sh"
+  _OCV_BUILD_CMD="./scripts/build-opencv-static.sh"
 
   # --- MinGW toolchain (native Windows only) --------------------------------
   # gocv needs OpenCV built with the same toolchain cgo uses, so MSVC binaries
