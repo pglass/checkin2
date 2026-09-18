@@ -28,6 +28,11 @@ cd "$(dirname "$0")/.."
 # Must match the Makefile's VERSION, which is the single source of truth.
 VERSION="${VERSION:-0.0.7}"
 
+# Where the release lives. Shared with scripts/make-manifest.sh, which records
+# the same base in the manifest's artifact URLs; the release notes link back to
+# docs/ at the tag this creates.
+REPO_URL="${CHECKIN_REPO_URL:-https://github.com/pglass/checkin}"
+
 PUBLISH=0
 for arg in "$@"; do
   case "$arg" in
@@ -142,17 +147,26 @@ if [ ! -s "$NOTES_FILE" ]; then
   echo "Release notes for $VERSION." > "$NOTES_FILE"
 fi
 
-# Document how to check a download, since the whole point of the manifest and
-# signature is that someone can.
+# Say what the signature is and is not, and document how to check a download.
+# Anyone installing the root is trusting everything it ever signs, so the
+# self-issued nature belongs in the release itself, not only in the docs.
 cat >> "$NOTES_FILE" <<NOTES
 
 ---
+
+**Signing**
+
+The binary and \`manifest.json\` are signed with a self-issued root CA, not a
+certificate from a public CA. Trust at your own risk.
+
+Root certificate: [\`docs/checkin-root.crt\`]($REPO_URL/blob/$TAG/docs/checkin-root.crt)
+Fingerprint: [\`docs/CERT.md\`]($REPO_URL/blob/$TAG/docs/CERT.md#fingerprint)
 
 **Verifying this download**
 
 \`manifest.json\` lists the SHA-256 of each artifact and is signed by the
 project's code-signing certificate (\`manifest.json.p7s\`, detached CMS, with
-the signer chain embedded). Verify it against the published root CA:
+the signer chain embedded). Verify it against the root CA:
 
 \`\`\`sh
 openssl cms -verify -binary -in manifest.json.p7s -inform DER \\

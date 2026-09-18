@@ -69,7 +69,8 @@ behind the UI.
 ### Code signing
 
 For now, releases are signed with a self-issued certificate chain: a long-lived
-root CA kept offline, and a short-lived leaf that does the signing.
+root CA kept offline, and a short-lived leaf that does the signing. The root and
+its fingerprint are published in [docs/CERT.md](docs/CERT.md).
 
 ```sh
 make build-windows   # produces dist/checkin.exe
