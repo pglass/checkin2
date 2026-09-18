@@ -1,3 +1,7 @@
+# 0.0.8
+
+No code changes. Added support for Github releases.
+
 # 0.0.7
 
 Backup support
