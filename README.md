@@ -57,7 +57,7 @@ Then, from Git Bash:
 
 ```sh
 make opencv          # one-time: compile the slim static OpenCV 5.0.0
-make build-windows   # -> ./checkin.exe + dist/checkin-<version>.exe
+make build-windows   # -> ./checkin.exe + dist/checkin.exe
 
 ./scripts/build-windows.sh --run       # build, then launch
 ./scripts/build-windows.sh --console   # keep the console window (stdout logging)
@@ -72,7 +72,7 @@ For now, releases are signed with a self-issued certificate chain: a long-lived
 root CA kept offline, and a short-lived leaf that does the signing.
 
 ```sh
-make build-windows   # produces dist/checkin-<version>.exe
+make build-windows   # produces dist/checkin.exe
 make sign-windows    # signs it in place
 make verify-windows  # checks the signature
 ```
@@ -87,6 +87,82 @@ Signatures are timestamped, so an exe stays valid after the signing certificate
 expires. Renewing means issuing a new leaf from the same root — machines that
 already trust the root need no action.
 
+### Releases
+
+A release is a draft GitHub release carrying the signed exe (zipped), a
+`manifest.json` describing it, and a signature over that manifest.
+
+```sh
+make build-windows   # -> dist/checkin.exe
+make sign-windows    # Authenticode-sign it
+make manifest        # -> dist/checkin-<version>-windows-amd64.zip + manifest.json
+make sign-manifest   # -> manifest.json.p7s + manifest.json.tsr
+make release         # draft GitHub release (needs `gh`)
+```
+
+`make release` creates a **draft**, so nothing is public until you review the
+files and notes and publish it from the web UI. Release notes come from the
+matching `# <version>` section of `CHANGELOG.md`.
+
+The manifest records the version and, for each artifact, the download URL and
+SHA-256:
+
+```json
+{
+  "schema": 1,
+  "version": "0.0.7",
+  "released_at": "2026-09-17T16:42:15Z",
+  "notes_url": "https://github.com/pglass/checkin/releases/tag/v0.0.7",
+  "artifacts": [
+    {
+      "os": "windows", "arch": "amd64",
+      "filename": "checkin-0.0.7-windows-amd64.zip",
+      "url": "https://github.com/pglass/checkin/releases/download/v0.0.7/checkin-0.0.7-windows-amd64.zip",
+      "size": 24758641,
+      "sha256": "6027cc…",
+      "contains": { "filename": "checkin.exe", "sha256": "08bf1f…" }
+    }
+  ]
+}
+```
+
+There is no auto-update yet. The manifest exists so one can be added without
+reissuing past releases: a client fetches the latest manifest, compares
+`version` to its own, downloads the zip, and checks it against `sha256` before
+unpacking. The hash covers the **zip**, since that is what gets downloaded —
+verifying only the exe inside would mean running an unverified archive through
+a zip extractor first.
+
+#### Verifying a manifest
+
+`manifest.json` is signed with the same certificate that signs the exe. The
+signature is detached CMS (`manifest.json.p7s`, DER) and carries the signer's
+full chain, so verifying needs only the root CA:
+
+```sh
+make verify-manifest ROOT=~/.checkin-signing/checkin-root.crt
+```
+
+The root must be **pinned** by whoever verifies — compiled into a client, or
+obtained out of band. Shipping it next to the manifest would prove nothing,
+since anyone able to replace one could replace both. The leaf travels inside
+the signature; only the root has to be known in advance.
+
+`manifest.json.tsr` is an RFC3161 timestamp over the manifest, from the same
+authority that timestamps the exe. It is what lets a signature outlive the
+short-lived signing leaf: the check becomes "was the leaf valid at the time
+the token asserts" rather than "is it valid now". Verifying the token needs the
+timestamp authority's own root — a second, independent anchor:
+
+```sh
+curl -o digicert-tsa-root.pem https://cacerts.digicert.com/DigiCertTrustedRootG4.crt.pem
+CHECKIN_TSA_ROOTS=digicert-tsa-root.pem make verify-manifest ROOT=~/.checkin-signing/checkin-root.crt
+```
+
+Without `CHECKIN_TSA_ROOTS` the timestamp is reported but not verified — an
+unverified token's claimed time is attacker-chosen, so it is never treated as
+valid on its own.
+
 </details>
 
 <details>
@@ -98,7 +174,7 @@ From macOS, you can build `checkin.exe` for Windows:
 ```sh
 brew install mingw-w64   # macOS (apt install mingw-w64 on Debian)
 make opencv-windows      # one-time: cross-build OpenCV for Windows
-make build-windows       # -> ./checkin.exe + dist/checkin-<version>.exe
+make build-windows       # -> ./checkin.exe + dist/checkin.exe
 ```
 
 </details>
@@ -134,7 +210,7 @@ OS libraries. The binaries run on a stock machine with no OpenCV installed.
 ```sh
 make build-darwin   # -> ./checkin       (stripped, self-contained)
 make bundle         # -> ./Checkin.app   (icon + Info.plist, via Fyne)
-make build-windows  # -> dist/checkin-<version>.exe
+make build-windows  # -> dist/checkin.exe
 ```
 
 `build-darwin` strips debug symbols and uses `otool -L` to check that every

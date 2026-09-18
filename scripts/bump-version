@@ -4,10 +4,10 @@
 #   ./scripts/bump-version              # 0.0.5 -> 0.0.6 (patch bump)
 #   VERSION=1.2.3 ./scripts/bump-version   # set an explicit version
 #
-# The Makefile's `VERSION ?=` line is the single source of truth. The two build
+# The Makefile's `VERSION ?=` line is the single source of truth. Several
 # scripts each carry a `VERSION="${VERSION:-x.y.z}"` fallback for when they are
-# run directly rather than through make; this rewrites those too, so the three
-# can never drift.
+# run directly rather than through make; this rewrites those too, so they can
+# never drift. Add any new script with such a fallback to SCRIPTS below.
 #
 # Refuses to move the version backwards (or sideways to the same value), since
 # that would silently reissue a release number that is already out.
@@ -15,6 +15,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MAKEFILE=Makefile
+# Every script carrying a `VERSION="${VERSION:-x.y.z}"` fallback.
+SCRIPTS=(
+  scripts/build-darwin.sh
+  scripts/build-windows.sh
+  scripts/make-manifest.sh
+  scripts/release.sh
+)
 CURRENT="$(sed -n 's/^VERSION[[:space:]]*?=[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$MAKEFILE" | head -1)"
 [ -n "$CURRENT" ] || { echo "could not read VERSION from $MAKEFILE" >&2; exit 1; }
 
@@ -61,15 +68,15 @@ fi
 # touched, never a version string inside a comment or a URL.
 sed -i.bak -E "s/^(VERSION[[:space:]]*\?=[[:space:]]*).*/\1$NEW/" "$MAKEFILE"
 rm -f "$MAKEFILE.bak"
-for f in scripts/build-darwin.sh scripts/build-windows.sh; do
+for f in "${SCRIPTS[@]}"; do
   sed -i.bak -E "s/^(VERSION=\"\\\$\{VERSION:-)[0-9]+\.[0-9]+\.[0-9]+(\}\")/\1$NEW\2/" "$f"
   rm -f "$f.bak"
 done
 
 # Verify every copy actually landed on the new value, so a pattern that silently
 # stops matching after an edit fails here instead of shipping a stale version.
-STALE="$(grep -rn "$CURRENT" Makefile scripts/build-darwin.sh scripts/build-windows.sh || true)"
-for f in Makefile scripts/build-darwin.sh scripts/build-windows.sh; do
+STALE="$(grep -rn "$CURRENT" "$MAKEFILE" "${SCRIPTS[@]}" || true)"
+for f in "$MAKEFILE" "${SCRIPTS[@]}"; do
   grep -q "$NEW" "$f" || { echo "failed to update $f to $NEW" >&2; exit 1; }
 done
 if [ -n "$STALE" ]; then
@@ -78,6 +85,6 @@ if [ -n "$STALE" ]; then
 fi
 
 echo "Version $CURRENT -> $NEW"
-echo "  Makefile, scripts/build-darwin.sh, scripts/build-windows.sh"
+printf '  %s\n' "$MAKEFILE" "${SCRIPTS[@]}"
 echo
 echo "Next: add a '# $NEW' section to CHANGELOG.md, then commit."

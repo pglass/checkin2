@@ -34,7 +34,7 @@ GO_SOURCES := $(shell find . -name '*.go')
 
 .PHONY: build-windows build-darwin-release run test bench vet generate \
         seed bundle opencv opencv-windows bump-version clean sign-windows \
-        verify-windows
+        verify-windows manifest sign-manifest verify-manifest release
 
 # --- Development ------------------------------------------------------------
 
@@ -112,7 +112,32 @@ sign-windows:
 
 # Check an existing signature without needing the signing key.
 verify-windows:
-	VERSION=$(VERSION) ./scripts/sign-windows.sh --verify dist/checkin-$(VERSION).exe
+	./scripts/sign-windows.sh --verify dist/checkin.exe
+
+# --- GitHub releases --------------------------------------------------------
+
+# Zip the signed exe and describe it in dist/manifest.json: the version, and
+# each artifact's URL and SHA-256. A future updater reads this to decide
+# whether an update exists and to verify what it downloads. Refuses to run on
+# an unsigned exe.
+manifest:
+	VERSION=$(VERSION) ./scripts/make-manifest.sh
+
+# Sign the manifest with the same key that signs the exe, and timestamp it.
+# The hashes inside are only worth as much as this signature. Needs the .p12.
+sign-manifest:
+	./scripts/sign-manifest.sh
+
+# Check the manifest's signature. Needs only the public root CA, so anyone who
+# downloads a release can run it.
+#   make verify-manifest ROOT=/path/to/checkin-root.crt
+verify-manifest:
+	./scripts/verify-manifest.sh $(if $(ROOT),--root $(ROOT))
+
+# Upload everything to a DRAFT GitHub release for review before publishing.
+# Requires `gh` (brew install gh && gh auth login).
+release:
+	VERSION=$(VERSION) ./scripts/release.sh
 
 # --- One-time OpenCV build --------------------------------------------------
 
@@ -130,3 +155,4 @@ endif
 # -windows-suffixed prefix alongside the native one.
 opencv-windows:
 	./scripts/build-opencv-static.sh
+

@@ -10,7 +10,7 @@
 # public CA, and is why the root fingerprint is published for verification.
 #
 # Usage:
-#   ./scripts/sign-windows.sh                      # sign dist/checkin-$VERSION.exe
+#   ./scripts/sign-windows.sh                      # sign dist/checkin.exe
 #   ./scripts/sign-windows.sh dist/other.exe       # sign a specific exe
 #   ./scripts/sign-windows.sh --verify dist/x.exe  # only check an existing signature
 #
@@ -33,9 +33,6 @@ cd "$(dirname "$0")/.."
 # shipped would start failing the day the leaf expires.
 TIMESTAMP_URL="${CHECKIN_TIMESTAMP_URL:-http://timestamp.digicert.com}"
 
-# Must match the Makefile's VERSION, which is the single source of truth.
-VERSION="${VERSION:-0.0.7}"
-
 P12="${CHECKIN_P12:-$HOME/.checkin-signing/checkin-signing.p12}"
 
 VERIFY_ONLY=0
@@ -47,7 +44,7 @@ for arg in "$@"; do
     *) TARGET="$arg" ;;
   esac
 done
-[ -n "$TARGET" ] || TARGET="dist/checkin-$VERSION.exe"
+[ -n "$TARGET" ] || TARGET="dist/checkin.exe"
 
 if [ ! -f "$TARGET" ]; then
   echo "No such exe: $TARGET" >&2

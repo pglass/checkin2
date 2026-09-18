@@ -8,9 +8,10 @@
 #     Windows machine. Cross-built exes cannot be smoke-tested here; --run is
 #     rejected in that mode.
 #
-# The exe is also verified self-contained and copied to dist/ as a versioned
-# release artifact. (This absorbed the old package-windows.sh, which only added
-# those two steps around this script.)
+# The exe is also verified self-contained and copied to dist/ as the release
+# artifact. (This absorbed the old package-windows.sh, which only added those
+# two steps around this script.) scripts/make-manifest.sh zips it into the
+# versioned checkin-$VERSION-windows-amd64.zip that a release ships.
 #
 # gocv needs OpenCV built with the same toolchain cgo uses (MinGW/GCC), so
 # opencv.org's MSVC binaries and scoop's `opencv` (v5) do NOT work. This links a
@@ -26,7 +27,7 @@
 #   ./scripts/build-opencv-static.sh    # build the static OpenCV this script links
 #
 # Usage:
-#   ./scripts/build-windows.sh            # -> ./checkin.exe + dist/checkin-$VERSION.exe
+#   ./scripts/build-windows.sh            # -> ./checkin.exe + dist/checkin.exe
 #   ./scripts/build-windows.sh --run      # build, then launch (native Windows only)
 #   ./scripts/build-windows.sh --console  # keep the console window, for debugging
 #
@@ -156,10 +157,15 @@ else
   exit 1
 fi
 
-# --- Versioned release artifact ---------------------------------------------
+# --- Release artifact -------------------------------------------------------
+# The artifact keeps its plain name: the version lives in the release zip's
+# name (checkin-$VERSION-windows-amd64.zip, built by scripts/make-manifest.sh)
+# and in the manifest, so embedding it here too would mean users unpack a zip
+# and get a differently-named exe every release. Shortcuts and scripts that
+# point at checkin.exe keep working across upgrades this way.
 mkdir -p dist
-cp checkin.exe "dist/checkin-$VERSION.exe"
-echo "Release exe -> dist/checkin-$VERSION.exe ($(du -h checkin.exe | cut -f1))"
+cp checkin.exe "dist/checkin.exe"
+echo "Release exe -> dist/checkin.exe ($(du -h checkin.exe | cut -f1))"
 
 # The exe this produced is unsigned, so Windows greets it with a SmartScreen
 # "unknown developer" prompt. Signing is a separate step (it needs the key, and
@@ -174,7 +180,7 @@ echo "Release exe -> dist/checkin-$VERSION.exe ($(du -h checkin.exe | cut -f1))"
 # `set -o pipefail` a pipeline would inherit that and invert the test.
 _SIG_OUT=""
 if command -v osslsigncode >/dev/null 2>&1; then
-  _SIG_OUT="$(osslsigncode verify -in "dist/checkin-$VERSION.exe" 2>&1 || true)"
+  _SIG_OUT="$(osslsigncode verify -in "dist/checkin.exe" 2>&1 || true)"
 fi
 if [ -z "$_SIG_OUT" ] || [[ "$_SIG_OUT" == *"No signature found"* ]]; then
   echo
