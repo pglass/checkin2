@@ -34,7 +34,8 @@ GO_SOURCES := $(shell find . -name '*.go')
 
 .PHONY: build-windows build-darwin-release run test bench vet generate \
         seed bundle opencv opencv-windows bump-version clean sign-windows \
-        verify-windows manifest sign-manifest verify-manifest release
+        verify-windows manifest sign-manifest verify-manifest release \
+        build-and-sign-release-windows
 
 # --- Development ------------------------------------------------------------
 
@@ -138,6 +139,32 @@ verify-manifest:
 # Requires `gh` (brew install gh && gh auth login).
 release:
 	VERSION=$(VERSION) ./scripts/release.sh
+
+# The whole Windows release, from an empty dist/ to a draft GitHub release:
+# build, Authenticode-sign, zip + manifest, sign the manifest, draft the
+# release. Stops at the draft -- publishing stays a manual step.
+#
+# dist/ is wiped first so nothing from an earlier version can be picked up:
+# every guard downstream compares the manifest against whatever sits in dist/,
+# and a stale zip or signature left there is exactly what they exist to catch.
+#
+# The signing password is read once here and exported, rather than letting each
+# script prompt: make runs every recipe line in its own shell, so sign-windows
+# and sign-manifest would otherwise ask separately for the same passphrase.
+# CHECKIN_P12_PASS already set in the environment is passed straight through.
+build-and-sign-release-windows:
+	@set -e; \
+	if [ -z "$$CHECKIN_P12_PASS" ]; then \
+	  read -r -s -p "Export password for the signing key: " CHECKIN_P12_PASS; \
+	  echo; \
+	fi; \
+	export CHECKIN_P12_PASS; \
+	rm -rf dist; \
+	$(MAKE) build-windows; \
+	$(MAKE) sign-windows; \
+	$(MAKE) manifest; \
+	$(MAKE) sign-manifest; \
+	$(MAKE) release
 
 # --- One-time OpenCV build --------------------------------------------------
 

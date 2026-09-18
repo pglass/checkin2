@@ -109,9 +109,9 @@ ZIP_SIZE="$(wc -c <"$ZIP" | tr -d ' ')"
 jq -n \
   --arg version "$VERSION" \
   --arg released_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg notes_url "$REPO_URL/releases/tag/v$VERSION" \
+  --arg notes_url "$REPO_URL/releases/tag/$VERSION" \
   --arg filename "$(basename "$ZIP")" \
-  --arg url "$REPO_URL/releases/download/v$VERSION/$(basename "$ZIP")" \
+  --arg url "$REPO_URL/releases/download/$VERSION/$(basename "$ZIP")" \
   --argjson size "$ZIP_SIZE" \
   --arg sha256 "$ZIP_SHA" \
   --arg exe_sha256 "$EXE_SHA" \

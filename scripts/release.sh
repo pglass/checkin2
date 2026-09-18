@@ -41,7 +41,9 @@ for arg in "$@"; do
   esac
 done
 
-TAG="v$VERSION"
+# Tags in this repo are bare versions (0.0.7), not v-prefixed. The release
+# name, the tag, and the URLs the manifest points at all derive from this.
+TAG="$VERSION"
 ZIP="dist/checkin-$VERSION-windows-amd64.zip"
 MANIFEST="dist/manifest.json"
 SIG="$MANIFEST.p7s"
@@ -191,7 +193,7 @@ fi
 echo "Creating ${DRAFT_LABEL}release $TAG"
 gh release create "$TAG" \
   ${DRAFT_ARGS[@]+"${DRAFT_ARGS[@]}"} \
-  --title "checkin $VERSION" \
+  --title "$TAG" \
   --notes-file "$NOTES_FILE" \
   "$ZIP" "$MANIFEST" "$SIG" ${TSR_ARGS[@]+"${TSR_ARGS[@]}"}
 
