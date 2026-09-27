@@ -10,37 +10,97 @@ import (
 	"testing"
 )
 
-func TestPayloadRoundTrip(t *testing.T) {
-	p := NewPayload("John", "Smith")
-	b, err := p.Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(b) != `{"Version":2,"FirstName":"John","LastName":"Smith"}` {
-		t.Fatalf("unexpected JSON: %s", b)
-	}
-	got, err := ParsePayload(string(b))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Version != 2 || got.FirstName != "John" || got.LastName != "Smith" {
-		t.Fatalf("round-trip mismatch: %+v", got)
+func TestEncodeName(t *testing.T) {
+	// The worked example from the URL format: Base64URL("John+Smith").
+	if got := EncodeName("John", "Smith"); got != "Sm9obitTbWl0aA" {
+		t.Errorf("EncodeName = %q, want %q", got, "Sm9obitTbWl0aA")
 	}
 }
 
-// A v1 payload carries a single joined Name, which cannot be split back into
-// two columns; it parses but reports the old version, and the scan path
-// rejects it on the version check.
-func TestV1PayloadIsNotCurrentVersion(t *testing.T) {
-	got, err := ParsePayload(`{"Version":1,"Name":"John Smith"}`)
-	if err != nil {
-		t.Fatal(err)
+func TestURL(t *testing.T) {
+	want := "https://pglass.github.io/checkin2/qr/Sm9obitTbWl0aA"
+	// A base with or without a trailing slash must produce the same URL.
+	for _, base := range []string{
+		"https://pglass.github.io/checkin2/qr/",
+		"https://pglass.github.io/checkin2/qr",
+	} {
+		if got := URL(base, "John", "Smith"); got != want {
+			t.Errorf("URL(%q) = %q, want %q", base, got, want)
+		}
 	}
-	if got.Version == Version {
-		t.Error("a v1 payload must not pass as the current version")
+}
+
+func TestURLRoundTrip(t *testing.T) {
+	names := [][2]string{
+		{"John", "Smith"},
+		{"Mary Jane", "Watson-Parker"},   // space and hyphen
+		{"Renée", "Ångström"},            // non-ASCII
+		{"O'Brien", "de la Cruz"},        // apostrophe, spaces
+		{"A", "B"},                       // shortest useful case
 	}
-	if got.FirstName != "" || got.LastName != "" {
-		t.Errorf("v1 payload yielded name parts: %+v", got)
+	for _, n := range names {
+		u := URL(DefaultBaseURL, n[0], n[1])
+		first, last, err := ParseURL(u)
+		if err != nil {
+			t.Errorf("ParseURL(%q): %v", u, err)
+			continue
+		}
+		if first != n[0] || last != n[1] {
+			t.Errorf("round-trip of %q/%q gave %q/%q", n[0], n[1], first, last)
+		}
+	}
+}
+
+// The encoded segment must be URL-safe: base64url uses - and _ in place of
+// + and /, and we drop padding, so no character needs escaping in a path.
+func TestEncodeNameIsURLSafe(t *testing.T) {
+	// Bytes chosen so standard base64 would emit both '+' and '/'.
+	got := EncodeName(string([]byte{0xfb, 0xff}), string([]byte{0xfe}))
+	if strings.ContainsAny(got, "+/=") {
+		t.Errorf("EncodeName produced non-URL-safe output: %q", got)
+	}
+}
+
+// A code keeps scanning after the configured base changes: only the last path
+// segment is read, so cards printed against an old base still work.
+func TestParseURLIgnoresBase(t *testing.T) {
+	for _, u := range []string{
+		"https://pglass.github.io/checkin2/qr/Sm9obitTbWl0aA",
+		"https://example.test/other/path/Sm9obitTbWl0aA",
+		"https://example.test/Sm9obitTbWl0aA/",         // trailing slash
+		"https://example.test/qr/Sm9obitTbWl0aA?utm=1", // query appended
+		"https://example.test/qr/Sm9obitTbWl0aA#frag",  // fragment appended
+		"  https://example.test/qr/Sm9obitTbWl0aA  ",   // surrounding space
+	} {
+		first, last, err := ParseURL(u)
+		if err != nil {
+			t.Errorf("ParseURL(%q): %v", u, err)
+			continue
+		}
+		if first != "John" || last != "Smith" {
+			t.Errorf("ParseURL(%q) = %q/%q, want John/Smith", u, first, last)
+		}
+	}
+}
+
+func TestParseURLRejects(t *testing.T) {
+	// The JSON payload format is no longer accepted.
+	jsonPayload := `{"Version":2,"FirstName":"John","LastName":"Smith"}`
+	for _, tc := range []struct {
+		name string
+		in   string
+	}{
+		{"empty", ""},
+		{"no segment", "https://example.test/"},
+		{"not base64url", "https://example.test/qr/not!base64"},
+		{"no separator", "https://example.test/qr/" + EncodeName("JohnSmith", "")},
+		{"missing last", "https://example.test/qr/" + nameEncoding.EncodeToString([]byte("John+"))},
+		{"missing first", "https://example.test/qr/" + nameEncoding.EncodeToString([]byte("+Smith"))},
+		{"legacy json", jsonPayload},
+	} {
+		if _, _, err := ParseURL(tc.in); err == nil {
+			t.Errorf("%s: ParseURL(%q) succeeded, want error", tc.name, tc.in)
+		}
 	}
 }
 
@@ -54,7 +114,7 @@ func TestGenerateImages(t *testing.T) {
 		testStudent("John", "Smith"),
 		testStudent("Jane", "Doe"),
 	}
-	paths, err := GenerateImages(students, dir)
+	paths, err := GenerateImages(DefaultBaseURL, students, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +155,7 @@ func TestGenerateImages(t *testing.T) {
 // overwriting the other.
 func TestGenerateImagesDistinctFilesForDuplicateNames(t *testing.T) {
 	dir := t.TempDir()
-	paths, err := GenerateImages([]Student{
+	paths, err := GenerateImages(DefaultBaseURL, []Student{
 		testStudent("John", "Smith"),
 		testStudent("John", "Smith"),
 	}, dir)
@@ -128,7 +188,7 @@ func TestGenerateImagesProgressReportsEveryStudent(t *testing.T) {
 	}
 	var seen int
 	last := -1
-	if _, err := GenerateImagesProgress(students, t.TempDir(), func(done, total int) {
+	if _, err := GenerateImagesProgress(DefaultBaseURL, students, t.TempDir(), func(done, total int) {
 		seen++
 		if total != len(students) {
 			t.Errorf("progress total = %d, want %d", total, len(students))
@@ -150,7 +210,7 @@ func TestGenerateImagesProgressReportsEveryStudent(t *testing.T) {
 // The card's geometry is fixed: white background, the code in a 480x480 box
 // centered horizontally 60px from the top, and dark ink below it for the name.
 func TestCardLayout(t *testing.T) {
-	img, err := Card(testStudent("John", "Smith"))
+	img, err := Card(DefaultBaseURL, testStudent("John", "Smith"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +253,7 @@ func TestCardLayout(t *testing.T) {
 // nothing in that path may bleed grey into the code, which scanners read as
 // ambiguous modules.
 func TestQRAreaIsPureBlackAndWhite(t *testing.T) {
-	img, err := Card(testStudent("Shannaf", "Alamin"))
+	img, err := Card(DefaultBaseURL, testStudent("Shannaf", "Alamin"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +271,7 @@ func TestQRAreaIsPureBlackAndWhite(t *testing.T) {
 // The caption, by contrast, is antialiased: its edges carry intermediate
 // greys, which is what keeps the small text from looking jagged.
 func TestNameIsAntialiased(t *testing.T) {
-	img, err := Card(testStudent("Shannaf", "Alamin"))
+	img, err := Card(DefaultBaseURL, testStudent("Shannaf", "Alamin"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +289,7 @@ func TestNameIsAntialiased(t *testing.T) {
 // A very long name is shrunk to fit rather than running off the card.
 func TestCardLongNameStaysInsideTheCard(t *testing.T) {
 	long := strings.Repeat("Wolfeschlegelstein", 3) + ", Hubert"
-	img, err := Card(Student{First: "Hubert", Last: "Wolfeschlegelstein", Label: long})
+	img, err := Card(DefaultBaseURL, Student{First: "Hubert", Last: "Wolfeschlegelstein", Label: long})
 	if err != nil {
 		t.Fatal(err)
 	}

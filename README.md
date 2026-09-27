@@ -286,8 +286,11 @@ checkin -db-path /tmp/x/checkin.db   # dev escape hatch: open a database directl
 
 ## QR codes
 
-- Payload: `{"Version":2,"FirstName":"John","LastName":"Smith"}`.
-- **Version 1 codes are not accepted.** v1 carried a single joined `Name` field.
+- Payload: a URL of the form `<qr_base_url>/<NameBase64>`, where `NameBase64` is
+  `Base64URL(First + "+" + Last)` -- so "John Smith" encodes to
+  `https://pglass.github.io/checkin2/qr/Sm9obitTbWl0aA`.
+- Only the final path segment is read when scanning, so changing `qr_base_url`
+  (settings.ini, not in the Settings window) does not invalidate printed cards.
 - **File → Generate QR Code…** writes one 512x640 PNG per student (QR code with
   the name underneath) into `<Desktop>/Checkin QR Codes/<CenterName>/`, for all
   students or a selected subset. Generating one code opens the image; generating

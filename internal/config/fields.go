@@ -41,6 +41,11 @@ type Field struct {
 	// turned off -- so Set always succeeds. The settings UI still renders it as
 	// a text entry; this only tells the validation test not to expect errors.
 	FreeText bool
+	// Hidden keeps a setting out of the Settings window while leaving it in
+	// settings.ini. It is for install-time values that should not be changed
+	// casually: the entry still lives in this table, so the file round-trips it
+	// and the coverage test still sees the Config field covered.
+	Hidden bool
 	// Directory marks a setting whose value is a directory path. The settings
 	// UI puts a Browse… button next to the entry so the folder can be picked
 	// rather than typed. Typing remains available: a path on a drive that is not
@@ -119,6 +124,26 @@ var Fields = []Field{
 		StructField: "BackupCount",
 		Get:         func(c Config) string { return strconv.Itoa(c.BackupCount) },
 		Set:         func(c *Config, s string) error { return setPositiveInt(&c.BackupCount, "backup_count", s) },
+	},
+	{
+		Key:     "qr_base_url",
+		Section: "qr",
+		Desc: "Base URL that generated QR codes point at. The student's name is base64url-encoded " +
+			"and appended to this, so a scanned code opens a page for that student. Changing this " +
+			"does not stop existing printed cards from scanning (only the final path segment is " +
+			"read), but codes generated afterwards carry the new base.",
+		StructField: "QRBaseURL",
+		FreeText:    true,
+		Hidden:      true,
+		Get:         func(c Config) string { return c.QRBaseURL },
+		Set: func(c *Config, s string) error {
+			// Any string is accepted: this is not validated as a URL because a
+			// self-hosted or intranet base is legitimate, and rejecting an
+			// unusual-looking one at load time would make the app unstartable
+			// over a setting it can otherwise ignore.
+			c.QRBaseURL = strings.TrimSpace(s)
+			return nil
+		},
 	},
 }
 

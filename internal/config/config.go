@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/pglass/checkin/internal/qr"
 )
 
 // Config holds user-tunable settings.
@@ -33,6 +35,11 @@ type Config struct {
 	// Retention also keeps the newest archive of each calendar month, so the
 	// total kept exceeds this: see the backup package's prune.
 	BackupCount int
+	// QRBaseURL is the base that a student's encoded name is appended to when a
+	// QR code is generated. It is deliberately absent from the Settings window:
+	// changing it invalidates every card already printed against the old base,
+	// so it is an install-time choice made in the file, not a routine one.
+	QRBaseURL string
 }
 
 // Default returns the built-in default settings.
@@ -44,6 +51,7 @@ func Default() Config {
 		QRScanCooldown:      8 * time.Second,
 		BackupDir:           "",
 		BackupCount:         14,
+		QRBaseURL:           qr.DefaultBaseURL,
 	}
 }
 

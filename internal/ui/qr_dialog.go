@@ -97,6 +97,8 @@ const minProgressDisplay = 2500 * time.Millisecond
 // since throwing a dozen image windows at them would not be useful.
 func (a *App) runGeneration(w fyne.Window, students []qr.Student) {
 	total := len(students)
+	// Read on the UI thread; the generator goroutine must not touch a.cfg.
+	baseURL := a.cfg.QRBaseURL
 
 	dir, dirErr := qr.CenterDir(a.centerName)
 	if dirErr != nil {
@@ -137,7 +139,7 @@ func (a *App) runGeneration(w fyne.Window, students []qr.Student) {
 
 	// Background: render and write the PNGs. Pure work, no UI calls here.
 	go func() {
-		out, err := qr.GenerateImagesProgress(students, dir, func(done, tot int) {
+		out, err := qr.GenerateImagesProgress(baseURL, students, dir, func(done, tot int) {
 			renderFrac.Store(float64(done) / float64(tot))
 			if done >= tot {
 				renderDone.Store(true)

@@ -2,52 +2,83 @@
 package qr
 
 import (
-	"encoding/json"
+	"encoding/base64"
+	"errors"
+	"fmt"
 	"image"
+	"strings"
 
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-// Version is the current QR payload schema version.
+// DefaultBaseURL is the base the encoded name is appended to when no base is
+// configured. It points at the static page that renders a scanned code back as
+// a QR image, so a code scanned by a phone camera opens something meaningful
+// rather than showing an opaque string.
+const DefaultBaseURL = "https://pglass.github.io/checkin2/qr/"
+
+// Codes encode a URL of the form <base>/<NameBase64>, where NameBase64 is
+// Base64URL(First + "+" + Last) -- RFC 4648 section 5, the URL-safe alphabet,
+// with padding omitted so the value needs no escaping in a path segment.
 //
-// v2 splits the single Name field into FirstName/LastName. v1 codes are not
-// accepted: a v1 payload carries one joined string that cannot be split back
-// into the two columns reliably, so existing sheets must be reprinted.
-const Version = 2
+// The name is joined with "+" because that character cannot appear in the
+// base64url alphabet, so splitting the decoded text on it is unambiguous even
+// when a name itself contains spaces or punctuation.
+const nameSep = "+"
 
-// Payload is the JSON structure encoded in each student QR code.
-type Payload struct {
-	Version   int    `json:"Version"`
-	FirstName string `json:"FirstName"`
-	LastName  string `json:"LastName"`
+// nameEncoding is base64url without padding: "=" is legal in a path but is
+// needlessly escaped by some scanners and link handlers.
+var nameEncoding = base64.URLEncoding.WithPadding(base64.NoPadding)
+
+// EncodeName returns the NameBase64 segment for a student name:
+// Base64URL(First + "+" + Last).
+func EncodeName(first, last string) string {
+	return nameEncoding.EncodeToString([]byte(first + nameSep + last))
 }
 
-// NewPayload builds a v2 payload for a student name.
-func NewPayload(first, last string) Payload {
-	return Payload{Version: Version, FirstName: first, LastName: last}
+// URL returns the full QR payload for a student: base joined to the encoded
+// name. A base with or without a trailing slash produces the same result.
+func URL(base, first, last string) string {
+	return strings.TrimRight(base, "/") + "/" + EncodeName(first, last)
 }
 
-// Marshal returns the JSON bytes for a payload.
-func (p Payload) Marshal() ([]byte, error) {
-	return json.Marshal(p)
-}
-
-// ParsePayload decodes a scanned QR string into a Payload, validating version.
-func ParsePayload(data string) (Payload, error) {
-	var p Payload
-	if err := json.Unmarshal([]byte(data), &p); err != nil {
-		return Payload{}, err
+// ParseURL extracts a student name from a scanned QR payload. The payload is
+// expected to be a URL whose final path segment is Base64URL(First+"+"+Last);
+// the base is not checked, so a code still scans after the configured base URL
+// changes (a reprint would otherwise be needed for every existing card).
+func ParseURL(data string) (first, last string, err error) {
+	seg := strings.TrimSpace(data)
+	// Drop any query or fragment before taking the last path segment, so a URL
+	// decorated by a scanner or link handler still parses.
+	if i := strings.IndexAny(seg, "?#"); i >= 0 {
+		seg = seg[:i]
 	}
-	return p, nil
+	seg = strings.TrimRight(seg, "/")
+	if i := strings.LastIndex(seg, "/"); i >= 0 {
+		seg = seg[i+1:]
+	}
+	if seg == "" {
+		return "", "", errors.New("qr: no name segment in payload")
+	}
+
+	raw, err := nameEncoding.DecodeString(seg)
+	if err != nil {
+		return "", "", fmt.Errorf("qr: name segment is not base64url: %w", err)
+	}
+
+	first, last, ok := strings.Cut(string(raw), nameSep)
+	if !ok {
+		return "", "", fmt.Errorf("qr: decoded name %q has no %q separator", raw, nameSep)
+	}
+	if first == "" || last == "" {
+		return "", "", fmt.Errorf("qr: decoded name %q is missing a part", raw)
+	}
+	return first, last, nil
 }
 
 // Image renders a QR code image for a student name at the given pixel size.
-func Image(first, last string, size int) (image.Image, error) {
-	data, err := NewPayload(first, last).Marshal()
-	if err != nil {
-		return nil, err
-	}
-	code, err := qrcode.New(string(data), qrcode.Medium)
+func Image(base, first, last string, size int) (image.Image, error) {
+	code, err := qrcode.New(URL(base, first, last), qrcode.Medium)
 	if err != nil {
 		return nil, err
 	}
@@ -55,10 +86,6 @@ func Image(first, last string, size int) (image.Image, error) {
 }
 
 // PNG returns PNG-encoded bytes for a student's QR code.
-func PNG(first, last string, size int) ([]byte, error) {
-	data, err := NewPayload(first, last).Marshal()
-	if err != nil {
-		return nil, err
-	}
-	return qrcode.Encode(string(data), qrcode.Medium, size)
+func PNG(base, first, last string, size int) ([]byte, error) {
+	return qrcode.Encode(URL(base, first, last), qrcode.Medium, size)
 }

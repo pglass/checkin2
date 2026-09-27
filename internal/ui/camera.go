@@ -139,14 +139,14 @@ func (a *App) updatePreview(img image.Image) {
 // routeScan parses a scanned payload and opens the check-in/out dialog for a
 // known student, or an Add dialog (prefilled, "not found") for an unknown one.
 func (a *App) routeScan(ev camera.ScanEvent) {
-	p, err := qr.ParsePayload(ev.Payload)
-	if err != nil || p.Version != qr.Version || p.FirstName == "" || p.LastName == "" {
+	first, last, err := qr.ParseURL(ev.Payload)
+	if err != nil {
 		// Detected a QR code we can't use: log the raw string for diagnosis.
-		slog.Debug("QR code detected but not parseable", "raw", ev.Payload)
+		slog.Debug("QR code detected but not parseable", "raw", ev.Payload, "err", err)
 		return
 	}
-	name := store.NewName(p.FirstName, p.LastName)
-	slog.Debug("QR code detected", "json", ev.Payload, "name", name.Display())
+	name := store.NewName(first, last)
+	slog.Debug("QR code detected", "url", ev.Payload, "name", name.Display())
 
 	st, err := a.store.StudentByName(a.ctx, name)
 	fyne.Do(func() {

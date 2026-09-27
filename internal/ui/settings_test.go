@@ -40,19 +40,32 @@ func newTestSettingsWithApp(t *testing.T) (*settings, *App, string) {
 	return s, a, path
 }
 
-// The window is generated from config.Fields, so every setting gets a row.
+// visibleFields is the subset of config.Fields the settings window renders:
+// hidden settings are file-only, so they have no row.
+func visibleFields() []config.Field {
+	var out []config.Field
+	for _, f := range config.Fields {
+		if !f.Hidden {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// The window is generated from config.Fields, so every visible setting gets a row.
 func TestSettingsBuildsRowPerField(t *testing.T) {
 	s, _ := newTestSettings(t)
-	if len(s.rows) != len(config.Fields) {
-		t.Fatalf("rows = %d, want %d (one per config.Fields entry)", len(s.rows), len(config.Fields))
+	want := visibleFields()
+	if len(s.rows) != len(want) {
+		t.Fatalf("rows = %d, want %d (one per visible config.Fields entry)", len(s.rows), len(want))
 	}
 	for i, row := range s.rows {
-		if row.field.Key != config.Fields[i].Key {
-			t.Errorf("row %d key = %q, want %q", i, row.field.Key, config.Fields[i].Key)
+		if row.field.Key != want[i].Key {
+			t.Errorf("row %d key = %q, want %q", i, row.field.Key, want[i].Key)
 		}
-		if row.value() != config.Fields[i].Get(config.Default()) {
+		if row.value() != want[i].Get(config.Default()) {
 			t.Errorf("row %s prefilled with %q, want current value %q",
-				row.field.Key, row.value(), config.Fields[i].Get(config.Default()))
+				row.field.Key, row.value(), want[i].Get(config.Default()))
 		}
 	}
 }
@@ -250,7 +263,7 @@ func TestSettingsDescriptionsWrap(t *testing.T) {
 	s, _ := newTestSettings(t)
 
 	longest := ""
-	for _, f := range config.Fields {
+	for _, f := range visibleFields() {
 		if len(f.Desc) > len(longest) {
 			longest = f.Desc
 		}
@@ -432,4 +445,25 @@ func rowFor(t *testing.T, s *settings, key string) *settingsRow {
 	}
 	t.Fatalf("no row for %q", key)
 	return nil
+}
+
+// A hidden setting is editable in settings.ini but must not appear in the
+// Settings window: it is an install-time value, not a routine one.
+func TestSettingsOmitsHiddenFields(t *testing.T) {
+	s, _ := newTestSettings(t)
+
+	hidden := map[string]bool{}
+	for _, f := range config.Fields {
+		if f.Hidden {
+			hidden[f.Key] = true
+		}
+	}
+	if len(hidden) == 0 {
+		t.Skip("no hidden fields to check")
+	}
+	for _, row := range s.rows {
+		if hidden[row.field.Key] {
+			t.Errorf("hidden setting %q has a row in the Settings window", row.field.Key)
+		}
+	}
 }

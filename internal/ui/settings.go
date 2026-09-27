@@ -150,6 +150,10 @@ func (s *settings) build() fyne.CanvasObject {
 
 	blocks := []fyne.CanvasObject{}
 	for _, f := range config.Fields {
+		// Hidden settings live in settings.ini only; see config.Field.Hidden.
+		if f.Hidden {
+			continue
+		}
 		row := &settingsRow{field: f}
 
 		row.orig = f.Get(cfg)

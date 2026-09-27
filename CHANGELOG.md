@@ -1,6 +1,7 @@
 # 0.0.9
 
 * Generate QR codes as PNG image instead of PDF
+* Use URL-based QR codes
 
 # 0.0.8
 

@@ -45,8 +45,8 @@ type Student struct {
 
 // GenerateImages writes one PNG per student into dir, creating dir if needed,
 // and returns the paths written in the order the students were given.
-func GenerateImages(students []Student, dir string) ([]string, error) {
-	return GenerateImagesProgress(students, dir, nil)
+func GenerateImages(base string, students []Student, dir string) ([]string, error) {
+	return GenerateImagesProgress(base, students, dir, nil)
 }
 
 // GenerateImagesProgress is like GenerateImages but reports progress. The
@@ -56,7 +56,7 @@ func GenerateImages(students []Student, dir string) ([]string, error) {
 //
 // Rendering a card (QR encode + text + PNG) is pure CPU, so the work is spread
 // across all cores.
-func GenerateImagesProgress(students []Student, dir string, progress func(done, total int)) ([]string, error) {
+func GenerateImagesProgress(base string, students []Student, dir string, progress func(done, total int)) ([]string, error) {
 	if len(students) == 0 {
 		return nil, errors.New("no students to generate")
 	}
@@ -73,10 +73,10 @@ func GenerateImagesProgress(students []Student, dir string, progress func(done, 
 	// Compared case-insensitively, since the filesystem may be too.
 	taken := make(map[string]bool, total)
 	for i, st := range students {
-		base := fileBase(st)
-		name := base
+		stem := fileBase(st)
+		name := stem
 		for n := 2; taken[strings.ToLower(name)]; n++ {
-			name = fmt.Sprintf("%s-%d", base, n)
+			name = fmt.Sprintf("%s-%d", stem, n)
 		}
 		taken[strings.ToLower(name)] = true
 		paths[i] = filepath.Join(dir, name+".png")
@@ -105,7 +105,7 @@ func GenerateImagesProgress(students []Student, dir string, progress func(done, 
 			if i >= total {
 				return
 			}
-			if err := writeCard(students[i], paths[i]); err != nil {
+			if err := writeCard(base, students[i], paths[i]); err != nil {
 				mu.Lock()
 				if firstErr == nil {
 					firstErr = err
@@ -133,8 +133,8 @@ func GenerateImagesProgress(students []Student, dir string, progress func(done, 
 // writeCard renders one student's card and writes it to path as a PNG. The file
 // is written whole via a temporary file and renamed into place, so an
 // interrupted run leaves no half-written PNG for the user to open.
-func writeCard(st Student, path string) error {
-	img, err := Card(st)
+func writeCard(base string, st Student, path string) error {
+	img, err := Card(base, st)
 	if err != nil {
 		return err
 	}
@@ -155,8 +155,8 @@ func writeCard(st Student, path string) error {
 
 // Card renders one student's QR card: a white CardWidth x CardHeight image with
 // the QR code at the top and the label centered below it.
-func Card(st Student) (image.Image, error) {
-	code, err := Image(st.First, st.Last, qrSide)
+func Card(base string, st Student) (image.Image, error) {
+	code, err := Image(base, st.First, st.Last, qrSide)
 	if err != nil {
 		return nil, err
 	}

@@ -45,11 +45,7 @@ func newScanApp(t *testing.T) *App {
 func scan(t *testing.T, a *App, first string) {
 	t.Helper()
 	n := testStudentName(first)
-	data, err := qr.NewPayload(n.First, n.Last).Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.routeScan(camera.ScanEvent{Payload: string(data)})
+	a.routeScan(camera.ScanEvent{Payload: qr.URL(qr.DefaultBaseURL, n.First, n.Last)})
 }
 
 // A scan always opens the pop-up and changes nothing until the user acts.
@@ -277,20 +273,17 @@ func TestAddFromScanClearsCooldown(t *testing.T) {
 	a.cam = camera.New(6, 640, 480, time.Minute)
 
 	alice := testStudentName("Alice")
-	payload, err := qr.NewPayload(alice.First, alice.Last).Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
+	payload := qr.URL(qr.DefaultBaseURL, alice.First, alice.Last)
 
 	// Stand in for the scan that opened the dialog: it started the cooldown.
-	a.cam.RecordScan(string(payload))
-	if !a.cam.InCooldown(string(payload)) {
+	a.cam.RecordScan(payload)
+	if !a.cam.InCooldown(payload) {
 		t.Fatal("the opening scan should have started a cooldown")
 	}
 
 	a.showAddStudentDialogPrefill(testStudentName("Alice"),
 		`Scanned "Alice" but student is not found in this center. Add them?`,
-		string(payload))
+		payload)
 
 	// Confirm the add the way the Add button does.
 	dialogConfirm(t, a)
@@ -298,7 +291,7 @@ func TestAddFromScanClearsCooldown(t *testing.T) {
 	if _, err := a.store.StudentByName(a.ctx, testStudentName("Alice")); err != nil {
 		t.Fatalf("student was not added: %v", err)
 	}
-	if a.cam.InCooldown(string(payload)) {
+	if a.cam.InCooldown(payload) {
 		t.Error("cooldown was not cleared; the new student cannot be scanned in immediately")
 	}
 }
@@ -310,16 +303,13 @@ func TestAddFromMenuLeavesCooldownAlone(t *testing.T) {
 	a.cam = camera.New(6, 640, 480, time.Minute)
 
 	alice := testStudentName("Alice")
-	payload, err := qr.NewPayload(alice.First, alice.Last).Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.cam.RecordScan(string(payload))
+	payload := qr.URL(qr.DefaultBaseURL, alice.First, alice.Last)
+	a.cam.RecordScan(payload)
 
 	a.showAddStudentDialogPrefill(testStudentName("Alice"), "", "")
 	dialogConfirm(t, a)
 
-	if !a.cam.InCooldown(string(payload)) {
+	if !a.cam.InCooldown(payload) {
 		t.Error("a menu-opened add cleared a scan cooldown it should not know about")
 	}
 }
