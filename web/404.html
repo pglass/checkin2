@@ -53,10 +53,11 @@
     msg.hidden = false;
   }
 
-  // Match /qr/<payload>. The payload is expected to be base64 (or base64url) of
-  // the text to encode, but we never need to decode it: the QR code encodes this
-  // page's own URL.
-  var m = location.pathname.match(/\/qr\/([^\/?#]+)\/?$/);
+  // Match /qr/<payload>, allowing a leading path prefix so this works both at a
+  // domain root and on a project site (<user>.github.io/<repo>/qr/...). The
+  // payload is expected to be base64 (or base64url) of the text to encode, but
+  // we never need to decode it: the QR code encodes this page's own URL.
+  var m = location.pathname.match(/^(.*)\/qr\/([^\/?#]+)\/?$/);
   if (!m) {
     fail('Usage: <code>/qr/&lt;TextBase64&gt;</code>');
     return;
@@ -67,8 +68,8 @@
     return;
   }
 
-  // Canonical URL for the QR payload: origin + /qr/<payload>, no query or hash.
-  var url = location.origin + '/qr/' + m[1];
+  // Canonical URL for the QR payload: this page's own URL, minus query and hash.
+  var url = location.origin + m[1] + '/qr/' + m[2];
 
   document.title = url;
 

@@ -61,7 +61,10 @@
       link.hidden = true;
       return;
     }
-    var url = location.origin + '/qr/' + b64url(v);
+    // Strip the trailing filename (if any) so this works from both a domain root
+    // and a project site subpath.
+    var base = location.pathname.replace(/\/[^\/]*$/, '');
+    var url = location.origin + base + '/qr/' + b64url(v);
     link.href = url;
     link.textContent = url;
     link.hidden = false;
