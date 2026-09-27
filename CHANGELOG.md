@@ -1,3 +1,7 @@
+# 0.0.9
+
+* Generate QR codes as PNG image instead of PDF
+
 # 0.0.8
 
 No code changes. Added support for Github releases.

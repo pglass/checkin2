@@ -288,8 +288,11 @@ checkin -db-path /tmp/x/checkin.db   # dev escape hatch: open a database directl
 
 - Payload: `{"Version":2,"FirstName":"John","LastName":"Smith"}`.
 - **Version 1 codes are not accepted.** v1 carried a single joined `Name` field.
-- **Admin → Generate QR PDF…** produces a printable grid PDF, for all students
-  or a selected subset, and opens it in the system viewer.
+- **File → Generate QR Code…** writes one 512x640 PNG per student (QR code with
+  the name underneath) into `<Desktop>/Checkin QR Codes/<CenterName>/`, for all
+  students or a selected subset. Generating one code opens the image; generating
+  several opens the folder in the system file browser. Renaming a Center renames
+  its folder too.
 - With a webcam connected, a scanned code opens the same check-in/out popup as a
   double-click. An unknown code opens the Add-student dialog with the name
   filled in. Each student has an 8s scan cooldown.

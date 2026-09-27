@@ -2,9 +2,7 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"sync/atomic"
@@ -34,7 +32,7 @@ const (
 
 var sortModeLabels = []string{"Name (A–Z)", "Name (Z–A)", "Recently Added"}
 
-// showGenerateQRDialog opens the Generate QR PDF picker in its own window, or
+// showGenerateQRDialog opens the Generate QR Code picker in its own window, or
 // raises the existing one if already open (so a forgotten window can't spawn a
 // duplicate). The main window stays interactive throughout.
 //
@@ -53,17 +51,17 @@ func (a *App) showGenerateQRDialog() {
 		return
 	}
 	if len(rows) == 0 {
-		dialog.ShowInformation("Generate QR PDF", "No students to generate.", a.win)
+		dialog.ShowInformation("Generate QR Code", "No students to generate.", a.win)
 		return
 	}
 
 	sel := newStudentSelect(rows)
-	w := a.fyneApp.NewWindow("Generate QR PDF")
+	w := a.fyneApp.NewWindow("Generate QR Code")
 
 	generate := func() {
 		students := sel.selectedForQR()
 		if len(students) == 0 {
-			dialog.ShowInformation("Generate QR PDF", "No students selected.", w)
+			dialog.ShowInformation("Generate QR Code", "No students selected.", w)
 			return
 		}
 		a.runGeneration(w, students)
@@ -89,20 +87,38 @@ func (a *App) showGenerateQRDialog() {
 // even a tiny job shows the bar animating rather than flashing by.
 const minProgressDisplay = 2500 * time.Millisecond
 
-// runGeneration swaps the window to a progress view and generates the PDF on a
-// background goroutine, so the UI never freezes. The bar tracks real render
-// progress (rate-limited so it takes at least minProgressDisplay); once the
-// images are rendered, a spinner + "Opening PDF…" covers the PDF stitching and
-// launching the viewer.
+// runGeneration swaps the window to a progress view and writes the PNG images
+// on a background goroutine, so the UI never freezes. The bar tracks real
+// render progress (rate-limited so it takes at least minProgressDisplay); once
+// the images are written, a spinner covers opening the result.
+//
+// What gets opened afterwards depends on the size of the job: one code opens
+// the image itself, which is what the user asked for; several open the folder,
+// since throwing a dozen image windows at them would not be useful.
 func (a *App) runGeneration(w fyne.Window, students []qr.Student) {
 	total := len(students)
 
-	msg := widget.NewLabel(fmt.Sprintf("Generating PDF for %d QR Codes…", total))
+	dir, dirErr := qr.CenterDir(a.centerName)
+	if dirErr != nil {
+		dialog.ShowError(dirErr, w)
+		return
+	}
+
+	noun := "QR Codes"
+	opensFile := total == 1
+	if opensFile {
+		noun = "QR Code"
+	}
+	msg := widget.NewLabel(fmt.Sprintf("Generating %d %s…", total, noun))
 	msg.Alignment = fyne.TextAlignCenter
 	bar := widget.NewProgressBar() // 0..1, shows percentage text by default
 
 	spinner := widget.NewActivity()
-	opening := widget.NewLabel("Opening PDF…")
+	openingText := "Opening folder…"
+	if opensFile {
+		openingText = "Opening image…"
+	}
+	opening := widget.NewLabel(openingText)
 	openingRow := container.NewHBox(layout.NewSpacer(), spinner, opening, layout.NewSpacer())
 	openingRow.Hide() // shown once rendering completes
 
@@ -111,26 +127,24 @@ func (a *App) runGeneration(w fyne.Window, students []qr.Student) {
 
 	var (
 		renderFrac atomic.Value // float64 in [0,1], written by the generator
-		renderDone atomic.Bool  // all images rendered (stitching/opening next)
-		genDone    atomic.Bool  // whole GeneratePDFProgress returned
+		renderDone atomic.Bool  // all images rendered
+		genDone    atomic.Bool  // the whole generation returned
 		genErr     atomic.Value // error
-		path       atomic.Value // string
+		paths      atomic.Value // []string, the files written
 	)
 	renderFrac.Store(0.0)
 	start := time.Now()
 
-	// Background: render + assemble PDF. Pure work, no UI calls here.
+	// Background: render and write the PNGs. Pure work, no UI calls here.
 	go func() {
-		out := filepath.Join(os.TempDir(),
-			"student-qr-"+time.Now().Format("20060102-150405")+".pdf")
-		err := qr.GeneratePDFProgress(students, out, func(done, tot int) {
+		out, err := qr.GenerateImagesProgress(students, dir, func(done, tot int) {
 			renderFrac.Store(float64(done) / float64(tot))
 			if done >= tot {
 				renderDone.Store(true)
 			}
 		})
 		if err == nil {
-			path.Store(out)
+			paths.Store(out)
 		} else {
 			genErr.Store(err)
 		}
@@ -139,7 +153,7 @@ func (a *App) runGeneration(w fyne.Window, students []qr.Student) {
 
 	// UI ticker: advance the bar to 100%, rate-limited by minProgressDisplay so a
 	// tiny job still animates. Once the bar is full (render finished and the
-	// minimum time elapsed), reveal the spinner and wait for the PDF to finish.
+	// minimum time elapsed), reveal the spinner and wait for the writes to end.
 	go func() {
 		tick := time.NewTicker(50 * time.Millisecond)
 		defer tick.Stop()
@@ -164,8 +178,8 @@ func (a *App) runGeneration(w fyne.Window, students []qr.Student) {
 					openingRow.Show()
 				})
 			}
-			// Done only when the bar is full AND the whole job (stitch+write) is
-			// complete; the spinner covers any gap between the two.
+			// Done only when the bar is full AND every file is written; the
+			// spinner covers any gap between the two.
 			if barFull && genDone.Load() {
 				break
 			}
@@ -178,11 +192,17 @@ func (a *App) runGeneration(w fyne.Window, students []qr.Student) {
 			})
 			return
 		}
-		p, _ := path.Load().(string)
+		written, _ := paths.Load().([]string)
+		// One code: open the image. Several: open the folder holding them.
+		open, target := openDirectory, dir
+		if opensFile && len(written) == 1 {
+			open, target = openWithSystemViewer, written[0]
+		}
+		label := "Saved to:\n" + target
 		fyne.Do(func() {
-			if err := openWithSystemViewer(p); err != nil {
-				dialog.ShowInformation("QR PDF generated",
-					"Saved to:\n"+p+"\n(Could not auto-open: "+err.Error()+")", w)
+			if err := open(target); err != nil {
+				dialog.ShowInformation("QR Codes generated",
+					label+"\n(Could not auto-open: "+err.Error()+")", w)
 			}
 			w.Close() // one-shot: close after generating
 		})
@@ -334,9 +354,9 @@ type studentSelect struct {
 // newStudentSelect builds the QR-style picker: all students selected by default,
 // no selection cap. Kept as the simple entry point for the QR window.
 func newStudentSelect(rows []store.StudentRow) *studentSelect {
-	// Recent-first suits the QR sheet: codes are usually printed right after a
-	// batch of students is added, so the ones just imported are at the top.
-	return newStudentSelectWithOptions(rows, true, 0, sortRecent, nil)
+	// Alphabetical by (Last, First): the picker is usually used to find one
+	// named student, and that is the order every other list in the app uses.
+	return newStudentSelectWithOptions(rows, true, 0, sortNameAsc, nil)
 }
 
 // newStudentSelectWithOptions builds a picker with configurable defaults:
@@ -596,6 +616,18 @@ func (s *studentSelect) selectedIDs() []int64 {
 		}
 	}
 	return ids
+}
+
+// openDirectory opens a folder in the system file browser (Finder, Explorer,
+// or the desktop's default file manager).
+func openDirectory(path string) error {
+	if runtime.GOOS == "windows" {
+		// explorer.exe returns a non-zero exit status even when it succeeds, so
+		// the command is started and not waited on -- the same as every other
+		// platform here.
+		return exec.Command("explorer", path).Start()
+	}
+	return openWithSystemViewer(path)
 }
 
 // openWithSystemViewer opens a file with the OS default application.

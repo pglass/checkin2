@@ -57,9 +57,13 @@ type App struct {
 	previewWin fyne.Window
 	resLabel   *canvas.Text // status bar showing the actual resolution
 
-	// qrWin is the Generate QR PDF window; tracked so reopening raises the
+	// qrWin is the Generate QR Code window; tracked so reopening raises the
 	// existing one instead of spawning a duplicate.
 	qrWin fyne.Window
+
+	// centerName is the open Center, shown in the title bar and used to pick
+	// the folder generated QR images are written to.
+	centerName string
 
 	// historyWin is the History window; tracked like qrWin so reopening raises
 	// the existing one instead of spawning a duplicate.
@@ -121,9 +125,10 @@ func NewAppInWindow(ctx context.Context, fa fyne.App, win fyne.Window, s *store.
 	win.SetTitle("Check-In — " + centerName)
 
 	a := &App{fyneApp: fa, win: win, store: s, ctx: ctx,
-		about:   about{fyneApp: fa, parent: win},
-		cfg:     cfg,
-		cfgPath: cfgPath,
+		about:      about{fyneApp: fa, parent: win},
+		cfg:        cfg,
+		cfgPath:    cfgPath,
+		centerName: centerName,
 		// No camera until startCamera picks one; 0 would mean "device 0 running".
 		camDevice: deviceNone}
 	a.table = newStudentTable(a)
@@ -186,7 +191,7 @@ func (a *App) buildMenu() *fyne.MainMenu {
 	file := fyne.NewMenu("File",
 		fyne.NewMenuItem("Add Student…", a.showAddStudentDialog),
 		fyne.NewMenuItem("Import…", a.showImportWindow),
-		fyne.NewMenuItem("Generate QR PDF…", a.showGenerateQRDialog),
+		fyne.NewMenuItem("Generate QR Code…", a.showGenerateQRDialog),
 		fyne.NewMenuItem("History…", a.showHistoryWindow),
 		fyne.NewMenuItemSeparator(),
 		a.kioskMenuItem,

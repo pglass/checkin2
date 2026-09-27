@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/center"
+	"github.com/pglass/checkin/internal/qr"
 )
 
 // newTestStartup builds a selection window over an app dir holding the given
@@ -317,6 +318,43 @@ func TestRenameDialogRenamesCenter(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(s.appDir, "Gamma")); err != nil {
 		t.Errorf("Gamma directory not on disk: %v", err)
+	}
+}
+
+// Renaming a Center also moves the folder its generated QR images live in, so
+// they stay findable under the Center's new name.
+func TestRenameDialogMovesTheQRImageFolder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	s, _ := newTestStartup(t, "Alpha")
+
+	oldQRDir, err := qr.CenterDir("Alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(oldQRDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(oldQRDir, "Smith, John.png"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s.showRenameDialog(s.centers[0])
+	entry, confirm, _, _ := renameDialogParts(t, s)
+	entry.SetText("Gamma")
+	confirm.OnTapped()
+
+	newQRDir, err := qr.CenterDir("Gamma")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(newQRDir, "Smith, John.png")); err != nil {
+		t.Errorf("QR image did not follow the rename: %v", err)
+	}
+	if _, err := os.Stat(oldQRDir); !os.IsNotExist(err) {
+		t.Errorf("old QR folder still present: %v", err)
 	}
 }
 

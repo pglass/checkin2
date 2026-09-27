@@ -136,26 +136,29 @@ func TestHistoryStudentListOpensSortedByName(t *testing.T) {
 	}
 }
 
-// The QR sheet's picker keeps its recent-first default: codes are printed
-// right after a batch of students is added.
-func TestQRStudentListOpensRecentFirst(t *testing.T) {
+// The QR picker opens alphabetically by (Last, First) -- the order every
+// other student list in the app uses -- with everything selected.
+func TestQRStudentListOpensNameAscending(t *testing.T) {
 	fa := test.NewApp()
 	defer fa.Quit()
 
 	rows := []store.StudentRow{
-		{ID: 1, Name: store.Name{First: "alice", Last: "Adams"}},
+		{ID: 1, Name: store.Name{First: "Carol", Last: "Zane"}},
 		{ID: 2, Name: store.Name{First: "Bob", Last: "Mills"}},
-		{ID: 3, Name: store.Name{First: "Carol", Last: "Zane"}},
+		{ID: 3, Name: store.Name{First: "alice", Last: "Adams"}},
 	}
 
 	sel := newStudentSelect(rows)
 
+	if sel.sort != sortNameAsc {
+		t.Errorf("QR picker opened in sort mode %v, want %v", sel.sort, sortNameAsc)
+	}
 	var got []string
 	for _, r := range sel.rows {
 		got = append(got, r.Name.Display())
 	}
-	want := []string{"Zane, Carol", "Mills, Bob", "Adams, alice"} // ID descending
+	want := []string{"Adams, alice", "Mills, Bob", "Zane, Carol"}
 	if !slices.Equal(got, want) {
-		t.Errorf("QR list opened as %v, want %v (most recently added first)", got, want)
+		t.Errorf("QR list opened as %v, want %v (Last, First ascending)", got, want)
 	}
 }

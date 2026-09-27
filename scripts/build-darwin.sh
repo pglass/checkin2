@@ -60,7 +60,7 @@ source ./scripts/opencv-env.sh
 
 # App version. Single source of truth is the Makefile's VERSION; keep this
 # default in sync. Override with `VERSION=x.y.z ./scripts/build-darwin.sh`.
-VERSION="${VERSION:-0.0.8}"
+VERSION="${VERSION:-0.0.9}"
 # -X stamps the in-app version (About window, --version, startup log).
 # -s -w drop the symbol table and DWARF: this is a distributable, not a debug
 # target. -no_warn_duplicate_libraries silences the harmless repeated -lobjc

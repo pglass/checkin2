@@ -17,6 +17,7 @@ import (
 
 	"github.com/pglass/checkin/internal/center"
 	"github.com/pglass/checkin/internal/config"
+	"github.com/pglass/checkin/internal/qr"
 )
 
 // startup is the Center selection window shown before the main window.
@@ -595,6 +596,13 @@ func (s *startup) showRenameDialog(c center.Center) {
 			return
 		}
 		slog.Info("center renamed", "from", c.Name, "to", renamed.Name, "dir", renamed.Dir)
+		// The Center's QR images live in a folder named after it; move that
+		// too so they stay findable. Best-effort: a Desktop folder that could
+		// not be moved is logged, not raised -- the Center itself is renamed.
+		if err := qr.RenameCenterDir(c.Name, renamed.Name); err != nil {
+			slog.Warn("could not rename QR output directory",
+				"from", c.Name, "to", renamed.Name, "error", err)
+		}
 		popup.Hide()
 		s.reload()
 	}
