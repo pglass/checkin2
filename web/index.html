@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QR Code Generator</title>
+<style>
+  :root { color-scheme: light; }
+  html, body { margin: 0; background: #fff; color: #111; }
+  body {
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 24px 16px;
+    max-width: 40em;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 1rem; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  input {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+  }
+  #link {
+    display: block;
+    margin-top: 1rem;
+    word-break: break-all;
+  }
+  p { color: #555; }
+  code { background: #f2f2f2; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>QR Code Generator</h1>
+
+<label for="text">Text</label>
+<input id="text" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="hello world">
+
+<a id="link" href="#" hidden></a>
+
+<p>Opening the link shows a QR code that encodes the link itself.</p>
+
+<script>
+(function () {
+  var input = document.getElementById('text');
+  var link = document.getElementById('link');
+
+  // base64url: URL-safe and needs no percent-encoding in a path segment.
+  function b64url(s) {
+    var bytes = new TextEncoder().encode(s);
+    var bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function update() {
+    var v = input.value;
+    if (!v) {
+      link.hidden = true;
+      return;
+    }
+    var url = location.origin + '/qr/' + b64url(v);
+    link.href = url;
+    link.textContent = url;
+    link.hidden = false;
+  }
+
+  input.addEventListener('input', update);
+  update();
+})();
+</script>
+</body>
+</html>

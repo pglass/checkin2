@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QR</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #fff;
+    color: #111;
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+  #out img, #out canvas {
+    display: block;
+    width: 100%;
+    max-width: 512px;
+    height: auto;
+    image-rendering: pixelated;
+  }
+  #msg {
+    max-width: 32em;
+    word-break: break-word;
+  }
+  #msg code {
+    background: #f2f2f2;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+<div id="out"></div>
+<div id="msg" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function () {
+  var out = document.getElementById('out');
+  var msg = document.getElementById('msg');
+
+  function fail(html) {
+    msg.innerHTML = html;
+    msg.hidden = false;
+  }
+
+  // Match /qr/<payload>. The payload is expected to be base64 (or base64url) of
+  // the text to encode, but we never need to decode it: the QR code encodes this
+  // page's own URL.
+  var m = location.pathname.match(/\/qr\/([^\/?#]+)\/?$/);
+  if (!m) {
+    fail('Usage: <code>/qr/&lt;TextBase64&gt;</code>');
+    return;
+  }
+
+  if (typeof QRCode === 'undefined') {
+    fail('Could not load the QR code library.');
+    return;
+  }
+
+  // Canonical URL for the QR payload: origin + /qr/<payload>, no query or hash.
+  var url = location.origin + '/qr/' + m[1];
+
+  document.title = url;
+
+  // qrcodejs sizes the canvas up front; 512 is plenty for phone cameras and the
+  // CSS scales it down to fit narrow screens.
+  new QRCode(out, {
+    text: url,
+    width: 512,
+    height: 512,
+    colorDark: '#000000',
+    colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M
+  });
+})();
+</script>
+</body>
+</html>
