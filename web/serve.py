@@ -29,7 +29,7 @@ def main():
     handler = functools.partial(Handler, directory=DIRECTORY)
     server = http.server.HTTPServer(("127.0.0.1", port), handler)
     print(f"serving {DIRECTORY} at http://127.0.0.1:{port}")
-    print(f"try http://127.0.0.1:{port}/qr/aGVsbG8gd29ybGQ")
+    print(f"try http://127.0.0.1:{port}/qr/Sm9obitTbWl0aA")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

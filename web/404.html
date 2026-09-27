@@ -20,12 +20,13 @@
     padding: 16px;
     box-sizing: border-box;
   }
-  #out img, #out canvas {
+  /* The card is one image: the QR code and the name are drawn into a single
+     canvas, so a long-press save or a screenshot keeps the name with the code. */
+  #out img {
     display: block;
     width: 100%;
     max-width: 512px;
     height: auto;
-    image-rendering: pixelated;
   }
   #msg {
     max-width: 32em;
@@ -48,18 +49,21 @@
   var out = document.getElementById('out');
   var msg = document.getElementById('msg');
 
+  // Card layout in pixels, matching the desktop app's printed card so the two
+  // look like the same artifact.
+  var CARD_W = 512, CARD_H = 640;
+  var QR_SIDE = 480, QR_TOP = 60, NAME_GAP = 18, NAME_SIZE = 30;
+
   function fail(html) {
     msg.innerHTML = html;
     msg.hidden = false;
   }
 
   // Match /qr/<payload>, allowing a leading path prefix so this works both at a
-  // domain root and on a project site (<user>.github.io/<repo>/qr/...). The
-  // payload is expected to be base64 (or base64url) of the text to encode, but
-  // we never need to decode it: the QR code encodes this page's own URL.
+  // domain root and on a project site (<user>.github.io/<repo>/qr/...).
   var m = location.pathname.match(/^(.*)\/qr\/([^\/?#]+)\/?$/);
   if (!m) {
-    fail('Usage: <code>/qr/&lt;TextBase64&gt;</code>');
+    fail('Usage: <code>/qr/&lt;NameBase64&gt;</code>');
     return;
   }
 
@@ -71,17 +75,98 @@
   // Canonical URL for the QR payload: this page's own URL, minus query and hash.
   var url = location.origin + m[1] + '/qr/' + m[2];
 
-  document.title = url;
+  // Decode base64url (RFC 4648 section 5, padding optional) into a UTF-8 string.
+  // atob yields one byte per char, so the bytes are re-decoded as UTF-8 to keep
+  // accented names intact.
+  function decodeBase64URL(s) {
+    var b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    var bin = atob(b64); // throws on malformed input
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  }
 
-  // qrcodejs sizes the canvas up front; 512 is plenty for phone cameras and the
-  // CSS scales it down to fit narrow screens.
-  new QRCode(out, {
+  // The payload is Base64URL(First + "+" + Last); "+" cannot appear in the
+  // base64url alphabet, so splitting on the first one is unambiguous.
+  var label = '';
+  try {
+    var name = decodeBase64URL(m[2]);
+    var plus = name.indexOf('+');
+    if (plus > 0 && plus < name.length - 1) {
+      label = name.slice(plus + 1) + ', ' + name.slice(0, plus);
+    }
+  } catch (e) {
+    // Not a decodable name: the QR code is still correct for this URL, so the
+    // card is drawn without a label rather than failing outright.
+    label = '';
+  }
+
+  document.title = label || url;
+
+  // Render the QR code offscreen; qrcodejs writes into a container element.
+  var stage = document.createElement('div');
+  new QRCode(stage, {
     text: url,
-    width: 512,
-    height: 512,
+    width: QR_SIDE,
+    height: QR_SIDE,
     colorDark: '#000000',
     colorLight: '#ffffff',
     correctLevel: QRCode.CorrectLevel.M
+  });
+
+  // qrcodejs draws to a canvas and then swaps in an <img> of it; whichever is
+  // present, wait until it can be drawn from before composing the card.
+  function whenReady(cb) {
+    var img = stage.querySelector('img');
+    var canvas = stage.querySelector('canvas');
+    if (img) {
+      if (img.complete && img.naturalWidth) return cb(img);
+      img.onload = function () { cb(img); };
+      img.onerror = function () { fail('Could not render the QR code.'); };
+      return;
+    }
+    if (canvas) return cb(canvas);
+    setTimeout(function () { whenReady(cb); }, 30);
+  }
+
+  whenReady(function (source) {
+    var card = document.createElement('canvas');
+    card.width = CARD_W;
+    card.height = CARD_H;
+    var ctx = card.getContext('2d');
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, CARD_W, CARD_H);
+
+    // QR modules are solid blocks, so smoothing would only soften the edges a
+    // scanner relies on.
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(source, (CARD_W - QR_SIDE) / 2, QR_TOP, QR_SIDE, QR_SIDE);
+    ctx.imageSmoothingEnabled = true;
+
+    if (label) {
+      var size = NAME_SIZE;
+      var maxWidth = CARD_W - 24;
+      // Shrink an over-wide name rather than clipping it: the name is what
+      // identifies the card.
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = '#000000';
+      do {
+        ctx.font = size + 'px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+        if (ctx.measureText(label).width <= maxWidth) break;
+        size -= 2;
+      } while (size > 10);
+      ctx.fillText(label, CARD_W / 2, QR_TOP + QR_SIDE + NAME_GAP, maxWidth);
+    }
+
+    // Export as a real PNG so long-press "save image" keeps the name with the
+    // code, rather than saving the bare QR.
+    var png = new Image();
+    png.alt = label ? ('QR code for ' + label) : ('QR code for ' + url);
+    png.src = card.toDataURL('image/png');
+    out.appendChild(png);
   });
 })();
 </script>
