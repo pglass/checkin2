@@ -76,11 +76,21 @@ LDFLAGS="-s -w -X github.com/pglass/checkin/internal/version.Version=$VERSION"
 [ "$CONSOLE" -eq 1 ] || LDFLAGS="$LDFLAGS -H=windowsgui"
 
 # Generate a versioninfo resource (fyne.syso) so Windows Explorer's file
-# Properties -> Details shows a File/Product version. `go build` links any
-# *.syso in the main package dir automatically. This mirrors what `fyne
-# package` does internally (goversioninfo), but without triggering Fyne's own
-# build, which cannot use this project's hand-tuned OpenCV cgo env.
+# Properties -> Details shows a File/Product version, and so the exe carries an
+# icon. `go build` links any *.syso in the main package dir automatically. This
+# mirrors what `fyne package` does internally (goversioninfo), but without
+# triggering Fyne's own build, which cannot use this project's hand-tuned
+# OpenCV cgo env.
 SYSO="./cmd/checkin/fyne.syso"
+# Icon.ico is committed (regenerate with scripts/make-icon.sh after changing
+# Icon.png). Without it the exe gets Windows' generic application icon in
+# Explorer, the taskbar and every shortcut pointing at it.
+#
+# goversioninfo embeds the frames twice, as two icon groups: the first is what
+# Explorer and the taskbar read, and IDI_APPLICATION is what the window title
+# bar reads (-application-icon defaults to -icon). Both should be this icon, so
+# the ~9 KB of duplication is intended -- it is not a stale resource.
+ICON="Icon.ico"
 VI_JSON="$(mktemp)"
 # Clear any syso from a previous build so a failure below can't silently link a
 # stale version into this exe. Always clean both up on exit.
@@ -109,9 +119,20 @@ JSON
 #     which BOTH default to true. On an arm64 host that yields an Aarch64 COFF
 #     object, and the x86_64 linker rejects it with "file format not
 #     recognized". -arm=false forces the pe-x86-64 object the exe needs.
+# A missing icon is not worth failing a build over, but it must not pass
+# silently either: the result looks fine until someone notices every shortcut
+# has the generic icon.
+ICON_ARGS=()
+if [ -f "$ICON" ]; then
+  ICON_ARGS=(-icon "$ICON")
+else
+  echo "warning: $ICON not found; exe will have the generic Windows icon." >&2
+  echo "  Regenerate it:  ./scripts/make-icon.sh" >&2
+fi
 if env -u GOOS -u GOARCH -u CC -u CXX -u CGO_LDFLAGS -u CGO_CPPFLAGS \
      go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo \
-     -64 -arm=false -o "$SYSO" "$VI_JSON"; then
+     -64 -arm=false ${ICON_ARGS[@]+"${ICON_ARGS[@]}"} \
+     -o "$SYSO" "$VI_JSON"; then
   echo "Wrote versioninfo -> $SYSO (v$VERSION)"
 else
   echo "warning: goversioninfo failed; exe will lack File version metadata." >&2

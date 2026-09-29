@@ -8,7 +8,8 @@
 # not something to undo.
 #
 # Uploads:
-#   checkin-$VERSION-windows-amd64.zip   the signed exe
+#   checkin-$VERSION-setup.exe           the signed installer (what most people want)
+#   checkin-$VERSION-windows-amd64.zip   the signed exe, portable / no install
 #   manifest.json                        version + hashes
 #   manifest.json.p7s                    detached CMS signature over the manifest
 #   manifest.json.tsr                    RFC3161 timestamp (when one was obtained)
@@ -45,6 +46,7 @@ done
 # name, the tag, and the URLs the manifest points at all derive from this.
 TAG="$VERSION"
 ZIP="dist/checkin-$VERSION-windows-amd64.zip"
+SETUP="dist/checkin-$VERSION-setup.exe"
 MANIFEST="dist/manifest.json"
 SIG="$MANIFEST.p7s"
 TSR="$MANIFEST.tsr"
@@ -63,11 +65,12 @@ fi
 # Every artifact must exist before anything is uploaded. A half-uploaded
 # release is worse than none: a client that fetches a manifest with no
 # signature beside it cannot tell "not signed yet" from "signature stripped".
-for f in "$ZIP" "$MANIFEST" "$SIG"; do
+for f in "$SETUP" "$ZIP" "$MANIFEST" "$SIG"; do
   if [ ! -f "$f" ]; then
     echo "Missing release artifact: $f" >&2
     echo "Build and sign first:" >&2
     echo "    make build-windows && make sign-windows" >&2
+    echo "    make installer-windows && make sign-installer" >&2
     echo "    make manifest && make sign-manifest" >&2
     exit 1
   fi
@@ -99,32 +102,55 @@ if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
   exit 1
 fi
 
-# The manifest names the URL each artifact will live at, and that URL embeds
-# the tag. Catch a mismatch here rather than shipping a manifest that points
-# at a 404.
-MANIFEST_ZIP="$(jq -r '.artifacts[0].filename' "$MANIFEST")"
-if [ "$MANIFEST_ZIP" != "$(basename "$ZIP")" ]; then
-  echo "Manifest names $MANIFEST_ZIP but the zip is $(basename "$ZIP")." >&2
-  exit 1
-fi
+# The manifest names the filename and URL each artifact will live at, and that
+# URL embeds the tag. It also carries each file's SHA-256. Check every artifact
+# against what is actually on disk, because a stale file could otherwise ship
+# under a fresh, correctly-signed manifest -- the client would reject the
+# download and there would be nothing here to point at.
+#
+# Artifacts are looked up by `kind`, not by array position: the manifest lists
+# the installer first today, and a guard that silently followed that ordering
+# would stop checking what it names the moment the order changed.
+sha256_of() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    sha256sum "$1" | cut -d' ' -f1
+  fi
+}
 
-# Confirm the zip on disk is the one the manifest vouches for. Without this a
-# stale zip could ship under a fresh, correctly-signed manifest -- the client
-# would reject the download and there would be nothing to point at.
-if command -v shasum >/dev/null 2>&1; then
-  ZIP_SHA="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
-else
-  ZIP_SHA="$(sha256sum "$ZIP" | cut -d' ' -f1)"
-fi
-MANIFEST_SHA="$(jq -r '.artifacts[0].sha256' "$MANIFEST")"
-if [ "$ZIP_SHA" != "$MANIFEST_SHA" ]; then
-  echo "Zip hash does not match the manifest:" >&2
-  echo "  zip:      $ZIP_SHA" >&2
-  echo "  manifest: $MANIFEST_SHA" >&2
-  echo "Rebuild it:  make manifest && make sign-manifest" >&2
-  exit 1
-fi
-echo "  manifest matches $(basename "$ZIP")"
+check_artifact() {
+  local kind="$1" path="$2"
+  local want_name manifest_name manifest_sha disk_sha
+  want_name="$(basename "$path")"
+
+  manifest_name="$(jq -r --arg k "$kind" \
+    '.artifacts[] | select(.kind == $k) | .filename' "$MANIFEST")"
+  if [ -z "$manifest_name" ] || [ "$manifest_name" = "null" ]; then
+    echo "Manifest describes no artifact of kind \"$kind\"." >&2
+    echo "Rebuild it:  make manifest && make sign-manifest" >&2
+    exit 1
+  fi
+  if [ "$manifest_name" != "$want_name" ]; then
+    echo "Manifest names $manifest_name but the $kind is $want_name." >&2
+    exit 1
+  fi
+
+  manifest_sha="$(jq -r --arg k "$kind" \
+    '.artifacts[] | select(.kind == $k) | .sha256' "$MANIFEST")"
+  disk_sha="$(sha256_of "$path")"
+  if [ "$disk_sha" != "$manifest_sha" ]; then
+    echo "$kind hash does not match the manifest:" >&2
+    echo "  file:     $disk_sha" >&2
+    echo "  manifest: $manifest_sha" >&2
+    echo "Rebuild it:  make manifest && make sign-manifest" >&2
+    exit 1
+  fi
+  echo "  manifest matches $want_name"
+}
+
+check_artifact installer "$SETUP"
+check_artifact zip "$ZIP"
 
 if gh release view "$TAG" >/dev/null 2>&1; then
   echo "Release $TAG already exists." >&2
@@ -175,7 +201,8 @@ openssl cms -verify -binary -in manifest.json.p7s -inform DER \\
   -content manifest.json -CAfile checkin-root.crt -purpose any
 \`\`\`
 
-Then check the zip against the \`sha256\` recorded in the manifest.
+Then check your download against the \`sha256\` recorded in the manifest for
+that artifact (\`kind: "installer"\` for \`setup.exe\`, \`kind: "zip"\` for the zip).
 NOTES
 
 # --- Create -----------------------------------------------------------------
@@ -195,7 +222,7 @@ gh release create "$TAG" \
   ${DRAFT_ARGS[@]+"${DRAFT_ARGS[@]}"} \
   --title "$TAG" \
   --notes-file "$NOTES_FILE" \
-  "$ZIP" "$MANIFEST" "$SIG" ${TSR_ARGS[@]+"${TSR_ARGS[@]}"}
+  "$SETUP" "$ZIP" "$MANIFEST" "$SIG" ${TSR_ARGS[@]+"${TSR_ARGS[@]}"}
 
 rm -f "$NOTES_FILE"
 trap - EXIT

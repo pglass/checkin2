@@ -12,10 +12,14 @@
 #   ./scripts/make-manifest.sh    # -> dist/checkin-$VERSION-windows-amd64.zip
 #                                 #    dist/manifest.json
 #
-# The hash in the manifest covers the ZIP, not the exe inside it. The client
-# downloads the zip, so the zip is what it must verify -- unpacking first and
-# hashing the exe afterwards would mean running an archive through a zip
-# extractor before anything has vouched for it.
+# Two artifacts are described: the installer (kind "installer") and the portable
+# zip (kind "zip"). Both carry the same exe. A client picks by `kind` rather than
+# by position, so the order here is not load-bearing.
+#
+# Each hash covers the file that gets downloaded -- the zip, or the setup.exe --
+# not the exe inside it. That is the point: the download is what must be verified
+# before anything unpacks or executes it. The inner `contains.sha256` is
+# diagnostic, for a human comparing an installed file against a release.
 set -euo pipefail
 # Scripts live in scripts/; every path below is relative to the repo root.
 cd "$(dirname "$0")/.."
@@ -36,6 +40,7 @@ done
 
 EXE="dist/checkin.exe"
 ZIP="dist/checkin-$VERSION-windows-amd64.zip"
+SETUP="dist/checkin-$VERSION-setup.exe"
 MANIFEST="dist/manifest.json"
 
 if [ ! -f "$EXE" ]; then
@@ -70,6 +75,23 @@ if [[ "$SIG_OUT" == *"No signature found"* ]]; then
   exit 1
 fi
 
+# --- Require a signed installer ---------------------------------------------
+# The installer is the artifact most people actually download, so it gets the
+# same treatment as the exe: it must exist, and it must be signed. An unsigned
+# installer shows SmartScreen's "unknown developer" prompt even though the exe
+# inside it is signed -- the installer is what the user launches first.
+if [ ! -f "$SETUP" ]; then
+  echo "No such installer: $SETUP" >&2
+  echo "Build one first:  make installer-windows" >&2
+  exit 1
+fi
+SETUP_SIG_OUT="$(osslsigncode verify -in "$SETUP" 2>&1 || true)"
+if [[ "$SETUP_SIG_OUT" == *"No signature found"* ]]; then
+  echo "$SETUP is UNSIGNED. Sign it before building a release:" >&2
+  echo "    make sign-installer" >&2
+  exit 1
+fi
+
 # --- Zip --------------------------------------------------------------------
 # -j drops directory names so the archive is a flat checkin.exe rather than
 # dist/checkin.exe. -X omits the extra file attributes (uid/gid, timestamps
@@ -91,6 +113,8 @@ sha256_of() {
 ZIP_SHA="$(sha256_of "$ZIP")"
 EXE_SHA="$(sha256_of "$EXE")"
 ZIP_SIZE="$(wc -c <"$ZIP" | tr -d ' ')"
+SETUP_SHA="$(sha256_of "$SETUP")"
+SETUP_SIZE="$(wc -c <"$SETUP" | tr -d ' ')"
 
 # --- Manifest ---------------------------------------------------------------
 # Built with jq rather than a heredoc so that every value is correctly escaped
@@ -115,6 +139,10 @@ jq -n \
   --argjson size "$ZIP_SIZE" \
   --arg sha256 "$ZIP_SHA" \
   --arg exe_sha256 "$EXE_SHA" \
+  --arg setup_filename "$(basename "$SETUP")" \
+  --arg setup_url "$REPO_URL/releases/download/$VERSION/$(basename "$SETUP")" \
+  --argjson setup_size "$SETUP_SIZE" \
+  --arg setup_sha256 "$SETUP_SHA" \
   '{
     schema: 1,
     version: $version,
@@ -124,6 +152,17 @@ jq -n \
       {
         os: "windows",
         arch: "amd64",
+        kind: "installer",
+        filename: $setup_filename,
+        url: $setup_url,
+        size: $setup_size,
+        sha256: $setup_sha256,
+        contains: { filename: "checkin.exe", sha256: $exe_sha256 }
+      },
+      {
+        os: "windows",
+        arch: "amd64",
+        kind: "zip",
         filename: $filename,
         url: $url,
         size: $size,
@@ -135,6 +174,7 @@ jq -n \
 
 echo "Manifest    -> $MANIFEST"
 echo "  version   $VERSION"
+echo "  setup     sha256:$SETUP_SHA"
 echo "  zip       sha256:$ZIP_SHA"
 echo "  exe       sha256:$EXE_SHA"
 echo

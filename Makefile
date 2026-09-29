@@ -35,7 +35,8 @@ GO_SOURCES := $(shell find . -name '*.go')
 .PHONY: build-windows build-darwin-release run test bench vet generate \
         seed bundle opencv opencv-windows bump-version clean sign-windows \
         verify-windows manifest sign-manifest verify-manifest release \
-        build-and-sign-release-windows
+        build-and-sign-release-windows installer-windows sign-installer \
+        verify-installer
 
 # --- Development ------------------------------------------------------------
 
@@ -115,6 +116,24 @@ sign-windows:
 verify-windows:
 	./scripts/sign-windows.sh --verify dist/checkin.exe
 
+# Build the per-user NSIS installer around the signed exe. Requires
+# `brew install makensis`. Must run AFTER sign-windows: the installer embeds a
+# copy of dist/checkin.exe, and signing the installer cannot reach the exe
+# inside it -- so an unsigned exe here ships a SmartScreen prompt on first
+# launch. The script enforces that ordering rather than trusting it.
+installer-windows:
+	VERSION=$(VERSION) ./scripts/build-installer.sh
+
+# Authenticode-sign the installer. Separate from installer-windows for the same
+# reason sign-windows is separate from build-windows: the build must work with
+# no key present. Users meet the installer before the exe, so this is the
+# signature SmartScreen actually shows them.
+sign-installer:
+	./scripts/sign-windows.sh dist/checkin-$(VERSION)-setup.exe
+
+verify-installer:
+	./scripts/sign-windows.sh --verify dist/checkin-$(VERSION)-setup.exe
+
 # --- GitHub releases --------------------------------------------------------
 
 # Zip the signed exe and describe it in dist/manifest.json: the version, and
@@ -141,8 +160,12 @@ release:
 	VERSION=$(VERSION) ./scripts/release.sh
 
 # The whole Windows release, from an empty dist/ to a draft GitHub release:
-# build, Authenticode-sign, zip + manifest, sign the manifest, draft the
-# release. Stops at the draft -- publishing stays a manual step.
+# build, Authenticode-sign, build the installer and sign that too, zip +
+# manifest, sign the manifest, draft the release. Stops at the draft --
+# publishing stays a manual step.
+#
+# The exe is signed before the installer is built, because the installer embeds
+# it; see scripts/build-installer.sh for why that order is not interchangeable.
 #
 # dist/ is wiped first so nothing from an earlier version can be picked up:
 # every guard downstream compares the manifest against whatever sits in dist/,
@@ -162,6 +185,8 @@ build-and-sign-release-windows:
 	rm -rf dist; \
 	$(MAKE) build-windows; \
 	$(MAKE) sign-windows; \
+	$(MAKE) installer-windows; \
+	$(MAKE) sign-installer; \
 	$(MAKE) manifest; \
 	$(MAKE) sign-manifest; \
 	$(MAKE) release
