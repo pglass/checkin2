@@ -65,6 +65,17 @@ type App struct {
 	// the folder generated QR images are written to.
 	centerName string
 
+	// codeWin is the single-student "Show Code" window. One at a time: the
+	// button is on every row, so without this a few clicks would bury the
+	// screen in windows. Reused rather than reopened, so it keeps wherever the
+	// user put it.
+	codeWin fyne.Window
+
+	// codeGen counts "Show Code" clicks so a render that finishes after a later
+	// click can tell it has been superseded and drop its result. Only touched
+	// on the UI thread.
+	codeGen int
+
 	// historyWin is the History window; tracked like qrWin so reopening raises
 	// the existing one instead of spawning a duplicate.
 	historyWin fyne.Window

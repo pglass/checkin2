@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -83,25 +84,110 @@ func (a *App) showGenerateQRDialog() {
 	w.Show()
 }
 
-// generateQRForStudent generates the QR code for one student straight from the
+// scanHint sits under a shown QR code, telling the user what to do with it.
+const scanHint = "To get this code on your phone, scan the code using your phone camera."
+
+// generateQRForStudent shows the QR code for one student straight from the
 // main list's row button, skipping the picker. This is the common case -- one
 // student, one code -- and the picker exists for the batch case.
 //
-// It opens its own small window rather than reusing a.qrWin: that window is the
-// picker, and runGeneration takes the window over with a progress view, so
-// borrowing it would wipe a selection the user was part-way through making.
-// Progress, errors and opening the finished image are all runGeneration's,
-// exactly as for the picker.
+// Unlike the picker's batch path (runGeneration), nothing is written to disk
+// and no system app is opened: the card is rendered in memory and shown in a
+// Fyne window. A single code is something the user wants to look at, usually to
+// scan it off the screen there and then, so a file on the Desktop and a
+// detoured image viewer are both overhead. The picker still writes files, which
+// is the point of generating a batch.
+//
+// It opens its own window rather than reusing a.qrWin: that window is the
+// picker, and borrowing it would wipe a selection the user was part-way
+// through making.
 func (a *App) generateQRForStudent(row store.StudentRow) {
-	w := a.fyneApp.NewWindow("Generate QR Code")
-	w.Resize(fyne.NewSize(360, 160))
-	w.Show()
-	a.runGeneration(w, []qr.Student{{
+	st := qr.Student{
 		First: row.Name.First,
 		Last:  row.Name.Last,
 		Label: row.Name.Display(),
-	}})
+	}
+
+	// One code window at a time. The button is on every row, so opening a new
+	// window per click would bury the screen; the open one is retitled and
+	// refilled with the student just asked for, and raised in case it is behind
+	// the main window.
+	w := a.codeWin
+	if w == nil {
+		w = a.fyneApp.NewWindow("")
+		w.Resize(fyne.NewSize(420, 520))
+		w.SetOnClosed(func() { a.codeWin = nil })
+		a.codeWin = w
+	}
+	w.SetTitle("QR Code — " + row.Name.Display())
+	w.Show()
+	w.RequestFocus()
+	a.runSingleGeneration(w, st, a.cfg.QRBaseURL)
 }
+
+// runSingleGeneration renders one card in the background and swaps the window
+// to show it. The progress bar is kept (the render is quick, but the window
+// should never be blank) with only a token minimum display time, so it does not
+// stand between the user and the code they asked for.
+func (a *App) runSingleGeneration(w fyne.Window, st qr.Student, baseURL string) {
+	msg := widget.NewLabel("Generating QR Code…")
+	msg.Alignment = fyne.TextAlignCenter
+	bar := widget.NewProgressBarInfinite()
+	body := container.NewVBox(layout.NewSpacer(), msg, bar, layout.NewSpacer())
+	w.SetContent(withWindowMargin(body))
+
+	// Clicking a second student while the first is still rendering leaves two
+	// goroutines racing for one window, and the slower would win whichever was
+	// asked for last -- showing one student's code under another's name. Each
+	// run claims a number and a stale one discards its result.
+	a.codeGen++
+	gen := a.codeGen
+
+	start := time.Now()
+	go func() {
+		card, err := qr.Card(baseURL, st)
+
+		// A token floor so the bar is seen rather than flashing by; short
+		// enough that it is not a wait.
+		if d := minSingleProgressDisplay - time.Since(start); d > 0 {
+			time.Sleep(d)
+		}
+
+		fyne.Do(func() {
+			if gen != a.codeGen {
+				return // superseded by a later click
+			}
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			w.SetContent(withWindowMargin(qrCardView(card)))
+		})
+	}()
+}
+
+// minSingleProgressDisplay is how long the single-code progress bar is shown at
+// minimum. Just enough to register as a step rather than a flicker.
+const minSingleProgressDisplay = 100 * time.Millisecond
+
+// qrCardView lays out a rendered card above the scan hint.
+func qrCardView(card image.Image) fyne.CanvasObject {
+	img := canvas.NewImageFromImage(card)
+	img.FillMode = canvas.ImageFillContain
+	// The card is drawn at a fixed aspect; give it a minimum so a small window
+	// still shows a scannable code rather than shrinking it to nothing.
+	img.SetMinSize(fyne.NewSize(qrViewMinSide, qrViewMinSide*float32(qr.CardHeight)/float32(qr.CardWidth)))
+
+	hint := widget.NewLabel(scanHint)
+	hint.Alignment = fyne.TextAlignCenter
+	hint.Wrapping = fyne.TextWrapWord
+
+	return container.NewBorder(nil, hint, nil, nil, img)
+}
+
+// qrViewMinSide is the narrowest the shown card may be drawn, in points. Below
+// this a phone camera starts to struggle with the code on screen.
+const qrViewMinSide = 280
 
 // minProgressDisplay is the shortest time the progress bar takes to fill, so
 // even a tiny job shows the bar animating rather than flashing by.
