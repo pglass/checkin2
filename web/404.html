@@ -47,6 +47,9 @@
     max-width: 512px;
   }
   #share {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     font: inherit;
     font-weight: 600;
     padding: 12px 24px;
@@ -58,12 +61,32 @@
     cursor: pointer;
   }
   #share:active { background: #ebebeb; }
+  /* currentColor so the glyph tracks the button's text color. The icons are
+     hidden by default and the script adds .on to exactly one of them; the
+     `hidden` attribute is not reliable here, since an inline <svg> takes its
+     display from these rules rather than from the UA's [hidden] rule. */
+  #share svg {
+    display: none;
+    width: 1.25em;
+    height: 1.25em;
+    fill: currentColor;
+    flex: none;
+  }
+  #share svg.on { display: block; }
 </style>
 </head>
 <body>
 <div id="card">
   <div id="out"></div>
-  <button id="share" type="button" hidden>Share</button>
+  <button id="share" type="button" hidden>
+    <!-- Material Symbols "ios_share" and "share" (Google, Apache License 2.0),
+         inlined so the button needs no network request. The platform
+         conventions differ, so the script unhides whichever one matches the
+         viewer's platform and leaves the other hidden. -->
+    <svg id="icon-ios" viewBox="0 -960 960 960" aria-hidden="true"><path d="M240-80q-33 0-56.5-23.5T160-160v-400q0-33 23.5-56.5T240-640h80q17 0 28.5 11.5T360-600q0 17-11.5 28.5T320-560h-80v400h480v-400h-80q-17 0-28.5-11.5T600-600q0-17 11.5-28.5T640-640h80q33 0 56.5 23.5T800-560v400q0 33-23.5 56.5T720-80H240Zm211.5-251.5Q440-343 440-360v-407l-36 36q-12 12-28 11.5T348-732q-11-12-11.5-28t11.5-28l104-104q6-6 13-8.5t15-2.5q8 0 15 2.5t13 8.5l104 104q11 11 11 27.5T612-732q-12 12-28.5 12T555-732l-35-35v407q0 17-11.5 28.5T480-320q-17 0-28.5-11.5Z"/></svg>
+    <svg id="icon-android" viewBox="0 -960 960 960" aria-hidden="true"><path d="M680-80q-50 0-85-35t-35-85q0-6 3-28L282-392q-16 15-37 23.5t-45 8.5q-50 0-85-35t-35-85q0-50 35-85t85-35q24 0 45 8.5t37 23.5l281-164q-2-7-2.5-13.5T560-760q0-50 35-85t85-35q50 0 85 35t35 85q0 50-35 85t-85 35q-24 0-45-8.5T598-672L317-508q2 7 2.5 13.5t.5 14.5q0 8-.5 14.5T317-452l281 164q16-15 37-23.5t45-8.5q50 0 85 35t35 85q0 50-35 85t-85 35Zm0-80q17 0 28.5-11.5T720-200q0-17-11.5-28.5T680-240q-17 0-28.5 11.5T640-200q0 17 11.5 28.5T680-160ZM200-440q17 0 28.5-11.5T240-480q0-17-11.5-28.5T200-520q-17 0-28.5 11.5T160-480q0 17 11.5 28.5T200-440Zm508.5-291.5Q720-743 720-760t-11.5-28.5Q697-800 680-800t-28.5 11.5Q640-777 640-760t11.5 28.5Q663-720 680-720t28.5-11.5Z"/></svg>
+    <span>Share</span>
+  </button>
 </div>
 <div id="msg" hidden></div>
 
@@ -218,6 +241,14 @@
       } catch (e) {
         return; // No File constructor, or this payload isn't shareable here.
       }
+
+      // Apple's share sheet uses the box-and-up-arrow on both iOS and macOS;
+      // everything else follows the Android/web three-node glyph. Touch-first
+      // iPads report a Mac platform, which lands on the same icon anyway.
+      var apple = /iPhone|iPad|iPod|Mac/.test(navigator.platform || '') ||
+                  /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent || '');
+      document.getElementById('icon-ios').classList.toggle('on', apple);
+      document.getElementById('icon-android').classList.toggle('on', !apple);
 
       shareBtn.hidden = false;
       shareBtn.addEventListener('click', function () {
