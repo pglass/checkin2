@@ -25,7 +25,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Must match the Makefile's VERSION, which is the single source of truth.
-VERSION="${VERSION:-0.0.9}"
+VERSION="${VERSION:-0.0.10}"
 
 # Where the release will live once scripts/release.sh uploads it. The manifest
 # has to carry absolute URLs: a client fetching the *latest* manifest needs to
