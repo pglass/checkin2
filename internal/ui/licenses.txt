@@ -5,7 +5,8 @@ Checkin ships as a single, self-contained executable that statically links the
 third-party open-source components listed below. Each component is used under
 the terms of its license. Section 1 lists every Go module with its version,
 license, and copyright notice; Section 2 covers the native libraries linked
-into the binary; Section 3 reproduces the full text of each license referenced.
+into the binary; Section 3 covers non-code assets embedded in it; Section 4
+reproduces the full text of each license referenced.
 
 Checkin itself:
   Copyright (c) 2026 Paul Glass.
@@ -168,7 +169,18 @@ executable is:
       proprietary ones, with no copyleft obligation on the executable.
 
 ================================================================================
-3. FULL LICENSE TEXTS
+3. EMBEDDED ASSETS (compiled into the checkin executable)
+================================================================================
+
+  Material Symbols (Google) — Apache License 2.0
+      Copyright (c) Google LLC
+      https://fonts.google.com/icons
+      The "qr_code_2" icon, exported as SVG, is embedded as the glyph on the
+      student list's "Get QR Code" button (internal/ui/icons/qr_code_2.svg).
+      No font files are shipped; only that one icon is used.
+
+================================================================================
+4. FULL LICENSE TEXTS
 ================================================================================
 
 (Some texts below — libpng, IJG/libjpeg, and protobuf's BSD 3-Clause terms —
@@ -177,7 +189,7 @@ per section 2. They are retained for reference and completeness.)
 
 --------------------------------------------------------------------------------
 Apache License 2.0
-  (applies to: gocv, fyne.io/systray, and OpenCV.)
+  (applies to: gocv, fyne.io/systray, OpenCV, and Material Symbols.)
 --------------------------------------------------------------------------------
 
                                  Apache License
@@ -357,7 +369,8 @@ Apache License 2.0
 
    END OF TERMS AND CONDITIONS
 
-   Copyright notices for the Apache-2.0 works appear in Section 1 and 2 above.
+   Copyright notices for the Apache-2.0 works appear in Sections 1, 2 and 3
+   above.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use these files except in compliance with the License.

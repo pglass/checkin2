@@ -106,3 +106,60 @@ func (l marginLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
 func withWindowMargin(content fyne.CanvasObject) fyne.CanvasObject {
 	return container.New(insetLayout{x: windowEdgeInsetX, y: windowEdgeInsetY}, content)
 }
+
+// fixedSizeAtLayout places its single child at a fixed offset, at its own
+// minimum size, ignoring how much room the container has. Used to park an icon
+// at an exact spot inside a stack.
+type fixedSizeAtLayout struct{ x, y float32 }
+
+func (l fixedSizeAtLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
+	if len(objs) == 0 {
+		return fyne.Size{}
+	}
+	return objs[0].MinSize().AddWidthHeight(l.x, l.y)
+}
+
+func (l fixedSizeAtLayout) Layout(objs []fyne.CanvasObject, _ fyne.Size) {
+	if len(objs) == 0 {
+		return
+	}
+	objs[0].Resize(objs[0].MinSize())
+	objs[0].Move(fyne.NewPos(l.x, l.y))
+}
+
+// rowButtonTheme shrinks a widget.Button enough to sit inside a student list
+// row without making the row taller.
+//
+// A button's minimum height is max(labelHeight, inlineIcon) + 2*InnerPadding
+// (see buttonRenderer.MinSize). Under the app theme that is max(22, 20) + 8 =
+// 28, well above the 18pt a text-only row needs, so a default-sized button
+// would set the row height for the whole list. Both terms have to come down:
+// shrinking only the text leaves the 20pt icon as the floor.
+//
+// The button reads these sizes from its own Theme(), so wrapping just the
+// button in a container.ThemeOverride keeps the smaller metrics on the button
+// and leaves every other widget in the app untouched.
+type rowButtonSizes struct{ fyne.Theme }
+
+func newRowButtonTheme() fyne.Theme { return rowButtonSizes{newCompactTheme()} }
+
+func (t rowButtonSizes) Size(n fyne.ThemeSizeName) float32 {
+	switch n {
+	case theme.SizeNameText:
+		return rowButtonTextSize
+	case theme.SizeNameInlineIcon:
+		return rowButtonIconSize
+	case theme.SizeNameInnerPadding:
+		return rowButtonInnerPadding
+	}
+	return t.Theme.Size(n)
+}
+
+// Sizes for the per-row QR button. Chosen together so the button's computed
+// minimum height lands on rowHeight() rather than above it; rowButtonFitsRow in
+// the tests is what holds them to that.
+const (
+	rowButtonTextSize     = 11
+	rowButtonIconSize     = 16
+	rowButtonInnerPadding = 1
+)

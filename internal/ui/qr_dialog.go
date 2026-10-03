@@ -83,6 +83,26 @@ func (a *App) showGenerateQRDialog() {
 	w.Show()
 }
 
+// generateQRForStudent generates the QR code for one student straight from the
+// main list's row button, skipping the picker. This is the common case -- one
+// student, one code -- and the picker exists for the batch case.
+//
+// It opens its own small window rather than reusing a.qrWin: that window is the
+// picker, and runGeneration takes the window over with a progress view, so
+// borrowing it would wipe a selection the user was part-way through making.
+// Progress, errors and opening the finished image are all runGeneration's,
+// exactly as for the picker.
+func (a *App) generateQRForStudent(row store.StudentRow) {
+	w := a.fyneApp.NewWindow("Generate QR Code")
+	w.Resize(fyne.NewSize(360, 160))
+	w.Show()
+	a.runGeneration(w, []qr.Student{{
+		First: row.Name.First,
+		Last:  row.Name.Last,
+		Label: row.Name.Display(),
+	}})
+}
+
 // minProgressDisplay is the shortest time the progress bar takes to fill, so
 // even a tiny job shows the bar animating rather than flashing by.
 const minProgressDisplay = 2500 * time.Millisecond
