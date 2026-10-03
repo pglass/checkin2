@@ -3,9 +3,11 @@ package ui
 import (
 	"fmt"
 	"image"
+	"image/color"
 	"os/exec"
 	"runtime"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -84,8 +86,31 @@ func (a *App) showGenerateQRDialog() {
 	w.Show()
 }
 
-// scanHint sits under a shown QR code, telling the user what to do with it.
-const scanHint = "To get this code on your phone, scan the code using your phone camera."
+// scanHint introduces the step-by-step procedure under a shown QR code.
+const scanHint = "To share this code using your phone:"
+
+// shareFollowUp tells the user what happens after the last step, so the link
+// opening in a browser is expected rather than a surprise.
+const shareFollowUp = `This opens a webpage on your phone where you can tap the "Share" button to share or copy the code.`
+
+// shareSteps is the procedure shown under a QR code, left to right. Spelling
+// out the whole flow (rather than one line saying "scan it") is the point: a
+// user who has not done this before needs to know a link appears and that
+// Share is what sends it on.
+var shareSteps = []shareStep{
+	{icon: mobileCameraIcon, text: "Open your phone camera"},
+	{icon: qrScannerIcon, text: "Point the camera at the QR code"},
+	{icon: linkIcon, text: "Open the link that pops up"},
+}
+
+// shareStep is one step of that procedure: a picture above a caption.
+type shareStep struct {
+	icon fyne.Resource
+	text string
+	// aspect is the picture's width divided by its height, used to size it at a
+	// common height without distorting it. Zero means square.
+	aspect float32
+}
 
 // generateQRForStudent shows the QR code for one student straight from the
 // main list's row button, skipping the picker. This is the common case -- one
@@ -115,7 +140,10 @@ func (a *App) generateQRForStudent(row store.StudentRow) {
 	w := a.codeWin
 	if w == nil {
 		w = a.fyneApp.NewWindow("")
-		w.Resize(fyne.NewSize(420, 520))
+		// Sized for the code plus the three-step row underneath: each step needs
+		// room for its picture and a caption that wraps to two short lines,
+		// with the arrows between them taking little.
+		w.Resize(fyne.NewSize(460, 620))
 		w.SetOnClosed(func() { a.codeWin = nil })
 		a.codeWin = w
 	}
@@ -178,11 +206,217 @@ func qrCardView(card image.Image) fyne.CanvasObject {
 	// still shows a scannable code rather than shrinking it to nothing.
 	img.SetMinSize(fyne.NewSize(qrViewMinSide, qrViewMinSide*float32(qr.CardHeight)/float32(qr.CardWidth)))
 
-	hint := widget.NewLabel(scanHint)
-	hint.Alignment = fyne.TextAlignCenter
-	hint.Wrapping = fyne.TextWrapWord
+	// Intro line, the steps, then what to expect once the link is open. All
+	// three are the same small italic as the step captions, so the procedure
+	// reads as one block of guidance under the code.
+	footer := container.NewVBox(
+		smallItalicLines(scanHint, hintMaxChars),
+		borderedStepsRow(),
+		smallItalicLines(shareFollowUp, hintMaxChars),
+		bottomSpacer(),
+	)
+	return container.NewBorder(nil, footer, nil, nil, img)
+}
 
-	return container.NewBorder(nil, hint, nil, nil, img)
+// bottomSpacer is clear space under the last line of guidance, so the text does
+// not sit on the window's bottom edge.
+func bottomSpacer() fyne.CanvasObject {
+	s := canvas.NewRectangle(color.Transparent)
+	s.SetMinSize(fyne.NewSize(0, footerBottomMargin))
+	return s
+}
+
+// footerBottomMargin is the clear space under the guidance, in points.
+const footerBottomMargin = 10
+
+// hintMaxChars is the width the intro and follow-up wrap at. Wider than a step
+// caption, since these span the whole window rather than one column.
+const hintMaxChars = 64
+
+// smallItalicLines renders text as centered, small, italic lines -- the voice
+// used for every piece of guidance under the code. canvas.Text (not
+// widget.Label) so the size and italics can be set, and it does not wrap, so
+// the text is broken to width here.
+func smallItalicLines(text string, max int) fyne.CanvasObject {
+	box := container.NewVBox()
+	for _, line := range wrapWords(text, max) {
+		t := canvas.NewText(line, theme.Color(theme.ColorNameForeground))
+		t.TextSize = theme.CaptionTextSize()
+		t.TextStyle = fyne.TextStyle{Italic: true}
+		t.Alignment = fyne.TextAlignCenter
+		box.Add(t)
+	}
+	return box
+}
+
+// borderedStepsRow frames the steps so they read as one unit, set apart from
+// the guidance above and below it.
+func borderedStepsRow() fyne.CanvasObject {
+	frame := canvas.NewRectangle(color.Transparent)
+	frame.StrokeColor = theme.Color(theme.ColorNameInputBorder)
+	frame.StrokeWidth = 1
+	frame.CornerRadius = theme.InputRadiusSize()
+
+	// The row is inset from the frame so the pictures and captions do not touch
+	// the line.
+	padded := container.New(insetLayout{x: stepsFramePad, y: stepsFramePad}, shareStepsRow())
+	return container.NewStack(frame, padded)
+}
+
+// stepsFramePad is the clear space between the frame and the steps inside it.
+const stepsFramePad = 6
+
+// shareStepsRow lays the procedure out left to right, one equal column per
+// step. GridWithColumns rather than an HBox so every step gets the same width
+// and the captions wrap inside it, keeping the row even however long the text.
+func shareStepsRow() fyne.CanvasObject {
+	objs := make([]fyne.CanvasObject, 0, 2*len(shareSteps)-1)
+	for i, st := range shareSteps {
+		if i > 0 {
+			objs = append(objs, shareStepArrow())
+		}
+		objs = append(objs, shareStepCell(st))
+	}
+	// An equal-column grid would give each arrow as much room as a step; this
+	// layout gives the arrows only the width they need and splits the rest
+	// evenly between the steps.
+	return container.New(&stepRowLayout{}, objs...)
+}
+
+// shareStepArrow is the separator drawn between two steps, aligned with the
+// step pictures rather than their captions.
+func shareStepArrow() fyne.CanvasObject {
+	img := canvas.NewImageFromResource(arrowRightIcon)
+	img.FillMode = canvas.ImageFillContain
+	img.SetMinSize(fyne.NewSize(stepArrowSide, stepArrowSide))
+	// Centered on the band of step pictures rather than on the row: the row is
+	// picture plus caption, so centering there would drop the arrow level with
+	// the text. The pictures are stepIconSide tall and sit at the top of each
+	// step, so half that, less half the arrow, puts it level with their middle.
+	top := float32(stepIconSide-stepArrowSide) / 2
+	return container.New(fixedSizeAtLayout{x: 0, y: top}, img)
+}
+
+// stepArrowSide is the arrow's drawn size, in points. Smaller than a step's
+// picture: it joins the steps rather than being one.
+const stepArrowSide = 20
+
+// stepRowLayout lays a row of steps separated by arrows: every odd-indexed
+// child is an arrow, taking its minimum width, and the steps divide whatever
+// is left equally so the row stays even however long the captions are.
+type stepRowLayout struct{}
+
+func (l *stepRowLayout) arrowsAndSteps(objs []fyne.CanvasObject) (arrowW float32, steps int) {
+	for i, o := range objs {
+		if i%2 == 1 {
+			arrowW += o.MinSize().Width
+		} else {
+			steps++
+		}
+	}
+	return arrowW, steps
+}
+
+func (l *stepRowLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
+	arrowW, _ := l.arrowsAndSteps(objs)
+	var stepW, h float32
+	for i, o := range objs {
+		m := o.MinSize()
+		if i%2 == 0 && m.Width > stepW {
+			stepW = m.Width // widest step; they are all given this width
+		}
+		if m.Height > h {
+			h = m.Height
+		}
+	}
+	_, steps := l.arrowsAndSteps(objs)
+	return fyne.NewSize(stepW*float32(steps)+arrowW, h)
+}
+
+func (l *stepRowLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
+	arrowW, steps := l.arrowsAndSteps(objs)
+	if steps == 0 {
+		return
+	}
+	stepW := (size.Width - arrowW) / float32(steps)
+
+	var x float32
+	for i, o := range objs {
+		w := stepW
+		if i%2 == 1 {
+			w = o.MinSize().Width
+		}
+		o.Resize(fyne.NewSize(w, size.Height))
+		o.Move(fyne.NewPos(x, 0))
+		x += w
+	}
+}
+
+// shareStepCell is one step: its picture centered above a wrapped caption.
+func shareStepCell(st shareStep) fyne.CanvasObject {
+	img := canvas.NewImageFromResource(st.icon)
+	img.FillMode = canvas.ImageFillContain
+	// Every picture gets the same height, so the captions line up across the
+	// row. Width follows the picture's own aspect: the three glyphs are square,
+	// but the Share screenshot is about twice as wide as it is tall, and forcing
+	// it into a square box would letterbox it down to half the size of the
+	// glyphs beside it.
+	aspect := st.aspect
+	if aspect <= 0 {
+		aspect = 1 // square, which is every Material glyph
+	}
+	img.SetMinSize(fyne.NewSize(stepIconSide*aspect, stepIconSide))
+
+	// canvas.Text, not widget.Label or widget.RichText. A Label cannot be
+	// sized or italicized, and RichText measures its text through a shared
+	// harfbuzz shaper that is not safe to drive from more than one app at once
+	// -- it panicked intermittently inside updateRowBounds. canvas.Text takes
+	// the size and style directly and does not go down that path.
+	//
+	// It does not wrap, so the caption is split across lines here and each line
+	// is centered in the column.
+	lines := wrapWords(st.text, stepCaptionMaxChars)
+	caption := container.NewVBox()
+	for _, line := range lines {
+		t := canvas.NewText(line, theme.Color(theme.ColorNameForeground))
+		t.TextSize = theme.CaptionTextSize()
+		t.TextStyle = fyne.TextStyle{Italic: true}
+		t.Alignment = fyne.TextAlignCenter
+		caption.Add(t)
+	}
+
+	// The picture is centered over the caption rather than filling the column.
+	return container.NewBorder(container.NewCenter(img), nil, nil, nil, caption)
+}
+
+// stepIconSide is the height every step's picture is drawn at, in points.
+const stepIconSide = 32
+
+// stepCaptionMaxChars is roughly how many characters fit on one caption line at
+// the column width the four steps divide between them. canvas.Text does not
+// wrap on its own, so the captions are broken to this width by hand.
+const stepCaptionMaxChars = 18
+
+// wrapWords breaks text into lines of at most max characters, splitting only
+// between words. A word longer than max gets its own line rather than being cut.
+func wrapWords(text string, max int) []string {
+	var lines []string
+	var line string
+	for _, word := range strings.Fields(text) {
+		switch {
+		case line == "":
+			line = word
+		case len(line)+1+len(word) <= max:
+			line += " " + word
+		default:
+			lines = append(lines, line)
+			line = word
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // qrViewMinSide is the narrowest the shown card may be drawn, in points. Below

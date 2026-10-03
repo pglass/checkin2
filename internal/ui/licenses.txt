@@ -175,9 +175,17 @@ executable is:
   Material Symbols (Google) — Apache License 2.0
       Copyright (c) Google LLC
       https://fonts.google.com/icons
-      The "qr_code_2" icon, exported as SVG, is embedded as the glyph on the
-      student list's "Get QR Code" button (internal/ui/icons/qr_code_2.svg).
-      No font files are shipped; only that one icon is used.
+      Four icons, each exported as SVG, are embedded (in internal/ui/icons):
+        - qr_code_2.svg        the student list's "Show Code" button
+        - mobile_camera.svg    step 1 of the share procedure
+        - qr_code_scanner.svg  step 2 of the share procedure
+        - link.svg             step 3 of the share procedure
+      No font files are shipped; only those icons are used.
+
+  Share button screenshot — no third-party rights
+      internal/ui/icons/share_button.jpg is a cropped screenshot of a phone's
+      own Share button, made for this project and used as step 4 of the share
+      procedure. It is not from an icon set and carries no outside license.
 
 ================================================================================
 4. FULL LICENSE TEXTS

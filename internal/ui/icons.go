@@ -29,3 +29,34 @@ var qrCodeIconSVG []byte
 // The resource name's .svg extension is what Fyne's format sniffing keys on,
 // so it must not be dropped.
 var qrCodeIconResource = fyne.NewStaticResource("qr_code_2.svg", qrCodeIconSVG)
+
+// The step icons for the "how to share this code" procedure shown under a QR
+// code. The first three are Material Symbols like the button glyph above; the
+// fourth is a screenshot of a phone's Share button, which no icon set has
+// because it is a picture of a specific UI.
+//
+//go:embed icons/mobile_camera.svg
+var mobileCameraSVG []byte
+
+//go:embed icons/qr_code_scanner.svg
+var qrScannerSVG []byte
+
+//go:embed icons/link.svg
+var linkSVG []byte
+
+//go:embed icons/share_button.jpg
+var shareButtonJPG []byte
+
+// arrowRightSVG separates the steps of that procedure, so the row reads as a
+// sequence rather than three unrelated pictures.
+//
+//go:embed icons/arrow_right_alt.svg
+var arrowRightSVG []byte
+
+var (
+	mobileCameraIcon = fyne.NewStaticResource("mobile_camera.svg", mobileCameraSVG)
+	qrScannerIcon    = fyne.NewStaticResource("qr_code_scanner.svg", qrScannerSVG)
+	linkIcon         = fyne.NewStaticResource("link.svg", linkSVG)
+	shareButtonImage = fyne.NewStaticResource("share_button.jpg", shareButtonJPG)
+	arrowRightIcon   = fyne.NewStaticResource("arrow_right_alt.svg", arrowRightSVG)
+)
