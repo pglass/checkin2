@@ -1,3 +1,8 @@
+# 0.0.10
+
+* Add "Show Code" button with in-app image view + instructions
+* web: Add share button to QR page
+
 # 0.0.9
 
 * Generate QR codes as PNG image instead of PDF
