@@ -37,10 +37,34 @@
     padding: 1px 4px;
     border-radius: 3px;
   }
+  /* Stack the card and the button; the card stays the dominant element. */
+  #card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+    max-width: 512px;
+  }
+  #share {
+    font: inherit;
+    font-weight: 600;
+    padding: 12px 24px;
+    min-height: 44px;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    background: #f7f7f7;
+    color: inherit;
+    cursor: pointer;
+  }
+  #share:active { background: #ebebeb; }
 </style>
 </head>
 <body>
-<div id="out"></div>
+<div id="card">
+  <div id="out"></div>
+  <button id="share" type="button" hidden>Share</button>
+</div>
 <div id="msg" hidden></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -48,6 +72,7 @@
 (function () {
   var out = document.getElementById('out');
   var msg = document.getElementById('msg');
+  var shareBtn = document.getElementById('share');
 
   // Card layout in pixels, matching the desktop app's printed card so the two
   // look like the same artifact.
@@ -167,7 +192,46 @@
     png.alt = label ? ('QR code for ' + label) : ('QR code for ' + url);
     png.src = card.toDataURL('image/png');
     out.appendChild(png);
+
+    setUpShare(card);
   });
+
+  // The Web Share API opens the OS share sheet (iOS) or intent chooser
+  // (Android), handing it the card as a PNG so it can go to Messages, the
+  // photo library, AirDrop and so on. It needs a secure context, a real user
+  // gesture, and file-sharing support specifically, so the button stays hidden
+  // until a share of this exact file is known to be accepted.
+  function setUpShare(card) {
+    if (!navigator.share || !navigator.canShare || !card.toBlob) return;
+
+    // The name rides along in the filename only. Nothing else is shared: a
+    // title or text would land in the message body as pre-populated text.
+    var filename = slug(label) + '.png';
+
+    card.toBlob(function (blob) {
+      if (!blob) return;
+
+      var file;
+      try {
+        file = new File([blob], filename, { type: 'image/png' });
+        if (!navigator.canShare({ files: [file] })) return;
+      } catch (e) {
+        return; // No File constructor, or this payload isn't shareable here.
+      }
+
+      shareBtn.hidden = false;
+      shareBtn.addEventListener('click', function () {
+        // A rejection is usually AbortError from dismissing the sheet. No
+        // retry is possible: the user gesture is spent once the promise
+        // settles, so a second share() would be blocked anyway.
+        navigator.share({ files: [file] }).catch(function () {});
+      });
+    }, 'image/png');
+  }
+
+  function slug(s) {
+    return (s.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'qr-code');
+  }
 })();
 </script>
 </body>
