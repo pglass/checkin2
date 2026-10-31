@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 
 	"fyne.io/fyne/v2"
 
@@ -27,12 +29,20 @@ func main() {
 	centerFlag := flag.String("center", "", "open this Center directly, skipping the selection window (created if absent)")
 	dbPathFlag := flag.String("db-path", "", "open this database file directly, skipping the selection window")
 	versionFlag := flag.Bool("version", false, "print the program version and exit")
+	cpuProfileFlag := flag.String("cpuprofile", "", "write a CPU profile to this file, covering the whole run")
+	memProfileFlag := flag.String("memprofile", "", "write a heap profile to this file on exit")
 	flag.Parse()
 
 	if *versionFlag {
 		fmt.Println(version.Version)
 		os.Exit(0)
 	}
+
+	stopProfiling, err := startProfiling(*cpuProfileFlag, *memProfileFlag)
+	if err != nil {
+		log.Fatalf("start profiling: %v", err)
+	}
+	defer stopProfiling()
 
 	level, err := logging.ParseLevel(*logLevelFlag)
 	if err != nil {
@@ -160,6 +170,44 @@ func main() {
 	}
 
 	fa.Run()
+}
+
+// startProfiling starts the CPU profile if cpuPath is set and returns a function
+// that stops it and writes the heap profile if memPath is set. The profiles are
+// only complete if the returned function runs, so a run ended by log.Fatalf or a
+// kill leaves no usable output. It runs after the log file closes, so failures
+// go to stderr.
+func startProfiling(cpuPath, memPath string) (stop func(), err error) {
+	var cpuFile *os.File
+	if cpuPath != "" {
+		cpuFile, err = os.Create(cpuPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := pprof.StartCPUProfile(cpuFile); err != nil {
+			cpuFile.Close()
+			return nil, err
+		}
+	}
+	return func() {
+		if cpuFile != nil {
+			pprof.StopCPUProfile()
+			cpuFile.Close()
+		}
+		if memPath == "" {
+			return
+		}
+		f, err := os.Create(memPath)
+		if err != nil {
+			log.Printf("create heap profile %s: %v", memPath, err)
+			return
+		}
+		defer f.Close()
+		runtime.GC() // bring the heap statistics up to date
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			log.Printf("write heap profile %s: %v", memPath, err)
+		}
+	}, nil
 }
 
 // alreadyOpenMessage is the user-facing text shown when a Center chosen via

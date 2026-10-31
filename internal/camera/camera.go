@@ -133,7 +133,12 @@ type Camera struct {
 	// cost besides detection), since nobody is watching.
 	previewing atomic.Bool
 
-	// bufPool recycles frame buffers so the full-rate drainer and preview do not
+	// wantFrame is set by the detect loop when it is ready for a frame and cleared
+	// by the drainer as it takes the next one. At most one frame is ever in flight
+	// to the detector, so the copy is only paid for frames that get detected.
+	wantFrame atomic.Bool
+
+	// bufPool recycles frame buffers so the drainer and preview do not
 	// allocate a new image per frame. Buffers are owned by exactly one goroutine
 	// at a time and returned here when done. See getBuf/putBuf.
 	bufPool chan *image.RGBA
@@ -218,14 +223,14 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 	// Decoupled capture with two roles:
 	//   - drain (below): reads frames as fast as the driver delivers, never
 	//     sleeping, so the driver's upstream queue stays empty and every frame is
-	//     live. It hands the newest frame to the detector and produces the preview
-	//     (throttled to the detection rate).
-	//   - this goroutine (detect loop): pulls the newest frame at its own paced
-	//     rate and runs QR detection, so heavy detection costs frame rate, not
-	//     latency.
+	//     live. It copies a frame for the detector only on request and produces
+	//     the preview (throttled to the detection rate).
+	//   - this goroutine (detect loop): requests a frame at its own paced rate and
+	//     runs QR detection, so heavy detection costs frame rate, not latency.
 	// Buffers move by ownership through channels and the pool; no frame is
 	// touched by two goroutines at once.
-	detCh := make(chan *image.RGBA, 1) // newest frame awaiting detection (drop-old)
+	detCh := make(chan *image.RGBA, 1) // requested frame awaiting detection
+	c.wantFrame.Store(true)
 	go c.drain(ctx, reader, detCh)
 
 	for {
@@ -239,23 +244,24 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 		c.detect(buf, &points, &straight, &detector)
 		c.putBuf(buf) // done reading; return for reuse
 
-		// Pace detection to cap CPU. The drainer keeps detCh fresh in the
-		// meantime, so the next frame we pull is still current.
+		// Pace detection to cap CPU. The frame is requested only after the wait,
+		// so the next one we pull is current rather than an interval old.
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-time.After(c.interval):
 		}
+		c.wantFrame.Store(true)
 	}
 }
 
 // drain reads frames from the driver as fast as they arrive (never sleeping, so
 // the driver's upstream queue stays empty and every frame is live). It hands the
-// newest frame to the detector, dropping any the detector hasn't consumed, and
-// builds the preview at the detection rate — rendering faster than we detect
-// would only burn CPU on the mirror and UI upload. Every frame handed on is
-// copied into a pooled buffer before the driver buffer is released, so nothing
-// retains the driver's reused memory.
+// next frame to the detector when one is requested and builds the preview at the
+// detection rate — rendering faster than we detect would only burn CPU on the
+// mirror and UI upload. Every frame handed on is copied into a pooled buffer
+// before the driver buffer is released, so nothing retains the driver's reused
+// memory.
 func (c *Camera) drain(ctx context.Context, reader video.Reader, detCh chan *image.RGBA) {
 	logged := false           // log the actual delivered frame size once
 	var lastPreview time.Time // throttles preview production to c.interval
@@ -286,10 +292,14 @@ func (c *Camera) drain(ctx context.Context, reader video.Reader, detCh chan *ima
 			logged = true
 		}
 
-		// Detection copy (pooled), kept full-rate so the detector always pulls the
-		// freshest frame. Copy before release: the driver reuses src immediately.
-		det := c.getBuf(b.Dx(), b.Dy())
-		draw.Draw(det, det.Bounds(), src, b.Min, draw.Src)
+		// Detection copy (pooled), made only when the detector asks, since it uses
+		// a fraction of the delivered frames. Copy before release: the driver
+		// reuses src immediately.
+		var det *image.RGBA
+		if c.wantFrame.Swap(false) {
+			det = c.getBuf(b.Dx(), b.Dy())
+			draw.Draw(det, det.Bounds(), src, b.Min, draw.Src)
+		}
 
 		// Preview (pooled), throttled to the detection rate while a window is open.
 		if c.previewing.Load() && time.Since(lastPreview) >= c.interval {
@@ -298,25 +308,10 @@ func (c *Camera) drain(ctx context.Context, reader video.Reader, detCh chan *ima
 		}
 		release()
 
-		c.pushDetection(detCh, det)
-	}
-}
-
-// pushDetection places buf as the newest frame for the detector, dropping and
-// recycling any frame the detector hasn't picked up yet.
-func (c *Camera) pushDetection(detCh chan *image.RGBA, buf *image.RGBA) {
-	select {
-	case detCh <- buf:
-	default:
-		select {
-		case old := <-detCh:
-			c.putBuf(old)
-		default:
-		}
-		select {
-		case detCh <- buf:
-		default:
-			c.putBuf(buf) // detector took one meanwhile; recycle ours
+		if det != nil {
+			// Never blocks: a request is only made once the detector has taken the
+			// previous frame, so the one slot in detCh is free.
+			detCh <- det
 		}
 	}
 }
