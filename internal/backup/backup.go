@@ -115,25 +115,22 @@ type Result struct {
 	Path string
 	// Manifest is what went into it.
 	Manifest Manifest
-	// Pruned lists archives deleted to honour the retention count.
-	Pruned []string
 	// Verify is the verification pass over the archive, run as part of every
 	// backup so a bad archive is caught while the source data is still there.
 	Verify VerifyResult
 }
 
-// Run snapshots every Center in centers, writes them into a single zip archive
-// in destDir alongside a JSON manifest, then prunes old archives so at most
-// keep remain. version is stamped into the manifest.
+// Run snapshots every Center in centers and writes them into a single zip
+// archive in destDir alongside a JSON manifest. version is stamped into the
+// manifest. Archives are never deleted: each is small, and every one is kept.
 //
 // Snapshots are written to a temporary directory and the archive is assembled
 // under a temporary name, then renamed into place, so an interrupted run never
-// leaves a partial archive that looks complete. A keep of zero or less disables
-// pruning.
+// leaves a partial archive that looks complete.
 //
 // onProgress may be nil. Run is safe to call with no Centers, producing an
 // archive holding only a manifest.
-func Run(ctx context.Context, centers []center.Center, destDir, version string, keep int, onProgress Progress) (Result, error) {
+func Run(ctx context.Context, centers []center.Center, destDir, version string, onProgress Progress) (Result, error) {
 	if destDir == "" {
 		return Result{}, fmt.Errorf("no backup directory is configured")
 	}
@@ -204,18 +201,6 @@ func Run(ctx context.Context, centers []center.Center, destDir, version string, 
 			VerifySummary(verifyRes))
 	}
 	slog.Info("backup verified", "path", archivePath, "checks", len(verifyRes.Results))
-
-	// Pruning failing does not invalidate the backup that was just written, so
-	// it is reported but does not fail the run.
-	pruned, err := prune(destDir, keep)
-	if err != nil {
-		slog.Warn("could not prune old backups", "dir", destDir, "err", err)
-	}
-	for _, p := range pruned {
-		slog.Info("old backup pruned", "path", p)
-	}
-
-	res.Pruned = pruned
 	return res, nil
 }
 
@@ -411,79 +396,4 @@ func timeFromName(name string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return t, true
-}
-
-// prune deletes archives in dir that neither retention rule keeps, returning
-// the paths removed.
-//
-// Two rules, and an archive survives if either keeps it:
-//
-//   - the keep most recent archives, so a mistake noticed within a few days can
-//     still be undone from a recent backup;
-//   - the newest archive of each calendar month, so the history thins out with
-//     age instead of ending a few days back.
-//
-// Together they give dense cover over the recent past and one restore point per
-// month before that, at a cost that grows by one file a month rather than one
-// per backup.
-//
-// keep <= 0 disables pruning entirely, so a misconfigured retention count never
-// deletes anything.
-func prune(dir string, keep int) ([]string, error) {
-	if keep <= 0 {
-		return nil, nil
-	}
-	archives, err := ListArchives(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	survivors := keepers(archives, keep)
-
-	var pruned []string
-	for _, a := range archives {
-		if survivors[a.Name] {
-			continue
-		}
-		if err := os.Remove(a.Path); err != nil {
-			return pruned, err
-		}
-		pruned = append(pruned, a.Path)
-	}
-	return pruned, nil
-}
-
-// keepers returns the names of the archives retention keeps, given archives
-// newest first. It is separate from prune so the policy can be tested without
-// touching the filesystem.
-func keepers(archives []Archive, keep int) map[string]bool {
-	out := make(map[string]bool, len(archives))
-	if keep <= 0 {
-		// Not a policy prune understands; keep everything rather than guess.
-		for _, a := range archives {
-			out[a.Name] = true
-		}
-		return out
-	}
-
-	// Rule 1: the keep most recent.
-	for i, a := range archives {
-		if i >= keep {
-			break
-		}
-		out[a.Name] = true
-	}
-
-	// Rule 2: the newest archive of each calendar month. archives is newest
-	// first, so the first one seen for a month is that month's newest.
-	seenMonth := map[string]bool{}
-	for _, a := range archives {
-		key := a.CreatedAt.Format("2006-01")
-		if seenMonth[key] {
-			continue
-		}
-		seenMonth[key] = true
-		out[a.Name] = true
-	}
-	return out
 }

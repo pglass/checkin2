@@ -155,9 +155,8 @@ func backedUpToday(at time.Time, ok bool, now time.Time) bool {
 // Center open, so the button is disabled for the duration rather than allowing
 // a second run to race the first.
 //
-// A backup already taken today is confirmed first: repeat runs are harmless but
-// each one costs a slot in the retention window, so a stray click should not
-// quietly push out an older archive.
+// A backup already taken today is confirmed first: repeat runs are harmless, but
+// a stray click should not quietly add a redundant archive.
 func (b *backupBar) run() {
 	at, ok := backup.LastBackupTime(b.startup.cfg.BackupDir)
 	if backedUpToday(at, ok, time.Now()) {
@@ -201,7 +200,7 @@ func (b *backupBar) startBackup() {
 		return
 	}
 	b.button.Disable()
-	showBackupProgress(b.startup.win, centers, b.startup.cfg.BackupDir, b.startup.cfg.BackupCount, func() {
+	showBackupProgress(b.startup.win, centers, b.startup.cfg.BackupDir, func() {
 		b.refresh()
 		b.button.Enable()
 	})
@@ -282,7 +281,7 @@ func pacedBy(onProgress func(step, total int, desc string), minFor func(step int
 // The backup runs on its own goroutine; every widget update is marshalled back
 // onto the Fyne thread with fyne.Do, since Fyne widgets may only be touched
 // from the event loop.
-func showBackupProgress(parent fyne.Window, centers []center.Center, destDir string, keep int, onClose func()) {
+func showBackupProgress(parent fyne.Window, centers []center.Center, destDir string, onClose func()) {
 	p := &backupProgress{win: parent, onClose: onClose}
 
 	p.bar = widget.NewProgressBar()
@@ -331,7 +330,7 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, destDir str
 			return minStepDisplay
 		})
 
-		res, err := backup.Run(context.Background(), centers, destDir, version.Resolve(), keep, onProgress)
+		res, err := backup.Run(context.Background(), centers, destDir, version.Resolve(), onProgress)
 		// Let the last step's message be read before the summary replaces it.
 		waitForLastMessage()
 		fyne.Do(func() { p.finish(res, err) })

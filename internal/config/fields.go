@@ -116,16 +116,6 @@ var Fields = []Field{
 		},
 	},
 	{
-		Key:     "backup_count",
-		Section: "backup",
-		Desc: "Number of recent backup archives to keep. The newest archive from each calendar " +
-			"month is also kept, so you will have this many recent backups, while older backups thin " +
-			"down to one per month.",
-		StructField: "BackupCount",
-		Get:         func(c Config) string { return strconv.Itoa(c.BackupCount) },
-		Set:         func(c *Config, s string) error { return setPositiveInt(&c.BackupCount, "backup_count", s) },
-	},
-	{
 		Key:     "qr_base_url",
 		Section: "qr",
 		Desc: "Base URL that generated QR codes point at. The student's name is base64url-encoded " +

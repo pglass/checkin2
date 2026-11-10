@@ -31,10 +31,6 @@ type Config struct {
 	// empty value means backups are not configured, and the startup screen says
 	// so instead of offering to run one.
 	BackupDir string
-	// BackupCount is how many recent backup archives are kept in BackupDir.
-	// Retention also keeps the newest archive of each calendar month, so the
-	// total kept exceeds this: see the backup package's prune.
-	BackupCount int
 	// QRBaseURL is the base that a student's encoded name is appended to when a
 	// QR code is generated. It is deliberately absent from the Settings window:
 	// changing it invalidates every card already printed against the old base,
@@ -50,7 +46,6 @@ func Default() Config {
 		CameraRequestHeight: 480,
 		QRScanCooldown:      8 * time.Second,
 		BackupDir:           "",
-		BackupCount:         14,
 		QRBaseURL:           qr.DefaultBaseURL,
 	}
 }

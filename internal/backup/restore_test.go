@@ -195,7 +195,7 @@ func TestRestoreHandlesAnEmptyCenter(t *testing.T) {
 	appDir, destDir := t.TempDir(), t.TempDir()
 	newCenter(t, appDir, "Empty", 0)
 	centers, _ := center.List(appDir)
-	res, err := Run(context.Background(), centers, destDir, "test", 7, nil)
+	res, err := Run(context.Background(), centers, destDir, "test", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

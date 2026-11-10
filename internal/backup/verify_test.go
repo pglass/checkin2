@@ -25,7 +25,7 @@ func makeBackup(t *testing.T, centers map[string]int) string {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	res, err := Run(context.Background(), list, destDir, "test", 7, nil)
+	res, err := Run(context.Background(), list, destDir, "test", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

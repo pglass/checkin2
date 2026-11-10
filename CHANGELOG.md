@@ -2,6 +2,7 @@
 
 * Reduce CPU usage by reducing unnecessary frame copies
 * Fix unpredictable Camera menu selection
+* Remove backup pruning. All backups are kept.
 
 # 0.0.10
 

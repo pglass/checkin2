@@ -44,7 +44,7 @@ func newTestRestoreView(t *testing.T, centers map[string]int) (*restoreView, *ba
 	}
 
 	list, _ := center.List(srcDir)
-	res, err := backup.Run(context.Background(), list, backupDir, "test", 7, nil)
+	res, err := backup.Run(context.Background(), list, backupDir, "test", nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
