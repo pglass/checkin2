@@ -86,7 +86,7 @@ func TestResetDeviceStateRecoversStuckDriver(t *testing.T) {
 
 	// Close now succeeds, so the reset can clear the state.
 	f.closeErr = nil
-	resetDeviceState(d, 0)
+	resetDeviceState(d, "test")
 
 	if d.Status() != driver.StateClosed {
 		t.Fatalf("state = %v, want closed after reset", d.Status())
@@ -105,8 +105,43 @@ func TestResetDeviceStateNoOpWhenClosed(t *testing.T) {
 	if d.Status() != driver.StateClosed {
 		t.Fatalf("fresh driver state = %v, want closed", d.Status())
 	}
-	resetDeviceState(d, 0)
+	resetDeviceState(d, "test")
 	if f.closes != 0 {
 		t.Fatalf("Close called %d times on an already-closed driver, want 0", f.closes)
+	}
+}
+
+// The manager stores drivers in a map, so Query's order varies between calls.
+// A device picked from List must still open that same device, whatever order
+// openDevice's own enumeration comes back in.
+func TestOpenDeviceByIDOpensThatDevice(t *testing.T) {
+	for _, name := range []string{"zeta", "alpha", "mid", "beta", "omega"} {
+		if err := driver.GetManager().Register(&fakeAdapter{}, driver.Info{Label: t.Name() + name, Name: name}); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+	}
+	for range 20 {
+		for _, dev := range List() {
+			// Other tests register unnamed drivers; check only this test's.
+			if dev.ID != t.Name()+dev.Name {
+				continue
+			}
+			d, err := openDevice(dev.ID)
+			if err != nil {
+				t.Fatalf("openDevice(%q): %v", dev.ID, err)
+			}
+			if got := d.Info().Name; got != dev.Name {
+				t.Errorf("openDevice(%q) opened %q, want %q", dev.ID, got, dev.Name)
+			}
+			if err := d.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		}
+	}
+}
+
+func TestOpenDeviceUnknownID(t *testing.T) {
+	if _, err := openDevice("no-such-device"); err == nil {
+		t.Error("openDevice of an unknown ID succeeded, want an error")
 	}
 }

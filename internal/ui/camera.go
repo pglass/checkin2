@@ -28,12 +28,12 @@ func (a *App) startCamera(ctx context.Context) {
 		a.camDevice = deviceNone
 		return
 	}
-	a.startCameraDevice(ctx, devices[0].Index)
+	a.startCameraDevice(ctx, devices[0].ID)
 }
 
 // deviceNone is the "no camera" selection: capture is stopped and no device is
 // held open.
-const deviceNone = -1
+const deviceNone = ""
 
 // stopCamera cancels the running camera (if any) and releases the device. Safe
 // to call when nothing is running.
@@ -57,10 +57,10 @@ func (a *App) stopCamera() {
 	a.updateResLabel()
 }
 
-// startCameraDevice starts capture on the given device index. Calling it again
-// stops the previous camera first, so it doubles as the device switcher.
+// startCameraDevice starts capture on the device with the given ID. Calling it
+// again stops the previous camera first, so it doubles as the device switcher.
 // deviceNone stops capture entirely.
-func (a *App) startCameraDevice(parent context.Context, deviceID int) {
+func (a *App) startCameraDevice(parent context.Context, deviceID string) {
 	a.stopCamera()
 	if deviceID == deviceNone {
 		slog.Info("camera stopped")

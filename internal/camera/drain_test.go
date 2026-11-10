@@ -18,10 +18,11 @@ func TestDrainCopiesOnlyRequestedFrames(t *testing.T) {
 	defer cancel()
 
 	feed := make(chan image.Image)
+	released := make(chan struct{})
 	reader := video.ReaderFunc(func() (image.Image, func(), error) {
 		select {
 		case img := <-feed:
-			return img, func() {}, nil
+			return img, func() { released <- struct{}{} }, nil
 		case <-ctx.Done():
 			return nil, func() {}, ctx.Err()
 		}
@@ -29,16 +30,25 @@ func TestDrainCopiesOnlyRequestedFrames(t *testing.T) {
 	detCh := make(chan *image.RGBA, 1)
 	go c.drain(ctx, reader, detCh)
 
-	// Each send returns once the drainer is back in Read, so sending a frame
-	// also means the one before it has been fully handled.
+	// Each send returns once the drainer has released the frame, which it does
+	// after deciding whether to copy it. The handoff into Read alone is not
+	// enough: a request stored right after it could race the drainer's check
+	// and be taken by the frame already in hand. A frame's push to detCh lands
+	// before the drainer reads the next one, so the following send covers it.
 	send := func(shade uint8) {
 		t.Helper()
 		img := image.NewRGBA(image.Rect(0, 0, 2, 2))
 		img.SetRGBA(0, 0, color.RGBA{R: shade, A: 255})
+		timeout := time.After(5 * time.Second)
 		select {
 		case feed <- img:
-		case <-time.After(5 * time.Second):
+		case <-timeout:
 			t.Fatal("drainer stopped reading frames")
+		}
+		select {
+		case <-released:
+		case <-timeout:
+			t.Fatal("drainer did not release the frame")
 		}
 	}
 

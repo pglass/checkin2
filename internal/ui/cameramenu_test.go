@@ -97,15 +97,15 @@ func TestCameraMenuCheckmarkFollowsStartupDevice(t *testing.T) {
 		t.Fatal("off switch should be checked before a device is running")
 	}
 
-	// Stand in for startCamera having selected device 0.
-	a.camMenuItems[0] = fyne.NewMenuItem("fake", nil)
-	a.camDevice = 0
+	// Stand in for startCamera having selected a device.
+	a.camMenuItems["fake-id"] = fyne.NewMenuItem("fake", nil)
+	a.camDevice = "fake-id"
 	a.markCameraMenuItem()
 
 	if off.Checked {
 		t.Error("Turn Off Camera still checked while a camera is running")
 	}
-	if !a.camMenuItems[0].Checked {
+	if !a.camMenuItems["fake-id"].Checked {
 		t.Error("running device not checked")
 	}
 }
@@ -180,14 +180,14 @@ func TestSelectCameraDeviceMovesCheckmark(t *testing.T) {
 	}
 
 	// Simulate a device being selected without opening a real camera.
-	a.camMenuItems[0] = fyne.NewMenuItem("fake", nil)
-	a.camDevice = 0
+	a.camMenuItems["fake-id"] = fyne.NewMenuItem("fake", nil)
+	a.camDevice = "fake-id"
 	a.markCameraMenuItem()
 
 	if off.Checked {
 		t.Error("off switch still checked after a device was selected")
 	}
-	if !a.camMenuItems[0].Checked {
+	if !a.camMenuItems["fake-id"].Checked {
 		t.Error("selected device not checked")
 	}
 }
@@ -204,8 +204,8 @@ func TestTurnOffCameraClosesWindow(t *testing.T) {
 	}
 
 	// Pretend a device is running so the off switch is a real change.
-	a.camMenuItems[0] = fyne.NewMenuItem("fake", nil)
-	a.camDevice = 0
+	a.camMenuItems["fake-id"] = fyne.NewMenuItem("fake", nil)
+	a.camDevice = "fake-id"
 
 	a.selectCameraDevice(deviceNone)
 
@@ -231,7 +231,7 @@ func TestTurnOffCameraClosesWindowWhenAlreadyOff(t *testing.T) {
 		t.Fatal("camera window not opened")
 	}
 	if a.camDevice != deviceNone {
-		t.Fatalf("camDevice = %d, want none for this test", a.camDevice)
+		t.Fatalf("camDevice = %q, want none for this test", a.camDevice)
 	}
 
 	a.selectCameraDevice(deviceNone)
@@ -267,7 +267,7 @@ func TestKioskMenuItemDisabledWithoutCamera(t *testing.T) {
 // With a camera running the item is live.
 func TestKioskMenuItemEnabledWithCamera(t *testing.T) {
 	a := newTestCameraApp(t)
-	a.camDevice = 0
+	a.camDevice = "fake-id"
 
 	item := findItem(t, findMenu(t, a.buildMenu(), "File"), "Enter Kiosk Mode")
 	if item.Disabled {
@@ -285,7 +285,7 @@ func TestKioskMenuItemFollowsCameraState(t *testing.T) {
 	}
 
 	// A camera starts: updateResLabel runs on every camera transition.
-	a.camDevice = 0
+	a.camDevice = "fake-id"
 	a.updateResLabel()
 	if item.Disabled {
 		t.Error("item still disabled after a camera started")
@@ -303,7 +303,7 @@ func TestKioskMenuItemFollowsCameraState(t *testing.T) {
 // dropped rather than left dangling for a later camera event to mutate.
 func TestKioskMenuItemClearedInKioskMode(t *testing.T) {
 	a := newTestCameraApp(t)
-	a.camDevice = 0
+	a.camDevice = "fake-id"
 	a.buildMenu()
 	if a.kioskMenuItem == nil {
 		t.Fatal("normal menubar should retain the kiosk item")

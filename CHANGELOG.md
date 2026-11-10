@@ -1,3 +1,8 @@
+# Unreleased
+
+* Reduce CPU usage by reducing unnecessary frame copies
+* Fix unpredictable Camera menu selection
+
 # 0.0.10
 
 * Add "Show Code" button with in-app image view + instructions

@@ -56,6 +56,7 @@ import (
 	"image/color"
 	"image/draw"
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,14 +97,39 @@ type Resolution struct{ Width, Height int }
 
 // Device is a video capture device as reported by the OS.
 type Device struct {
-	Index int    // position in the list; what Run takes as deviceID
-	Name  string // human-readable, e.g. "MacBook Pro Camera"
-	Label string // stable unique ID, survives replug
+	ID   string // stable unique ID, survives replug; what Run takes
+	Name string // human-readable, e.g. "MacBook Pro Camera"
+}
+
+// deviceID is the stable identifier for d: the OS's unique ID for the device
+// (on macOS the AVCaptureDevice uniqueID), which survives replug and does not
+// depend on enumeration order. The manager's own driver ID is a random UUID
+// minted at registration, so it is only the fallback for a driver with no label.
+func deviceID(d driver.Driver) string {
+	if l := d.Info().Label; l != "" {
+		return l
+	}
+	return d.ID()
+}
+
+// videoDrivers returns the registered video capture drivers sorted by name, so
+// the Camera menu lists them in a consistent order. The manager keeps drivers in
+// a map and Query ranges over it, so its own order is random on every call.
+func videoDrivers() []driver.Driver {
+	drivers := driver.GetManager().Query(driver.FilterVideoRecorder())
+	sort.Slice(drivers, func(i, j int) bool {
+		a, b := drivers[i].Info(), drivers[j].Info()
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return drivers[i].ID() < drivers[j].ID()
+	})
+	return drivers
 }
 
 // List enumerates the connected video capture devices.
 func List() []Device {
-	drivers := driver.GetManager().Query(driver.FilterVideoRecorder())
+	drivers := videoDrivers()
 	out := make([]Device, 0, len(drivers))
 	for i, d := range drivers {
 		info := d.Info()
@@ -111,7 +137,7 @@ func List() []Device {
 		if name == "" {
 			name = fmt.Sprintf("Camera %d", i)
 		}
-		out = append(out, Device{Index: i, Name: name, Label: info.Label})
+		out = append(out, Device{ID: deviceID(d), Name: name})
 	}
 	return out
 }
@@ -187,8 +213,8 @@ func New(fps, reqWidth, reqHeight int, cooldown time.Duration) *Camera {
 
 // Run opens the device and loops until ctx is cancelled. It returns an error
 // only if the camera cannot be opened; a missing camera is not fatal to the app.
-func (c *Camera) Run(ctx context.Context, deviceID int) error {
-	d, err := openDevice(deviceID)
+func (c *Camera) Run(ctx context.Context, id string) error {
+	d, err := openDevice(id)
 	if err != nil {
 		return err
 	}
@@ -197,7 +223,7 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 	// openDevice recovers from it, but the log is the only evidence it happened.
 	defer func() {
 		if cerr := d.Close(); cerr != nil {
-			slog.Warn("closing camera device failed", "device", deviceID, "error", cerr)
+			slog.Warn("closing camera device failed", "device", id, "error", cerr)
 		}
 	}()
 
@@ -210,7 +236,7 @@ func (c *Camera) Run(ctx context.Context, deviceID int) error {
 		return err
 	}
 	slog.Info("webcam detected; camera started",
-		"device", deviceID, "name", d.Info().Name, "label", d.Info().Label,
+		"device", id, "name", d.Info().Name,
 		"width", p.Width, "height", p.Height, "format", p.FrameFormat)
 
 	detector := gocv.NewQRCodeDetectorAruco()
@@ -338,17 +364,23 @@ func (c *Camera) buildPreview(src image.Image) *image.RGBA {
 	return out
 }
 
-// openDevice resolves deviceID against the enumerated capture devices and opens
-// it. deviceID indexes the same list List returns.
-func openDevice(deviceID int) (driver.Driver, error) {
-	drivers := driver.GetManager().Query(driver.FilterVideoRecorder())
+// openDevice finds the capture device with the given ID (a Device.ID from List)
+// and opens it.
+func openDevice(id string) (driver.Driver, error) {
+	drivers := videoDrivers()
 	if len(drivers) == 0 {
 		return nil, errors.New("no video capture device found")
 	}
-	if deviceID < 0 || deviceID >= len(drivers) {
-		return nil, fmt.Errorf("device %d out of range (%d connected)", deviceID, len(drivers))
+	var d driver.Driver
+	for _, dr := range drivers {
+		if deviceID(dr) == id {
+			d = dr
+			break
+		}
 	}
-	d := drivers[deviceID]
+	if d == nil {
+		return nil, fmt.Errorf("device %q not connected", id)
+	}
 
 	// The manager hands back the same driver wrapper every time, and the
 	// wrapper's open/closed state lives in it, not here. Open() only accepts a
@@ -362,10 +394,10 @@ func openDevice(deviceID int) (driver.Driver, error) {
 	// Closing first is the reset: the transition to StateClosed is always
 	// permitted, so this clears a stale state and is a no-op on the common path
 	// where the device is already closed.
-	resetDeviceState(d, deviceID)
+	resetDeviceState(d, id)
 
 	if err := d.Open(); err != nil {
-		return nil, fmt.Errorf("opening device %d: %w", deviceID, err)
+		return nil, fmt.Errorf("opening device %q: %w", id, err)
 	}
 	return d, nil
 }
@@ -374,14 +406,14 @@ func openDevice(deviceID int) (driver.Driver, error) {
 // is made against a wrapper in StateClosed. Closing is always a permitted
 // transition, so this is a no-op on the common path and a recovery on the
 // stuck one described in openDevice.
-func resetDeviceState(d driver.Driver, deviceID int) {
+func resetDeviceState(d driver.Driver, id string) {
 	st := d.Status()
 	if st == driver.StateClosed {
 		return
 	}
-	slog.Debug("device not closed; closing before reopen", "device", deviceID, "state", st)
+	slog.Debug("device not closed; closing before reopen", "device", id, "state", st)
 	if err := d.Close(); err != nil {
-		slog.Warn("closing stale device failed", "device", deviceID, "error", err)
+		slog.Warn("closing stale device failed", "device", id, "error", err)
 	}
 }
 

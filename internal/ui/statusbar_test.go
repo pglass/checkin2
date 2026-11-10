@@ -169,10 +169,10 @@ func TestStatusBarCameraFollowsDeviceStart(t *testing.T) {
 		t.Fatalf("camera = %q, want %q before any camera starts", got, want)
 	}
 
-	// Start device 0. There is no real webcam under test, so Camera.Run fails
+	// Start a device. There is no real webcam under test, so Camera.Run fails
 	// in its goroutine -- but camDevice is set synchronously, which is what the
 	// status bar reflects.
-	a.startCameraDevice(a.ctx, 0)
+	a.startCameraDevice(a.ctx, "fake-id")
 
 	if got, want := a.status.camera.Text, "Camera On"; got != want {
 		t.Errorf("camera = %q, want %q after starting a device", got, want)

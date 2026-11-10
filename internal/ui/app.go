@@ -35,11 +35,11 @@ type App struct {
 	feedback  *feedbackBar
 	cam       *camera.Camera
 	camCancel context.CancelFunc // stops the current camera; set per device
-	camDevice int                // index of the running device
-	// camMenuItems maps a device index (deviceNone for "off") to its Camera >
+	camDevice string             // ID of the running device (camera.Device.ID)
+	// camMenuItems maps a device ID (deviceNone for "off") to its Camera >
 	// Select Camera item, so the checkmark can be moved without rebuilding the
 	// menubar.
-	camMenuItems map[int]*fyne.MenuItem
+	camMenuItems map[string]*fyne.MenuItem
 	// kioskMenuItem is File > Enter Kiosk Mode, retained for the same reason:
 	// it is disabled and re-enabled as the camera stops and starts, in place.
 	// Nil while the kiosk menubar is showing, which has no such item.
@@ -234,14 +234,14 @@ func (a *App) cameraMenu() *fyne.Menu {
 	}
 
 	// deviceNone keys the off switch so one map covers every choice.
-	a.camMenuItems = map[int]*fyne.MenuItem{deviceNone: off}
+	a.camMenuItems = map[string]*fyne.MenuItem{deviceNone: off}
 
 	for _, d := range camera.List() {
-		idx, label := d.Index, d.Name
-		item := fyne.NewMenuItem(label, func() { a.selectCameraDevice(idx) })
-		item.Checked = a.camDevice == idx
+		id := d.ID
+		item := fyne.NewMenuItem(d.Name, func() { a.selectCameraDevice(id) })
+		item.Checked = a.camDevice == id
 		items = append(items, item)
-		a.camMenuItems[idx] = item
+		a.camMenuItems[id] = item
 	}
 
 	return fyne.NewMenu("Camera", items...)
@@ -249,7 +249,7 @@ func (a *App) cameraMenu() *fyne.Menu {
 
 // selectCameraDevice switches capture to deviceID (deviceNone stops it) and
 // moves the checkmark to match.
-func (a *App) selectCameraDevice(deviceID int) {
+func (a *App) selectCameraDevice(deviceID string) {
 	if deviceID != a.camDevice {
 		slog.Info("camera selection changed", "device", deviceID)
 		a.startCameraDevice(a.ctx, deviceID)
@@ -279,8 +279,8 @@ func (a *App) selectCameraDevice(deviceID int) {
 // mutating the existing items rather than rebuilding the menubar (see
 // cameraMenu for why a rebuild from a menu callback crashes).
 func (a *App) markCameraMenuItem() {
-	for idx, item := range a.camMenuItems {
-		item.Checked = idx == a.camDevice
+	for id, item := range a.camMenuItems {
+		item.Checked = id == a.camDevice
 	}
 	// No SetMainMenu here on purpose: fyne reads item.Checked when it next
 	// renders the menu, and re-setting the menubar from inside a menu callback

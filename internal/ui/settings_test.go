@@ -177,7 +177,7 @@ func TestSettingsSaveDoesNotRestartSubsystems(t *testing.T) {
 	}
 	// No camera was running and none may be started by a save.
 	if a.camDevice != deviceNone {
-		t.Fatalf("save started a camera: camDevice = %d", a.camDevice)
+		t.Fatalf("save started a camera: camDevice = %q", a.camDevice)
 	}
 }
 
