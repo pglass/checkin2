@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -40,32 +42,59 @@ func archiveLabel(a backup.Archive) string {
 	return fmt.Sprintf("%s   (%s)", a.CreatedAt.Format(archiveListTimeFormat), formatArchiveSize(a.SizeBytes))
 }
 
-// browserHeaderText is the line at the top of the window naming where the
-// listed backups came from, so the user can tell which directory they are
-// looking at without opening Settings.
-func browserHeaderText(backupDir string) string {
-	if backupDir == "" {
-		return "No backup directory is set. Set backup_dir in Settings to turn backups on."
-	}
-	return "Displaying backups from " + backupDir
-}
+// browserHeaderText labels the directory selector at the top of the window.
+const browserHeaderText = "Displaying backups from"
 
-// emptyListText explains an empty list, distinguishing "nowhere to look" from
-// "looked and found nothing" -- the same distinction the startup screen's
-// last-backup line makes.
-func emptyListText(backupDir string) string {
-	if backupDir == "" {
-		return ""
-	}
+// browseOption is the selector's last entry, which opens a folder picker so
+// backups can be restored from any directory -- a drive from another machine,
+// say -- not only the configured ones.
+const browseOption = "Browse…"
+
+// internalSuffix marks the internal backup directory in the selector.
+const internalSuffix = " (internal)"
+
+// emptyListText explains an empty list.
+func emptyListText() string {
 	return "No backups here yet. Use “Back Up Now” on the Center selection window to make one."
 }
 
-// backupBrowser is the Browse/Restore window: the archives in the backup
-// directory, newest first, each with its own Verify and Restore buttons.
+// unavailableDirText explains a directory that does not exist, which for a
+// backup directory usually means its drive is not connected.
+func unavailableDirText(dir string) string {
+	return "This directory is not available (is the drive connected?): " + dir
+}
+
+// browserDirs is the selector's directories: the internal one first, then each
+// configured backup directory, with empties and repeats left out.
+func browserDirs(internalDir string, backupDirs []string) []string {
+	out := []string{internalDir}
+	seen := map[string]bool{filepath.Clean(internalDir): true}
+	for _, d := range backupDirs {
+		if d == "" || seen[filepath.Clean(d)] {
+			continue
+		}
+		seen[filepath.Clean(d)] = true
+		out = append(out, d)
+	}
+	return out
+}
+
+// backupBrowser is the Browse/Restore window: the archives in one backup
+// directory, newest first, each with its own Verify and Restore buttons. A
+// selector at the top switches between the internal directory, the configured
+// backup directories, and any other directory picked with Browse….
 type backupBrowser struct {
 	win fyne.Window
-	// dir is the backup directory being listed, captured when the window opens.
+	// dir is the backup directory being listed.
 	dir string
+	// internalDir is the internal backup directory, marked as such in the
+	// selector.
+	internalDir string
+	// dirs are the selector's directories, in order; a directory picked with
+	// Browse… is added to the end.
+	dirs []string
+	// selector picks dir from dirs, or Browse….
+	selector *widget.Select
 	// appDir is where a restored Center is created.
 	appDir string
 	// onRestored is called after a Center is restored, so the Center selection
@@ -82,12 +111,14 @@ type backupBrowser struct {
 	empty *widget.Label
 }
 
-// showBackupBrowser opens the Browse/Restore window over the given backup
-// directory, calling onClosed when it goes away so the caller can drop its
-// reference. The returned window is tracked by the caller to raise the existing
-// window instead of opening a second one.
-func showBackupBrowser(fa fyne.App, backupDir, appDir string, onClosed, onRestored func()) fyne.Window {
-	b := &backupBrowser{dir: backupDir, appDir: appDir, onRestored: onRestored}
+// showBackupBrowser opens the Browse/Restore window over the internal backup
+// directory, with the configured backup directories also selectable, calling
+// onClosed when it goes away so the caller can drop its reference. The returned
+// window is tracked by the caller to raise the existing window instead of
+// opening a second one.
+func showBackupBrowser(fa fyne.App, internalDir string, backupDirs []string, appDir string, onClosed, onRestored func()) fyne.Window {
+	b := &backupBrowser{dir: internalDir, internalDir: internalDir,
+		dirs: browserDirs(internalDir, backupDirs), appDir: appDir, onRestored: onRestored}
 	b.win = fa.NewWindow("Backups")
 	b.build()
 	b.reload()
@@ -100,13 +131,17 @@ func showBackupBrowser(fa fyne.App, backupDir, appDir string, onClosed, onRestor
 
 // build lays out the header, the archive list, and the Close button.
 func (b *backupBrowser) build() {
-	// A wrapping RichText, not a Label: a wrapping Label reserves height for
-	// more lines than it draws, leaving a gap between the path and the
-	// separator (settings.go uses RichText for the same reason).
-	header := widget.NewRichText(&widget.TextSegment{Text: browserHeaderText(b.dir)})
-	header.Wrapping = fyne.TextWrapWord
+	if len(b.dirs) == 0 {
+		b.dirs = []string{b.dir}
+	}
+	b.selector = widget.NewSelect(b.options(), nil)
+	b.selector.SetSelected(b.optionFor(b.dir))
+	// Attached after the initial selection, so building the window does not
+	// count as the user choosing a directory.
+	b.selector.OnChanged = b.onSelect
+	header := container.NewBorder(nil, nil, widget.NewLabel(browserHeaderText), nil, b.selector)
 
-	b.empty = widget.NewLabel(emptyListText(b.dir))
+	b.empty = widget.NewLabel(emptyListText())
 	b.empty.Wrapping = fyne.TextWrapWord
 	b.empty.Hide()
 
@@ -118,7 +153,7 @@ func (b *backupBrowser) build() {
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("")
 			verify := widget.NewButton("Verify", nil)
-			restore := widget.NewButton("Restore", nil)
+			restore := widget.NewButton("Explore…", nil)
 			return container.NewBorder(nil, nil, nil,
 				container.NewHBox(verify, restore), label)
 		},
@@ -145,9 +180,6 @@ func (b *backupBrowser) build() {
 
 	closeBtn := widget.NewButton("Close", func() { b.win.Close() })
 
-	// The header is its own Border rather than a VBox entry: a VBox gives every
-	// child its minimum height, and a wrapped multi-line path then leaves a gap
-	// between the text and the separator.
 	b.listView = withWindowMargin(container.NewBorder(
 		container.NewBorder(nil, widget.NewSeparator(), nil, nil, header),
 		container.NewVBox(widget.NewSeparator(), container.NewHBox(layout.NewSpacer(), closeBtn)),
@@ -155,6 +187,89 @@ func (b *backupBrowser) build() {
 		container.NewStack(b.list, b.empty),
 	))
 	b.win.SetContent(b.listView)
+}
+
+// options are the selector's entries: one per directory, then Browse….
+func (b *backupBrowser) options() []string {
+	out := make([]string, 0, len(b.dirs)+1)
+	for _, d := range b.dirs {
+		out = append(out, b.optionFor(d))
+	}
+	return append(out, browseOption)
+}
+
+// optionFor is the selector entry for dir.
+func (b *backupBrowser) optionFor(dir string) string {
+	if dir == b.internalDir && b.internalDir != "" {
+		return dir + internalSuffix
+	}
+	return dir
+}
+
+// onSelect lists the chosen directory, or opens the folder picker for
+// Browse….
+func (b *backupBrowser) onSelect(opt string) {
+	if opt == browseOption {
+		b.browseForDir()
+		return
+	}
+	for _, d := range b.dirs {
+		if b.optionFor(d) == opt {
+			b.setDir(d)
+			return
+		}
+	}
+}
+
+// setDir lists dir, unless it is already the one listed.
+func (b *backupBrowser) setDir(dir string) {
+	if dir == b.dir {
+		return
+	}
+	slog.Info("browsing backups", "dir", dir)
+	b.dir = dir
+	b.reload()
+}
+
+// browseForDir opens a folder picker, starting in the directory being listed.
+// A chosen folder is added to the selector (once) and listed. Cancelling puts
+// the selector back on the directory still being listed, rather than leaving it
+// showing Browse….
+func (b *backupBrowser) browseForDir() {
+	d := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
+		if err != nil {
+			dialog.ShowError(err, b.win)
+		}
+		if err != nil || lu == nil {
+			b.selector.SetSelected(b.optionFor(b.dir))
+			return
+		}
+		b.addDir(lu.Path())
+	}, b.win)
+	if start := listableDir(b.dir); start != nil {
+		d.SetLocation(start)
+	}
+	// Show before Resize: Resize reaches through the internal window that Show
+	// creates (see settings.browseDir).
+	d.Show()
+	d.Resize(b.win.Canvas().Size())
+}
+
+// addDir adds dir to the selector, if it is not already there, and selects it,
+// which lists it.
+func (b *backupBrowser) addDir(dir string) {
+	found := false
+	for _, d := range b.dirs {
+		if filepath.Clean(d) == filepath.Clean(dir) {
+			dir, found = d, true
+			break
+		}
+	}
+	if !found {
+		b.dirs = append(b.dirs, dir)
+		b.selector.SetOptions(b.options())
+	}
+	b.selector.SetSelected(b.optionFor(dir))
 }
 
 // showList puts the archive list back, from the restore view's Back button.
@@ -188,6 +303,12 @@ func (b *backupBrowser) verify(a backup.Archive) {
 // reload re-lists the backup directory and repaints. Listing is by file name
 // only, so this is cheap enough to call whenever the window is shown.
 func (b *backupBrowser) reload() {
+	if _, err := os.Stat(b.dir); os.IsNotExist(err) {
+		b.archives = nil
+		b.list.Refresh()
+		b.showEmpty(unavailableDirText(b.dir))
+		return
+	}
 	archives, err := backup.ListArchives(b.dir)
 	if err != nil {
 		slog.Error("could not list backups", "dir", b.dir, "err", err)
@@ -202,7 +323,7 @@ func (b *backupBrowser) reload() {
 
 	// Show the explanatory line instead of the list when there is nothing in it.
 	if len(archives) == 0 {
-		b.showEmpty(emptyListText(b.dir))
+		b.showEmpty(emptyListText())
 		return
 	}
 	b.empty.Hide()

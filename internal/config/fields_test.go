@@ -54,6 +54,15 @@ func TestFieldsWellFormed(t *testing.T) {
 		if f.Section == "" {
 			t.Errorf("key %q has no section", f.Key)
 		}
+		if f.List {
+			if f.GetList == nil || f.SetList == nil {
+				t.Errorf("list key %q missing GetList or SetList", f.Key)
+			}
+			if f.AddLabel == "" || f.RemovePrompt == "" || f.ListExample == "" {
+				t.Errorf("list key %q missing AddLabel, RemovePrompt, or ListExample", f.Key)
+			}
+			continue
+		}
 		if f.Get == nil || f.Set == nil {
 			t.Errorf("key %q missing Get or Set", f.Key)
 		}
@@ -65,11 +74,17 @@ func TestFieldsRoundTrip(t *testing.T) {
 	def := Default()
 	var got Config
 	for _, f := range Fields {
+		if f.List {
+			if err := f.SetList(&got, f.GetList(def)); err != nil {
+				t.Fatalf("%s: SetList(GetList(default)) = %v", f.Key, err)
+			}
+			continue
+		}
 		if err := f.Set(&got, f.Get(def)); err != nil {
 			t.Fatalf("%s: Set(Get(default)) = %v", f.Key, err)
 		}
 	}
-	if got != def {
+	if !reflect.DeepEqual(got, def) {
 		t.Fatalf("round trip = %+v, want %+v", got, def)
 	}
 }
@@ -77,6 +92,9 @@ func TestFieldsRoundTrip(t *testing.T) {
 // Set trims surrounding whitespace and rejects bad input per type.
 func TestFieldsSetValidation(t *testing.T) {
 	for _, f := range Fields {
+		if f.List {
+			continue // covered by TestBackupDirsSetList
+		}
 		cfg := Default()
 		padded := "  " + f.Get(Default()) + "  "
 		if err := f.Set(&cfg, padded); err != nil {
@@ -102,6 +120,40 @@ func TestFieldsSetValidation(t *testing.T) {
 			} else if !strings.Contains(err.Error(), f.Key) {
 				t.Errorf("%s: error %q should name the key", f.Key, err)
 			}
+		}
+	}
+}
+
+// backup_dirs values are trimmed, and empty or repeated directories dropped.
+func TestBackupDirsSetList(t *testing.T) {
+	var c Config
+	err := setBackupDirs(&c, []string{"  /a  ", "", "/b", "/a/", "  ", "/c"})
+	if err != nil {
+		t.Fatalf("setBackupDirs: %v", err)
+	}
+	if want := []string{"/a", "/b", "/c"}; !reflect.DeepEqual(c.BackupDirs, want) {
+		t.Errorf("BackupDirs = %q, want %q", c.BackupDirs, want)
+	}
+	if err := setBackupDirs(&c, []string{"", " "}); err != nil {
+		t.Fatalf("setBackupDirs: %v", err)
+	}
+	if c.BackupDirs != nil {
+		t.Errorf("all-empty list = %q, want nil like Default", c.BackupDirs)
+	}
+}
+
+func TestListFieldByKey(t *testing.T) {
+	for key, want := range map[string]int{
+		"backup_dirs1": 1, "backup_dirs12": 12, "BACKUP_DIRS2": 2, "backup_dirs": 0,
+	} {
+		f, n, ok := listFieldByKey(key)
+		if !ok || f.Key != KeyBackupDirs || n != want {
+			t.Errorf("listFieldByKey(%q) = %q, %d, %v; want backup_dirs, %d, true", key, f.Key, n, ok, want)
+		}
+	}
+	for _, key := range []string{"backup_dir", "backup_dirsx", "backup_dirs-1", "backup_dirs01", "backup_dirs_1"} {
+		if _, _, ok := listFieldByKey(key); ok {
+			t.Errorf("listFieldByKey(%q) matched, want no match", key)
 		}
 	}
 }

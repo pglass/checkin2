@@ -5,7 +5,9 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,12 +27,12 @@ type Config struct {
 	// QRScanCooldown is how long a scanned code is ignored after a successful
 	// scan, so the same student's dialog is not re-triggered immediately.
 	QRScanCooldown time.Duration
-	// BackupDir is the directory backup archives are written to. It has no
-	// default: a backup location is machine-specific, and writing backups
-	// somewhere the user never chose would be worse than not writing them. An
-	// empty value means backups are not configured, and the startup screen says
-	// so instead of offering to run one.
-	BackupDir string
+	// BackupDirs are the external directories every backup archive is copied
+	// to, after it is written and verified in the internal backup directory
+	// (see backup.InternalDir). None by default: an external location is
+	// machine-specific, and copying backups somewhere the user never chose
+	// would be worse than not copying them.
+	BackupDirs []string
 	// QRBaseURL is the base that a student's encoded name is appended to when a
 	// QR code is generated. It is deliberately absent from the Settings window:
 	// changing it invalidates every card already printed against the old base,
@@ -45,14 +47,26 @@ func Default() Config {
 		CameraRequestWidth:  640,
 		CameraRequestHeight: 480,
 		QRScanCooldown:      8 * time.Second,
-		BackupDir:           "",
 		QRBaseURL:           qr.DefaultBaseURL,
 	}
 }
 
+// legacyBackupDirKey is the single backup directory setting that backup_dirs
+// replaced. Load migrates it into BackupDirs; see Load.
+const legacyBackupDirKey = "backup_dir"
+
 // Load reads the INI file at path. If it does not exist, it is created with
 // default values and those defaults are returned. Unknown keys are ignored;
 // missing keys keep their default. An invalid value for a known key is an error.
+//
+// A List field is read from numbered keys (backup_dirs1, backup_dirs2, ...),
+// ordered by number; gaps in the numbering are fine, so a hand-deleted line
+// needs no renumbering. Write numbers them 1..N again.
+//
+// The legacy backup_dir key is migrated: its value is added to BackupDirs and
+// the file is rewritten without it, so the migration happens exactly once. If
+// it ran on every load instead, a directory the user later removed from the
+// list would keep coming back.
 func Load(path string) (Config, error) {
 	cfg := Default()
 
@@ -66,6 +80,10 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return cfg, err
 	}
+
+	lists := map[string][]listItem{} // List field key -> its numbered values
+	var legacySeen bool
+	var legacyDir string
 
 	sc := bufio.NewScanner(strings.NewReader(string(data)))
 	line := 0
@@ -82,9 +100,18 @@ func Load(path string) (Config, error) {
 		if !ok {
 			return cfg, fmt.Errorf("%s:%d: malformed line %q", path, line, text)
 		}
-		key = strings.TrimSpace(key)
+		key = strings.ToLower(strings.TrimSpace(key))
 		val = strings.TrimSpace(val)
 
+		if key == legacyBackupDirKey {
+			legacySeen = true
+			legacyDir = val
+			continue
+		}
+		if f, n, ok := listFieldByKey(key); ok {
+			lists[f.Key] = append(lists[f.Key], listItem{n: n, val: val})
+			continue
+		}
 		f, ok := fieldByKey(key)
 		if !ok {
 			continue // unknown key: ignored, so old files still load
@@ -96,7 +123,40 @@ func Load(path string) (Config, error) {
 	if err := sc.Err(); err != nil {
 		return cfg, err
 	}
+
+	for _, f := range Fields {
+		if !f.List {
+			continue
+		}
+		items := lists[f.Key]
+		sort.SliceStable(items, func(i, j int) bool { return items[i].n < items[j].n })
+		vals := make([]string, 0, len(items))
+		for _, it := range items {
+			vals = append(vals, it.val)
+		}
+		if err := f.SetList(&cfg, vals); err != nil {
+			return cfg, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+
+	if legacySeen {
+		// Appended last so directories already in backup_dirs keep their
+		// place; SetList drops it again if it is already listed or empty.
+		if err := setBackupDirs(&cfg, append(cfg.BackupDirs, legacyDir)); err != nil {
+			return cfg, fmt.Errorf("%s: %w", path, err)
+		}
+		if err := Write(path, cfg); err != nil {
+			return cfg, fmt.Errorf("migrate %s to backup_dirs: %w", legacyBackupDirKey, err)
+		}
+		slog.Info("settings migrated", "from", legacyBackupDirKey, "dir", legacyDir, "path", path)
+	}
 	return cfg, nil
+}
+
+// listItem is one numbered value of a List field as read from the file.
+type listItem struct {
+	n   int
+	val string
 }
 
 // Write persists cfg to path in INI format (overwriting any existing file).
@@ -116,9 +176,27 @@ func Write(path string, cfg Config) error {
 		for _, line := range wrapComment(f.Desc, 78) {
 			b.WriteString("# " + line + "\n")
 		}
+		if f.List {
+			writeList(&b, f, f.GetList(cfg))
+			continue
+		}
 		fmt.Fprintf(&b, "%s = %s\n", f.Key, f.Get(cfg))
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+// writeList writes a List field's values as numbered keys, 1..N. With no values
+// it writes a commented-out example instead, so the file still shows how to add
+// one by hand.
+func writeList(b *strings.Builder, f Field, vals []string) {
+	fmt.Fprintf(b, "# One per line, numbered: %s1, %s2, ...\n", f.Key, f.Key)
+	if len(vals) == 0 {
+		fmt.Fprintf(b, "# %s1 = %s\n", f.Key, f.ListExample)
+		return
+	}
+	for i, v := range vals {
+		fmt.Fprintf(b, "%s%d = %s\n", f.Key, i+1, v)
+	}
 }
 
 // wrapComment splits s into lines of at most width characters, breaking on

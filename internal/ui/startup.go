@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/pglass/checkin/internal/backup"
 	"github.com/pglass/checkin/internal/center"
 	"github.com/pglass/checkin/internal/config"
 	"github.com/pglass/checkin/internal/qr"
@@ -83,9 +84,9 @@ func ShowStartup(fa fyne.App, appDir string, cfg config.Config, cfgPath string, 
 	s := &startup{fyneApp: fa, appDir: appDir, cfg: cfg, cfgPath: cfgPath, onOpen: onOpen}
 	s.win = fa.NewWindow("Check-In")
 	s.about = about{fyneApp: fa, parent: s.win}
-	// Settings belongs here as well as in the main window: backup_dir is set
-	// from Settings and used from this screen, so a user told to "set backup_dir
-	// in Settings" must be able to get there without opening a Center first.
+	// Settings belongs here as well as in the main window: backup_dirs is set
+	// from Settings and used from this screen, so the backup directories can be
+	// changed without opening a Center first.
 	// Backups get their own menu rather than sitting under File: they are the
 	// one thing this window does that is not about choosing a Center, and the
 	// menu is where they stay reachable once Verify and Restore are added.
@@ -191,8 +192,8 @@ func (s *startup) settingsRestartNote() string { return "" }
 
 // applySettings stores the saved settings and refreshes the backup row. Unlike
 // the main window, this screen can honour a change immediately: the backup
-// directory is read each time a backup runs, so a newly set backup_dir enables
-// the button straight away rather than at the next startup.
+// directories are read each time a backup runs, so the next backup copies to
+// a newly added one without a restart.
 func (s *startup) applySettings(cfg config.Config) {
 	s.cfg = cfg
 	s.backups.refresh()
@@ -208,20 +209,25 @@ func (s *startup) showSettingsWindow() {
 	s.settingsWin = showSettingsFor(s, func() { s.settingsWin = nil })
 }
 
-// showBackupBrowser opens the Browse/Restore window, raising the existing one
-// if it is already up. The current backup directory is passed in, so a
-// directory just changed in Settings is the one browsed.
+// showBackupBrowser opens the Browse/Restore window, raising the existing one if
+// it is already up. It opens on the internal backup directory -- every backup is
+// written there first, so it holds every archive this machine has made -- with
+// the configured backup_dirs selectable too.
 func (s *startup) showBackupBrowser() {
 	if s.browserWin != nil {
 		s.browserWin.RequestFocus()
 		return
 	}
-	s.browserWin = showBackupBrowser(s.fyneApp, s.cfg.BackupDir, s.appDir,
+	s.browserWin = showBackupBrowser(s.fyneApp, s.backupDir(), s.cfg.BackupDirs, s.appDir,
 		func() { s.browserWin = nil },
 		// A restored Center is a new directory in appDir, so the selection list
 		// behind this window is stale until it is re-read.
 		func() { fyne.Do(s.reload) })
 }
+
+// backupDir is the internal backup directory, where every backup is written
+// and verified before it is copied to the configured backup_dirs.
+func (s *startup) backupDir() string { return backup.InternalDir(s.appDir) }
 
 // hasCenterData reports whether any Center has a database yet. A Center is a
 // directory, created before it is ever opened, so its mere existence does not

@@ -117,7 +117,9 @@ type Result struct {
 	Manifest Manifest
 	// Verify is the verification pass over the archive, run as part of every
 	// backup so a bad archive is caught while the source data is still there.
-	Verify VerifyResult
+	Verify VerifyResult // Copies is what RunAndCopy copied to the external backup directories.
+	// Run alone leaves it empty.
+	Copies CopyResult
 }
 
 // Run snapshots every Center in centers and writes them into a single zip

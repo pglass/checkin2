@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +52,25 @@ type Field struct {
 	// rather than typed. Typing remains available: a path on a drive that is not
 	// mounted right now cannot be browsed to, but is still worth saving.
 	Directory bool
+
+	// List marks a setting holding any number of values. Key is then a prefix:
+	// settings.ini holds Key1, Key2, ... (see Load and Write), and the settings
+	// UI shows one entry per value with Remove buttons and an Add button. A List
+	// field uses GetList and SetList in place of Get and Set.
+	List bool
+	// GetList returns a List field's values.
+	GetList func(c Config) []string
+	// SetList validates and stores a List field's values. Like Set, its error
+	// is shown to the user verbatim.
+	SetList func(c *Config, vals []string) error
+	// ListExample is the placeholder value in the commented-out example line
+	// Write emits for an empty List field.
+	ListExample string
+	// AddLabel is the settings UI's button for adding a List value.
+	AddLabel string
+	// RemovePrompt is the confirmation shown before a List value is removed in
+	// the settings UI. It is a format string taking the value being removed.
+	RemovePrompt string
 }
 
 // Fields lists every user-editable setting, in the order they appear both in
@@ -97,23 +117,18 @@ var Fields = []Field{
 		},
 	},
 	{
-		Key:     "backup_dir",
-		Section: "backup",
-		Desc: "Directory that backup archives are written to. Leave empty to turn backups off. " +
-			"You can place this directory on a separate drive or sync it into cloud storage to " +
-			"preserve the backup archives.",
-		StructField: "BackupDir",
-		FreeText:    true,
-		Directory:   true,
-		Get:         func(c Config) string { return c.BackupDir },
-		Set: func(c *Config, s string) error {
-			// Any path is accepted, including one that does not exist yet --
-			// the directory is created when the first backup runs. Validating
-			// existence here would reject a removable drive that is simply not
-			// plugged in at the moment.
-			c.BackupDir = strings.TrimSpace(s)
-			return nil
-		},
+		Key:          KeyBackupDirs,
+		Section:      "backup",
+		Desc:         "Each new backup archive is copied to every one of these directories.",
+		StructField:  "BackupDirs",
+		FreeText:     true,
+		Directory:    true,
+		List:         true,
+		GetList:      func(c Config) []string { return c.BackupDirs },
+		SetList:      setBackupDirs,
+		ListExample:  "/path/to/backups",
+		AddLabel:     "Add backup directory",
+		RemovePrompt: "This will remove %s from the list of backup directories. (No existing backups will be deleted)",
 	},
 	{
 		Key:     "qr_base_url",
@@ -137,15 +152,65 @@ var Fields = []Field{
 	},
 }
 
-// fieldByKey looks up a field by its INI key (case-insensitively).
+// KeyBackupDirs is the key prefix of the external backup directories list.
+const KeyBackupDirs = "backup_dirs"
+
+// fieldByKey looks up a single-valued field by its INI key
+// (case-insensitively). List fields are found with listFieldByKey.
 func fieldByKey(key string) (Field, bool) {
 	key = strings.ToLower(key)
 	for _, f := range Fields {
-		if f.Key == key {
+		if f.Key == key && !f.List {
 			return f, true
 		}
 	}
 	return Field{}, false
+}
+
+// listFieldByKey matches key against the List fields' numbered keys, returning
+// the field and the number: "backup_dirs3" is item 3 of backup_dirs. A bare
+// "backup_dirs" is accepted as item 0, so a hand-written single entry without a
+// number still loads.
+func listFieldByKey(key string) (Field, int, bool) {
+	key = strings.ToLower(key)
+	for _, f := range Fields {
+		if !f.List || !strings.HasPrefix(key, f.Key) {
+			continue
+		}
+		suffix := key[len(f.Key):]
+		if suffix == "" {
+			return f, 0, true
+		}
+		n, err := strconv.Atoi(suffix)
+		if err != nil || n < 0 || strconv.Itoa(n) != suffix {
+			continue
+		}
+		return f, n, true
+	}
+	return Field{}, 0, false
+}
+
+// setBackupDirs stores the backup directories, trimmed, with empty values and
+// repeats of the same directory dropped. Any path is accepted, including one
+// that does not exist yet: validating existence here would reject a removable
+// drive that is simply not plugged in at the moment.
+func setBackupDirs(c *Config, vals []string) error {
+	var out []string // nil when empty, matching Default
+	seen := map[string]bool{}
+	for _, v := range vals {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		key := filepath.Clean(v)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, v)
+	}
+	c.BackupDirs = out
+	return nil
 }
 
 // setPositiveInt parses s as a positive integer into dst. Surrounding space is

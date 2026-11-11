@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -40,12 +44,13 @@ func newTestSettingsWithApp(t *testing.T) (*settings, *App, string) {
 	return s, a, path
 }
 
-// visibleFields is the subset of config.Fields the settings window renders:
-// hidden settings are file-only, so they have no row.
+// visibleFields is the subset of config.Fields the settings window renders as
+// single-value rows: hidden settings are file-only, and List settings get a
+// settingsList instead (see listFor).
 func visibleFields() []config.Field {
 	var out []config.Field
 	for _, f := range config.Fields {
-		if !f.Hidden {
+		if !f.Hidden && !f.List {
 			out = append(out, f)
 		}
 	}
@@ -87,7 +92,7 @@ func TestSettingsSaveRejectsInvalidInput(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("settings.ini written despite invalid input (stat err = %v)", err)
 	}
-	if s.host.settingsConfig() != config.Default() {
+	if !reflect.DeepEqual(s.host.settingsConfig(), config.Default()) {
 		t.Fatalf("live config changed despite invalid input: %+v", s.host.settingsConfig())
 	}
 }
@@ -131,14 +136,14 @@ func TestSettingsSaveWritesAndApplies(t *testing.T) {
 
 	s.save()
 
-	if s.host.settingsConfig() != want {
+	if !reflect.DeepEqual(s.host.settingsConfig(), want) {
 		t.Fatalf("live config = %+v, want %+v", s.host.settingsConfig(), want)
 	}
 	got, err := config.Load(path)
 	if err != nil {
 		t.Fatalf("Load written file: %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("reloaded = %+v, want %+v", got, want)
 	}
 }
@@ -152,7 +157,7 @@ func TestSettingsCancelDoesNotWrite(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("cancel wrote settings.ini (stat err = %v)", err)
 	}
-	if s.host.settingsConfig() != config.Default() {
+	if !reflect.DeepEqual(s.host.settingsConfig(), config.Default()) {
 		t.Fatalf("cancel changed live config: %+v", s.host.settingsConfig())
 	}
 }
@@ -338,11 +343,16 @@ func TestSettingsDescriptionMargins(t *testing.T) {
 func TestSettingsDirectoryFieldHasBrowseButton(t *testing.T) {
 	s, _ := newTestSettings(t)
 
-	// backup_dir names a folder, so it must be pickable rather than only
+	// backup_dirs names folders, so each must be pickable rather than only
 	// typeable. Named explicitly: a check that merely agrees with the flag
 	// would still pass if the flag were dropped from the field as well.
-	if !rowFor(t, s, "backup_dir").field.Directory {
-		t.Error("backup_dir is not marked as a directory setting, so it has no picker")
+	l := listFor(t, s, config.KeyBackupDirs)
+	if !l.field.Directory {
+		t.Error("backup_dirs is not marked as a directory setting, so it has no picker")
+	}
+	s.addListEntry(l, "")
+	if findButton(l.items, "Browse…") == nil {
+		t.Error("backup_dirs entry has no Browse… button")
 	}
 
 	for _, row := range s.rows {
@@ -368,12 +378,13 @@ func TestSettingsDirectoryFieldHasBrowseButton(t *testing.T) {
 func TestSettingsBrowseResultIsSavedLikeTypedInput(t *testing.T) {
 	s, path := newTestSettings(t)
 
-	row := rowFor(t, s, "backup_dir")
+	l := listFor(t, s, config.KeyBackupDirs)
+	s.addListEntry(l, "")
 	chosen := t.TempDir()
 
 	// Stands in for the picker's callback, which is what SetText models: the
 	// folder dialog cannot be driven from a test.
-	row.entry.SetText(chosen)
+	l.entries[0].SetText(chosen)
 
 	if !s.dirty() {
 		t.Error("choosing a directory left the window clean, so the restart note stays hidden")
@@ -384,8 +395,8 @@ func TestSettingsBrowseResultIsSavedLikeTypedInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if loaded.BackupDir != chosen {
-		t.Errorf("saved backup_dir = %q, want %q", loaded.BackupDir, chosen)
+	if want := []string{chosen}; !reflect.DeepEqual(loaded.BackupDirs, want) {
+		t.Errorf("saved backup_dirs = %q, want %q", loaded.BackupDirs, want)
 	}
 }
 
@@ -433,6 +444,179 @@ func findButton(o fyne.CanvasObject, label string) *widget.Button {
 		}
 	}
 	return nil
+}
+
+// listFor returns the list for a List settings key, failing if there is none.
+func listFor(t *testing.T, s *settings, key string) *settingsList {
+	t.Helper()
+	for _, l := range s.lists {
+		if l.field.Key == key {
+			return l
+		}
+	}
+	t.Fatalf("no list for %q", key)
+	return nil
+}
+
+// newTestSettingsWithDirs is newTestSettings with backup_dirs preset.
+func newTestSettingsWithDirs(t *testing.T, dirs ...string) (*settings, string) {
+	t.Helper()
+	fa := test.NewApp()
+	t.Cleanup(fa.Quit)
+
+	path := filepath.Join(t.TempDir(), "settings.ini")
+	cfg := config.Default()
+	cfg.BackupDirs = dirs
+	a := &App{fyneApp: fa, cfg: cfg, cfgPath: path, camDevice: deviceNone}
+	a.win = fa.NewWindow("main")
+
+	s := &settings{host: a}
+	s.win = fa.NewWindow("Settings")
+	s.win.SetContent(s.build())
+	return s, path
+}
+
+// The configured backup directories are listed one entry each, in order.
+func TestSettingsListsBackupDirs(t *testing.T) {
+	s, _ := newTestSettingsWithDirs(t, "/a", "/b")
+	l := listFor(t, s, config.KeyBackupDirs)
+	if got := l.values(); !reflect.DeepEqual(got, []string{"/a", "/b"}) {
+		t.Errorf("entries = %q, want [/a /b]", got)
+	}
+	if len(l.items.Objects) != 2 {
+		t.Errorf("rows = %d, want 2", len(l.items.Objects))
+	}
+	if s.dirty() {
+		t.Error("window dirty before any edit")
+	}
+}
+
+// Add appends a blank entry, which alone is not a change; giving it a value
+// is, and it is saved.
+func TestSettingsAddBackupDir(t *testing.T) {
+	s, path := newTestSettingsWithDirs(t, "/a")
+	l := listFor(t, s, config.KeyBackupDirs)
+
+	s.addListEntry(l, "")
+	if len(l.entries) != 2 {
+		t.Fatalf("entries = %d after Add, want 2", len(l.entries))
+	}
+	if s.dirty() {
+		t.Error("a blank new entry made the window dirty")
+	}
+	l.entries[1].SetText("/b")
+	if !s.dirty() {
+		t.Error("a filled-in new entry left the window clean")
+	}
+	s.save()
+
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := []string{"/a", "/b"}; !reflect.DeepEqual(loaded.BackupDirs, want) {
+		t.Errorf("saved backup_dirs = %q, want %q", loaded.BackupDirs, want)
+	}
+}
+
+// The window has an Add button labelled for backup directories.
+func TestSettingsHasAddBackupDirButton(t *testing.T) {
+	s, _ := newTestSettings(t)
+	found := false
+	for _, o := range test.LaidOutObjects(s.win.Content()) {
+		if b, ok := o.(*widget.Button); ok && b.Text == "Add backup directory" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no Add backup directory button")
+	}
+}
+
+// Remove asks first, naming the directory and promising no backups are
+// deleted; confirming removes the entry and saving drops it from the file.
+func TestSettingsRemoveBackupDirConfirms(t *testing.T) {
+	s, path := newTestSettingsWithDirs(t, "/a", "/b")
+	l := listFor(t, s, config.KeyBackupDirs)
+
+	s.confirmRemoveListEntry(l, l.entries[0])
+	want := fmt.Sprintf(l.field.RemovePrompt, "/a")
+	if !strings.Contains(want, "No existing backups will be deleted") {
+		t.Errorf("prompt %q does not say backups are kept", want)
+	}
+	var shown []string
+	var confirm *widget.Button
+	for _, top := range s.win.Canvas().Overlays().List() {
+		for _, o := range test.LaidOutObjects(top) {
+			switch v := o.(type) {
+			case *widget.Label:
+				shown = append(shown, v.Text)
+			case *widget.Button:
+				if v.Text == "Remove" {
+					confirm = v
+				}
+			}
+		}
+	}
+	if !slices.Contains(shown, want) {
+		t.Fatalf("dialog text = %q, want %q", shown, want)
+	}
+	if len(l.entries) != 2 {
+		t.Fatal("entry removed before confirmation")
+	}
+	if confirm == nil {
+		t.Fatal("no Remove button in the confirmation")
+	}
+	confirm.OnTapped()
+
+	if got := l.values(); !reflect.DeepEqual(got, []string{"/b"}) {
+		t.Fatalf("entries after remove = %q, want [/b]", got)
+	}
+	s.save()
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := []string{"/b"}; !reflect.DeepEqual(loaded.BackupDirs, want) {
+		t.Errorf("saved backup_dirs = %q, want %q", loaded.BackupDirs, want)
+	}
+}
+
+// A blank entry has nothing to confirm and is removed straight away.
+func TestSettingsRemoveBlankBackupDirSkipsConfirm(t *testing.T) {
+	s, _ := newTestSettings(t)
+	l := listFor(t, s, config.KeyBackupDirs)
+	s.addListEntry(l, "  ")
+	s.confirmRemoveListEntry(l, l.entries[0])
+	if len(l.entries) != 0 || len(l.items.Objects) != 0 {
+		t.Errorf("blank entry not removed: %d entries, %d rows", len(l.entries), len(l.items.Objects))
+	}
+	if s.win.Canvas().Overlays().Top() != nil {
+		t.Error("confirmation shown for a blank entry")
+	}
+}
+
+// The internal backup directory is shown, read-only, beside the app directory
+// that holds settings.ini.
+func TestSettingsShowsInternalBackupDir(t *testing.T) {
+	s, path := newTestSettings(t)
+	want := filepath.Dir(path) + "-backups"
+	var found bool
+	for _, o := range test.LaidOutObjects(s.win.Content()) {
+		switch v := o.(type) {
+		case *widget.Label:
+			if v.Text == want {
+				found = true
+			}
+		case *widget.Entry:
+			if v.Text == want {
+				t.Error("internal backup dir is in an editable entry")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("internal backup dir %q not shown", want)
+	}
 }
 
 // rowFor returns the row for a settings key, failing if there is none.

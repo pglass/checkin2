@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,67 +41,60 @@ func newTestStartupWithConfig(t *testing.T, cfg config.Config, names ...string) 
 	return s, dir
 }
 
-// The three states of the "last backup" line are distinguishable: off, on but
-// never run, and run at a known time.
+// seedArchive writes a placeholder archive stamped at `at` into dir, creating
+// dir if needed.
+func seedArchive(t *testing.T, dir string, at time.Time) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	name := backup.ArchivePrefix + at.Format("2006-01-02-150405") + ".zip"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed archive: %v", err)
+	}
+}
+
+// The "last backup" line distinguishes never run from run at a known time.
 func TestLastBackupText(t *testing.T) {
 	at := time.Date(2026, 3, 4, 15, 6, 0, 0, time.Local)
 
-	if got := lastBackupText("", time.Time{}, false); got != lastBackupText("", at, true) {
-		t.Error("an unconfigured backup dir should read the same regardless of any timestamp")
-	}
-	off := lastBackupText("", time.Time{}, false)
-	if !strings.Contains(off, "Settings") {
-		t.Errorf("off text %q should point at Settings", off)
-	}
-
-	never := lastBackupText("/some/dir", time.Time{}, false)
+	never := lastBackupText(time.Time{}, false)
 	if !strings.Contains(never, "never") {
 		t.Errorf("never-run text = %q, want it to say never", never)
 	}
-	if never == off {
-		t.Error("never-run should not read the same as backups being off")
-	}
 
-	ran := lastBackupText("/some/dir", at, true)
+	ran := lastBackupText(at, true)
 	if !strings.Contains(ran, "2026") || !strings.Contains(ran, "Mar") {
 		t.Errorf("ran text = %q, want it to show the date", ran)
 	}
 }
 
-// With no backup directory configured there is nowhere to write, so the button
-// is disabled rather than offering a backup that must then fail.
-func TestBackupButtonDisabledWithoutBackupDir(t *testing.T) {
-	cfg := config.Default() // BackupDir is empty by default
-	s, _ := newTestStartupWithConfig(t, cfg, "Alpha")
-
-	if !s.backups.button.Disabled() {
-		t.Error("Back Up Now is enabled with no backup_dir set, want disabled")
-	}
-}
-
-// With a directory configured the button is live.
-func TestBackupButtonEnabledWithBackupDir(t *testing.T) {
-	cfg := config.Default()
-	cfg.BackupDir = t.TempDir()
-	s, _ := newTestStartupWithConfig(t, cfg, "Alpha")
+// Backups always have the internal directory to go to, so the button is live
+// with no backup_dirs configured.
+func TestBackupButtonEnabledWithoutBackupDirs(t *testing.T) {
+	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
 
 	if s.backups.button.Disabled() {
-		t.Error("Back Up Now is disabled with backup_dir set, want enabled")
+		t.Error("Back Up Now is disabled with no backup_dirs, want enabled")
 	}
 }
 
-// The row reports the newest archive already in the backup directory, so the
-// user sees the real state on startup rather than "never" until they run one.
-func TestBackupBarShowsExistingBackupTime(t *testing.T) {
-	dir := t.TempDir()
-	name := backup.ArchivePrefix + "2025-12-25-090000.zip"
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
-		t.Fatalf("seed: %v", err)
+// The internal backup directory sits beside the app directory, not inside it,
+// where it would be listed as a Center.
+func TestStartupBackupDirIsInternalDir(t *testing.T) {
+	s, dir := newTestStartupWithConfig(t, config.Default(), "Alpha")
+	if got, want := s.backupDir(), dir+"-backups"; got != want {
+		t.Errorf("backupDir = %q, want %q", got, want)
 	}
+}
 
-	cfg := config.Default()
-	cfg.BackupDir = dir
-	s, _ := newTestStartupWithConfig(t, cfg, "Alpha")
+// The row reports the newest archive already in the internal backup directory,
+// so the user sees the real state on startup rather than "never" until they run
+// one.
+func TestBackupBarShowsExistingBackupTime(t *testing.T) {
+	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
+	seedArchive(t, s.backupDir(), time.Date(2025, 12, 25, 9, 0, 0, 0, time.Local))
+	s.backups.refresh()
 
 	got := s.backups.label.Text
 	if !strings.Contains(got, "2025") || !strings.Contains(got, "Dec") {
@@ -129,11 +123,37 @@ func TestBackupSummary(t *testing.T) {
 	if !strings.Contains(two, "2 Centers") {
 		t.Errorf("summary = %q, want plural Centers", two)
 	}
+	if strings.Contains(two, "Copied") {
+		t.Errorf("summary = %q, want no copy section with no backup_dirs", two)
+	}
 }
 
-// Settings is reachable from the selection window: backup_dir is set there and
-// used here, so a user told to "set backup_dir in Settings" must be able to get
-// to it without opening a Center first.
+// The summary lists the backup directories reached and, separately, those not
+// reached with the reason.
+func TestBackupSummaryCopies(t *testing.T) {
+	got := backupSummary(backup.Result{
+		Path:     "/internal/a.zip",
+		Manifest: backup.Manifest{Centers: []backup.CenterInfo{{Name: "Alpha"}}},
+		Copies: backup.CopyResult{
+			Dirs: []string{"/usb", "/cloud", "/gone"},
+			Failures: []backup.CopyFailure{
+				{DestDir: "/gone", Err: errors.New("not available")},
+				{DestDir: "/gone", Err: errors.New("second error")},
+			},
+		},
+	})
+	for _, want := range []string{"Copied to:\n/usb\n/cloud", "Not copied to:\n/gone: not available"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "second error") {
+		t.Errorf("summary = %q, want only the first error per directory", got)
+	}
+}
+
+// Settings is reachable from the selection window: backup_dirs is set there and
+// used here, so it can be changed without opening a Center first.
 func TestStartupFileMenuHasSettings(t *testing.T) {
 	fa := test.NewApp()
 	t.Cleanup(fa.Quit)
@@ -166,24 +186,17 @@ func TestStartupFileMenuHasSettings(t *testing.T) {
 	}
 }
 
-// Saving from the selection window applies the new backup directory
-// immediately: the backup row is refreshed and the button becomes usable,
-// rather than waiting for a restart as the main window's settings do.
-func TestStartupApplySettingsRefreshesBackupBar(t *testing.T) {
+// Saving from the selection window applies the new backup directories
+// immediately, so the next backup copies to them without a restart.
+func TestStartupApplySettingsStoresBackupDirs(t *testing.T) {
 	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
-	if !s.backups.button.Disabled() {
-		t.Fatal("precondition: button should start disabled with no backup_dir")
-	}
 
 	cfg := config.Default()
-	cfg.BackupDir = t.TempDir()
+	cfg.BackupDirs = []string{t.TempDir()}
 	s.applySettings(cfg)
 
-	if s.backups.button.Disabled() {
-		t.Error("Back Up Now still disabled after backup_dir was saved, want enabled")
-	}
-	if s.cfg.BackupDir != cfg.BackupDir {
-		t.Errorf("cfg.BackupDir = %q, want %q", s.cfg.BackupDir, cfg.BackupDir)
+	if !slices.Equal(s.cfg.BackupDirs, cfg.BackupDirs) {
+		t.Errorf("cfg.BackupDirs = %q, want %q", s.cfg.BackupDirs, cfg.BackupDirs)
 	}
 }
 
@@ -201,22 +214,19 @@ func TestSettingsHostedByStartup(t *testing.T) {
 	sw.build()
 
 	backupDir := t.TempDir()
-	for _, row := range sw.rows {
-		if row.field.Key == "backup_dir" {
-			row.entry.SetText(backupDir)
-		}
-	}
+	l := listFor(t, sw, config.KeyBackupDirs)
+	sw.addListEntry(l, backupDir)
 	sw.save()
 
-	if s.cfg.BackupDir != backupDir {
-		t.Errorf("startup cfg.BackupDir = %q, want %q", s.cfg.BackupDir, backupDir)
+	if want := []string{backupDir}; !slices.Equal(s.cfg.BackupDirs, want) {
+		t.Errorf("startup cfg.BackupDirs = %q, want %q", s.cfg.BackupDirs, want)
 	}
 	loaded, err := config.Load(s.cfgPath)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if loaded.BackupDir != backupDir {
-		t.Errorf("settings.ini backup_dir = %q, want %q", loaded.BackupDir, backupDir)
+	if want := []string{backupDir}; !slices.Equal(loaded.BackupDirs, want) {
+		t.Errorf("settings.ini backup_dirs = %q, want %q", loaded.BackupDirs, want)
 	}
 }
 
@@ -368,31 +378,26 @@ func TestPacedByUsesPerStepMinimums(t *testing.T) {
 // nothing to back up or backups are switched off by choice.
 func TestBackupNeeded(t *testing.T) {
 	now := time.Date(2026, 3, 4, 15, 6, 0, 0, time.Local)
-	dir := "/some/dir"
 
 	cases := []struct {
 		name       string
-		backupDir  string
 		hasData    bool
 		at         time.Time
 		ok         bool
 		wantReason string
 	}{
-		{"data but never backed up", dir, true, time.Time{}, false, "No backup found"},
-		{"stale backup", dir, true, now.Add(-8 * 24 * time.Hour), true, "Over 7d since last backup"},
-		{"exactly at the interval", dir, true, now.Add(-backupInterval), true, "Over 7d since last backup"},
-		{"recent backup", dir, true, now.Add(-24 * time.Hour), true, ""},
-		{"just inside the interval", dir, true, now.Add(-backupInterval + time.Minute), true, ""},
+		{"data but never backed up", true, time.Time{}, false, "No backup found"},
+		{"stale backup", true, now.Add(-8 * 24 * time.Hour), true, "Over 7d since last backup"},
+		{"exactly at the interval", true, now.Add(-backupInterval), true, "Over 7d since last backup"},
+		{"recent backup", true, now.Add(-24 * time.Hour), true, ""},
+		{"just inside the interval", true, now.Add(-backupInterval + time.Minute), true, ""},
 		// A fresh install has Centers but no databases: nothing to lose yet.
-		{"no data yet", dir, false, time.Time{}, false, ""},
-		// Backups off is a setting, not a lapse, however old the data.
-		{"backups off", "", true, time.Time{}, false, ""},
-		{"backups off with stale backup", "", true, now.Add(-30 * 24 * time.Hour), true, ""},
+		{"no data yet", false, time.Time{}, false, ""},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			reason, need := backupNeeded(tc.backupDir, tc.hasData, tc.at, tc.ok, now)
+			reason, need := backupNeeded(tc.hasData, tc.at, tc.ok, now)
 			if need != (tc.wantReason != "") {
 				t.Fatalf("need = %v, want %v (reason %q)", need, tc.wantReason != "", reason)
 			}
@@ -433,11 +438,7 @@ func TestHasCenterData(t *testing.T) {
 // A due backup takes over the row: full-size error-coloured warning in place of
 // the caption-sized date, so it is not skimmed past.
 func TestBackupBarWarnsWhenBackupNeeded(t *testing.T) {
-	backupDir := t.TempDir()
-	cfg := config.Default()
-	cfg.BackupDir = backupDir
-
-	s, dir := newTestStartupWithConfig(t, cfg, "Alpha")
+	s, dir := newTestStartupWithConfig(t, config.Default(), "Alpha")
 	if err := os.WriteFile(filepath.Join(dir, "Alpha", center.DBFileName), []byte("x"), 0o644); err != nil {
 		t.Fatalf("seed db: %v", err)
 	}
@@ -454,10 +455,7 @@ func TestBackupBarWarnsWhenBackupNeeded(t *testing.T) {
 	}
 
 	// A fresh archive clears it, and the row goes back to the quiet caption.
-	name := backup.ArchivePrefix + time.Now().Format("2006-01-02-150405") + ".zip"
-	if err := os.WriteFile(filepath.Join(backupDir, name), []byte("x"), 0o644); err != nil {
-		t.Fatalf("seed archive: %v", err)
-	}
+	seedArchive(t, s.backupDir(), time.Now())
 	s.backups.refresh()
 
 	if got := s.backups.label.Text; !strings.HasPrefix(got, "Last backup: ") {
@@ -511,17 +509,10 @@ func TestBackedUpToday(t *testing.T) {
 func newTestBackupBarWithArchive(t *testing.T, at time.Time, answer bool) (asked, started *bool) {
 	t.Helper()
 
-	backupDir := t.TempDir()
+	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
 	if !at.IsZero() {
-		name := backup.ArchivePrefix + at.Format("2006-01-02-150405") + ".zip"
-		if err := os.WriteFile(filepath.Join(backupDir, name), []byte("x"), 0o644); err != nil {
-			t.Fatalf("seed archive: %v", err)
-		}
+		seedArchive(t, s.backupDir(), at)
 	}
-
-	cfg := config.Default()
-	cfg.BackupDir = backupDir
-	s, _ := newTestStartupWithConfig(t, cfg, "Alpha")
 
 	asked, started = new(bool), new(bool)
 	s.backups.confirm = func(onConfirm func()) {
@@ -587,9 +578,7 @@ func TestBackupRunDoesNotConfirmWithNoExistingBackup(t *testing.T) {
 // buttons present. Driven through the real dialog rather than the stub, so a
 // change to the message or the buttons is caught here.
 func TestConfirmSecondBackupDialog(t *testing.T) {
-	cfg := config.Default()
-	cfg.BackupDir = t.TempDir()
-	s, _ := newTestStartupWithConfig(t, cfg, "Alpha")
+	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
 
 	confirmed := false
 	s.backups.confirmSecondBackup(func() { confirmed = true })
@@ -640,9 +629,7 @@ func TestConfirmSecondBackupDialog(t *testing.T) {
 // Deactivated Centers are not backed up: the backup path lists Centers through
 // center.List, which leaves them out.
 func TestBackupExcludesDeactivatedCenters(t *testing.T) {
-	cfg := config.Default()
-	cfg.BackupDir = t.TempDir()
-	s, dir := newTestStartupWithConfig(t, cfg, "Alpha")
+	s, dir := newTestStartupWithConfig(t, config.Default(), "Alpha")
 
 	// Alpha has real data, so "no data" cannot be why the checks below pass.
 	if err := os.WriteFile(filepath.Join(dir, "Alpha", center.DBFileName), []byte("x"), 0o644); err != nil {

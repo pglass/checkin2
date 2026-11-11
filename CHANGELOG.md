@@ -3,6 +3,14 @@
 * Reduce CPU usage by reducing unnecessary frame copies
 * Fix unpredictable Camera menu selection
 * Remove backup pruning. All backups are kept.
+* Backups are always written to an internal backup directory, `checkin-backups`,
+  beside the app directory
+* Replace `backup_dir` with `backup_dirs`, a list of directories every backup is
+  copied to. An existing `backup_dir` is migrated automatically.
+* New backup directories receive every existing backup. Backup directories are
+  add-only: nothing is ever deleted from them.
+* Browse/Restore window can list backups from the internal directory, any
+  configured backup directory, or any other folder via Browse…
 
 # 0.0.10
 

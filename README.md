@@ -302,11 +302,34 @@ checkin -db-path /tmp/x/checkin.db   # dev escape hatch: open a database directl
 
 ## Backups
 
-A backup creates an archive of all Center databases into a separate directory
-(`backup_dir`). The `backup_dir` can be placed on separate storage or synced
-to cloud storage.
+A backup creates an archive of all Center databases in the **internal backup
+directory**, then copies it to each configured **backup directory**
+(`backup_dirs`). Backup directories can be on separate storage or synced to
+cloud storage.
 
-- **Configuration:** set `backup_dir`.
+- **Internal backup directory:** always on, and not configurable. It sits beside
+  the app directory: `checkin-backups` next to `checkin` (on macOS,
+  `~/Library/Application Support/checkin-backups`). Every backup is written and
+  fully verified here first. Settings shows its path as `internal_backup_dir`.
+- **Backup directories:** none by default. Add them in Settings, or in
+  `settings.ini` as numbered keys under `[backup]`:
+
+  ```ini
+  backup_dirs1 = /Volumes/USB/checkin-backups
+  backup_dirs2 = /Users/me/Dropbox/checkin-backups
+  ```
+
+  Numbers only set the order; gaps are fine, and saving from Settings renumbers
+  them `1..N`. An older `backup_dir` setting is moved into `backup_dirs` once, at
+  startup, and removed from the file.
+- **Copying:** after each backup, every archive in the internal directory that a
+  backup directory lacks is copied to it, so a newly added directory receives the
+  whole history. Each copy is written as `.partial`, checked by SHA-256 against
+  the original, then renamed into place. A backup directory that is unavailable
+  (an unplugged drive) is reported and skipped; it is never created on the
+  system disk in the drive's place. The backup itself still succeeds.
+- **Backup directories are add-only:** archives already there are never
+  overwritten or deleted, including ones the internal directory no longer has.
 - **Retention:** every archive is kept; backups are never deleted. Archives are
   small (roughly 10-20 MB for two Centers after ten years of daily use).
 - **Contents:** `manifest.json` at the archive root, plus `centers/<Center>.db`.
@@ -328,7 +351,9 @@ to cloud storage.
 ### Verifying a backup
 
 **Backups → Browse/Restore…** on the Center selection window lists the archives
-in `backup_dir`, newest first. **Verify** re-checks one archive against what its
+in a backup directory, newest first. A selector at the top switches between the
+internal backup directory, each configured backup directory, and **Browse…**,
+which picks any other folder (for example, a drive from another machine). **Verify** re-checks one archive against what its
 manifest recorded when the backup was made:
 
 1. Extract the archive to a temporary directory.
@@ -337,7 +362,8 @@ manifest recorded when the backup was made:
 
 ### Restoring a backup
 
-Backup archives can be browsed, verified, and restored. Restoring a backup adds
+Backup archives can be browsed, verified, and restored. **Explore…** on an
+archive lists the Centers inside it, each of which can be restored. Restoring adds
 a new Center named `<CenterName>-<backupTimestamp>`. No Center data is
 overwritten during a restore.
 

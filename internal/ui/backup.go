@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -31,10 +32,9 @@ const backupInterval = 7 * 24 * time.Hour
 //
 // hasData is whether any Center has a database yet: on a fresh install there is
 // nothing to lose, and demanding a backup of nothing would train the user to
-// ignore the warning before they ever have data worth keeping. With backups
-// switched off there is no warning either -- that is a setting, not a lapse.
-func backupNeeded(backupDir string, hasData bool, at time.Time, ok bool, now time.Time) (string, bool) {
-	if backupDir == "" || !hasData {
+// ignore the warning before they ever have data worth keeping.
+func backupNeeded(hasData bool, at time.Time, ok bool, now time.Time) (string, bool) {
+	if !hasData {
 		return "", false
 	}
 	if !ok {
@@ -49,15 +49,10 @@ func backupNeeded(backupDir string, hasData bool, at time.Time, ok bool, now tim
 // lastBackupText renders the "last backup" line for the startup screen. It is
 // separate from the widget so it can be tested without a canvas.
 //
-// The four cases are distinct on purpose: backups switched off, switched on but
-// never run, run at a known time, and overdue. "Never" against an unconfigured
-// directory would read as a problem when it is a choice, and the overdue line
-// replaces the date entirely rather than appending to it, since a warning read
-// as a suffix to good news is a warning that gets skipped.
-func lastBackupText(backupDir string, at time.Time, ok bool) string {
-	if backupDir == "" {
-		return "Backups are off. Set backup_dir in Settings to turn them on."
-	}
+// The overdue case is handled by backupNeededText, which replaces the date
+// entirely rather than appending to it, since a warning read as a suffix to
+// good news is a warning that gets skipped.
+func lastBackupText(at time.Time, ok bool) string {
 	if !ok {
 		return "Last backup: never"
 	}
@@ -88,9 +83,8 @@ type backupBar struct {
 	start   func()
 }
 
-// newBackupBar builds the row. The button is disabled when no backup directory
-// is configured, so the only way to reach a backup with nowhere to put it is
-// blocked in the UI rather than reported as an error afterwards.
+// newBackupBar builds the row. Backups always have somewhere to go -- the
+// internal backup directory -- so the button is only disabled while one runs.
 func newBackupBar(s *startup) *backupBar {
 	b := &backupBar{startup: s}
 
@@ -110,28 +104,21 @@ func newBackupBar(s *startup) *backupBar {
 // refresh re-reads the backup directory and updates the label and button. It is
 // called when the row is built and after every backup.
 func (b *backupBar) refresh() {
-	dir := b.startup.cfg.BackupDir
-	at, ok := backup.LastBackupTime(dir)
+	at, ok := backup.LastBackupTime(b.startup.backupDir())
 
 	// A due backup is shown at full size in the error colour, where the
 	// reassuring "last backup" line is a caption: the whole point of the
 	// warning is that it is not skimmed past like the line it replaces.
-	if reason, need := backupNeeded(dir, b.startup.hasCenterData(), at, ok, time.Now()); need {
+	if reason, need := backupNeeded(b.startup.hasCenterData(), at, ok, time.Now()); need {
 		b.label.Text = backupNeededText(reason)
 		b.label.TextSize = theme.TextSize()
 		b.label.Color = theme.Color(theme.ColorNameError)
 	} else {
-		b.label.Text = lastBackupText(dir, at, ok)
+		b.label.Text = lastBackupText(at, ok)
 		b.label.TextSize = theme.CaptionTextSize()
 		b.label.Color = theme.Color(theme.ColorNameForeground)
 	}
 	b.label.Refresh()
-
-	if dir == "" {
-		b.button.Disable()
-	} else {
-		b.button.Enable()
-	}
 }
 
 // sameDay reports whether a and b fall on the same calendar day in local time.
@@ -158,7 +145,7 @@ func backedUpToday(at time.Time, ok bool, now time.Time) bool {
 // A backup already taken today is confirmed first: repeat runs are harmless, but
 // a stray click should not quietly add a redundant archive.
 func (b *backupBar) run() {
-	at, ok := backup.LastBackupTime(b.startup.cfg.BackupDir)
+	at, ok := backup.LastBackupTime(b.startup.backupDir())
 	if backedUpToday(at, ok, time.Now()) {
 		b.confirm(b.start)
 		return
@@ -200,7 +187,7 @@ func (b *backupBar) startBackup() {
 		return
 	}
 	b.button.Disable()
-	showBackupProgress(b.startup.win, centers, b.startup.cfg.BackupDir, func() {
+	showBackupProgress(b.startup.win, centers, b.startup.backupDir(), b.startup.cfg.BackupDirs, func() {
 		b.refresh()
 		b.button.Enable()
 	})
@@ -230,6 +217,11 @@ const minStepDisplay = time.Second
 // shorter ones: a full second each would make checking a backup feel slower
 // than taking one.
 const minVerifyStepDisplay = 500 * time.Millisecond
+
+// minCopyStepDisplay is the same for copies to the backup directories. A newly
+// added directory receives every archive at once, possibly hundreds, so each
+// message is held only briefly; the progress bar carries the rest.
+const minCopyStepDisplay = 150 * time.Millisecond
 
 // paced wraps a progress callback so each message stays up for at least the
 // given minimum before the next is delivered. The returned wait function blocks
@@ -274,14 +266,16 @@ func pacedBy(onProgress func(step, total int, desc string), minFor func(step int
 	return wrapped, wait
 }
 
-// showBackupProgress runs a backup in the background, showing a progress bar
-// that advances one step per Center plus one for the archive. onClose is called
-// after the user dismisses the window, so the caller can refresh.
+// showBackupProgress runs a backup into internalDir in the background, then
+// copies it (and any other archive they lack) to each of destDirs, showing a
+// progress bar that advances one step per Center, archive, verification check,
+// and copy. onClose is called after the user dismisses the window, so the caller
+// can refresh.
 //
 // The backup runs on its own goroutine; every widget update is marshalled back
 // onto the Fyne thread with fyne.Do, since Fyne widgets may only be touched
 // from the event loop.
-func showBackupProgress(parent fyne.Window, centers []center.Center, destDir string, onClose func()) {
+func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir string, destDirs []string, onClose func()) {
 	p := &backupProgress{win: parent, onClose: onClose}
 
 	p.bar = widget.NewProgressBar()
@@ -318,19 +312,25 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, destDir str
 		// interval: those steps are numerous and quick, and a full second each
 		// would make a backup feel far slower than the work it is doing.
 		firstVerifyStep := len(centers) + 2
-		onProgress, waitForLastMessage := pacedBy(func(step, _ int, desc string) {
+		firstCopyStep := backup.Steps(len(centers)) + 1
+		onProgress, waitForLastMessage := pacedBy(func(step, total int, desc string) {
 			fyne.Do(func() {
+				// The total grows once the copies are known; see RunAndCopy.
+				p.bar.Max = float64(total)
 				p.bar.SetValue(float64(step - 1))
 				p.status.SetText(desc + "…")
 			})
 		}, func(step int) time.Duration {
-			if step >= firstVerifyStep {
+			switch {
+			case step >= firstCopyStep:
+				return minCopyStepDisplay
+			case step >= firstVerifyStep:
 				return minVerifyStepDisplay
 			}
 			return minStepDisplay
 		})
 
-		res, err := backup.Run(context.Background(), centers, destDir, version.Resolve(), onProgress)
+		res, err := backup.RunAndCopy(context.Background(), centers, internalDir, destDirs, version.Resolve(), onProgress)
 		// Let the last step's message be read before the summary replaces it.
 		waitForLastMessage()
 		fyne.Do(func() { p.finish(res, err) })
@@ -358,5 +358,37 @@ func backupSummary(res backup.Result) string {
 	if n == 1 {
 		noun = "Center"
 	}
-	return fmt.Sprintf("Backed up %d %s to\n%s", n, noun, res.Path)
+	s := fmt.Sprintf("Backed up %d %s to\n%s", n, noun, res.Path)
+	if c := copySummary(res.Copies); c != "" {
+		s += "\n\n" + c
+	}
+	return s
+}
+
+// copySummary lists the backup directories the backup reached and, separately,
+// any it did not, with the first reason for each. It is empty when no backup
+// directories are configured.
+func copySummary(c backup.CopyResult) string {
+	failed := map[string]error{}
+	for _, f := range c.Failures {
+		if _, ok := failed[f.DestDir]; !ok {
+			failed[f.DestDir] = f.Err
+		}
+	}
+	var ok, bad []string
+	for _, d := range c.Dirs {
+		if err, isBad := failed[d]; isBad {
+			bad = append(bad, d+": "+err.Error())
+		} else {
+			ok = append(ok, d)
+		}
+	}
+	var parts []string
+	if len(ok) > 0 {
+		parts = append(parts, "Copied to:\n"+strings.Join(ok, "\n"))
+	}
+	if len(bad) > 0 {
+		parts = append(parts, "Not copied to:\n"+strings.Join(bad, "\n"))
+	}
+	return strings.Join(parts, "\n\n")
 }

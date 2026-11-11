@@ -1,7 +1,10 @@
 package ui
 
 import (
+	"fmt"
 	"log/slog"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,6 +17,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/pglass/checkin/internal/backup"
 	"github.com/pglass/checkin/internal/config"
 )
 
@@ -68,6 +72,30 @@ func isBoolField(f config.Field) bool {
 	return err == nil
 }
 
+// settingsList is a List setting (config.Field.List): one entry per value, each
+// with Browse… (for a directory setting) and Remove buttons, and an Add button
+// below them.
+type settingsList struct {
+	field config.Field
+	// orig is the values the list was built with, so an edit that is undone
+	// counts as unchanged again.
+	orig    []string
+	entries []*widget.Entry
+	// items holds one row per entry; rebuilt in place as values are added and
+	// removed.
+	items *fyne.Container
+}
+
+// values returns the list's current values, in order, including empty ones;
+// the field's SetList drops those on save.
+func (l *settingsList) values() []string {
+	out := make([]string, len(l.entries))
+	for i, e := range l.entries {
+		out[i] = e.Text
+	}
+	return out
+}
+
 // settingsHost is what a Settings window needs from whatever opened it: the
 // current settings, where to write them, and somewhere to hand the saved values
 // back to. Both the main window (*App) and the Center selection window
@@ -95,9 +123,10 @@ type settingsHost interface {
 // config.Fields, so a setting added to that table appears here automatically —
 // there is no per-setting code in this file.
 type settings struct {
-	host settingsHost
-	win  fyne.Window
-	rows []*settingsRow
+	host  settingsHost
+	win   fyne.Window
+	rows  []*settingsRow
+	lists []*settingsList
 	// restartNote warns that saved settings only take effect at the next
 	// startup. Shown only once a value actually differs from what was loaded,
 	// and nil when the host has no warning to give.
@@ -154,6 +183,15 @@ func (s *settings) build() fyne.CanvasObject {
 		if f.Hidden {
 			continue
 		}
+		if f.Key == config.KeyBackupDirs {
+			// The internal directory is shown just above the list it is
+			// copied to, so the two read as one sequence.
+			blocks = append(blocks, s.internalBackupDirBlock()...)
+		}
+		if f.List {
+			blocks = append(blocks, s.buildList(f, cfg)...)
+			continue
+		}
 		row := &settingsRow{field: f}
 
 		row.orig = f.Get(cfg)
@@ -165,27 +203,8 @@ func (s *settings) build() fyne.CanvasObject {
 			s.updateRestartNote()
 		}
 
-		key := canvas.NewText(f.Key, theme.Color(theme.ColorNameForeground))
-		key.TextSize = theme.TextSize()
-
-		// A wrapping RichText, not canvas.Text: canvas.Text is single-line and
-		// reports its full string width as its minimum size, so a long
-		// description forced the whole window wide. RichText wraps, and unlike
-		// widget.Label it takes an exact theme colour, so the description keeps
-		// the placeholder grey and caption size it has always had.
-		desc := widget.NewRichText(&widget.TextSegment{
-			Text: f.Desc,
-			Style: widget.RichTextStyle{
-				ColorName: theme.ColorNamePlaceHolder,
-				SizeName:  theme.SizeNameCaptionText,
-			},
-		})
-		desc.Wrapping = fyne.TextWrapWord
-
-		// Sits tight under the input it describes, with clear space before the
-		// next setting.
-		descBlock := container.New(
-			marginLayout{top: settingsDescTopMargin, bottom: settingsDescBottomMargin}, desc)
+		key := settingsKey(f.Key)
+		descBlock := settingsDesc(f.Desc)
 
 		row.errLb = canvas.NewText("", theme.Color(theme.ColorNameError))
 		row.errLb.TextSize = theme.CaptionTextSize()
@@ -213,13 +232,11 @@ func (s *settings) build() fyne.CanvasObject {
 			// right now cannot be browsed to, but is still worth saving.
 			if f.Directory {
 				input = container.NewBorder(nil, nil, nil,
-					widget.NewButton("Browse…", func() { s.browseDir(row) }), row.entry)
+					widget.NewButton("Browse…", func() { s.browseDir(row.entry) }), row.entry)
 			}
 		}
 
-		// Fixed-width key column keeps every input left-aligned with the others.
-		keyCol := container.New(fixedWidthLayout{w: settingsKeyWidth}, key)
-		top := container.NewBorder(nil, nil, keyCol, nil, input)
+		top := settingsKeyed(key, input)
 
 		// The error is hidden until it has text: a shown-but-empty canvas.Text
 		// still occupies a line, which would space every setting apart even when
@@ -265,15 +282,135 @@ func (s *settings) build() fyne.CanvasObject {
 	return container.NewBorder(nil, bottom, nil, nil, container.NewVScroll(form))
 }
 
+// settingsKey is the label in a setting's key column.
+func settingsKey(k string) *canvas.Text {
+	key := canvas.NewText(k, theme.Color(theme.ColorNameForeground))
+	key.TextSize = theme.TextSize()
+	return key
+}
+
+// settingsKeyed puts key in the fixed-width key column beside input, which keeps
+// every input left-aligned with the others.
+func settingsKeyed(key, input fyne.CanvasObject) fyne.CanvasObject {
+	keyCol := container.New(fixedWidthLayout{w: settingsKeyWidth}, key)
+	return container.NewBorder(nil, nil, keyCol, nil, input)
+}
+
+// settingsDesc is the small description shown under a setting's input.
+//
+// A wrapping RichText, not canvas.Text: canvas.Text is single-line and reports
+// its full string width as its minimum size, so a long description forced the
+// whole window wide. RichText wraps, and unlike widget.Label it takes an exact
+// theme colour, so the description keeps the placeholder grey and caption size.
+func settingsDesc(text string) fyne.CanvasObject {
+	desc := widget.NewRichText(&widget.TextSegment{
+		Text: text,
+		Style: widget.RichTextStyle{
+			ColorName: theme.ColorNamePlaceHolder,
+			SizeName:  theme.SizeNameCaptionText,
+		},
+	})
+	desc.Wrapping = fyne.TextWrapWord
+	// Sits tight under the input it describes, with clear space before the
+	// next setting.
+	return container.New(
+		marginLayout{top: settingsDescTopMargin, bottom: settingsDescBottomMargin}, desc)
+}
+
+// internalBackupDirKey labels the internal backup directory in the window. It
+// is not a setting -- the directory is fixed beside the app directory -- so it
+// has no entry in config.Fields and nothing in settings.ini.
+const internalBackupDirKey = "internal_backup_dir"
+
+// internalBackupDirBlock shows the internal backup directory, read-only. The
+// label is selectable, so the path can be copied to go and look at it.
+func (s *settings) internalBackupDirBlock() []fyne.CanvasObject {
+	// settings.ini lives at the top of the app directory (center.SettingsPath),
+	// which is what the internal backup directory is derived from.
+	dir := backup.InternalDir(filepath.Dir(s.host.settingsPath()))
+	path := widget.NewLabel(dir)
+	path.Selectable = true
+	path.Truncation = fyne.TextTruncateEllipsis
+	return []fyne.CanvasObject{
+		settingsKeyed(settingsKey(internalBackupDirKey), path),
+		settingsDesc("Backups are written first to this internal directory. " +
+			"Then they are copied to the following other backup directories."),
+	}
+}
+
+// buildList lays out a List setting: an entry per current value, then the Add
+// button, beside the key, with the description below.
+func (s *settings) buildList(f config.Field, cfg config.Config) []fyne.CanvasObject {
+	l := &settingsList{field: f, orig: append([]string(nil), f.GetList(cfg)...)}
+	l.items = container.NewVBox()
+	for _, v := range l.orig {
+		s.addListEntry(l, v)
+	}
+	add := widget.NewButtonWithIcon(f.AddLabel, theme.ContentAddIcon(), func() {
+		s.addListEntry(l, "")
+		s.updateRestartNote()
+	})
+	s.lists = append(s.lists, l)
+	return []fyne.CanvasObject{
+		settingsKeyed(settingsKey(f.Key), container.NewVBox(l.items, container.NewHBox(add))),
+		settingsDesc(f.Desc),
+	}
+}
+
+// addListEntry appends an entry holding v to l, with its Browse… and Remove
+// buttons.
+func (s *settings) addListEntry(l *settingsList, v string) {
+	e := widget.NewEntry()
+	e.SetText(v)
+	e.OnChanged = func(string) { s.updateRestartNote() }
+	l.entries = append(l.entries, e)
+
+	buttons := container.NewHBox()
+	if l.field.Directory {
+		buttons.Add(widget.NewButton("Browse…", func() { s.browseDir(e) }))
+	}
+	buttons.Add(widget.NewButton("Remove", func() { s.confirmRemoveListEntry(l, e) }))
+	l.items.Add(container.NewBorder(nil, nil, nil, buttons, e))
+}
+
+// confirmRemoveListEntry asks before removing e from l. An empty entry holds
+// nothing worth confirming, so it goes straight away.
+func (s *settings) confirmRemoveListEntry(l *settingsList, e *widget.Entry) {
+	v := strings.TrimSpace(e.Text)
+	if v == "" {
+		s.removeListEntry(l, e)
+		return
+	}
+	d := dialog.NewConfirm("Remove", fmt.Sprintf(l.field.RemovePrompt, v), func(ok bool) {
+		if ok {
+			s.removeListEntry(l, e)
+		}
+	}, s.win)
+	d.SetConfirmText("Remove")
+	d.Show()
+}
+
+// removeListEntry drops e and its row from l. Nothing is saved until Save.
+func (s *settings) removeListEntry(l *settingsList, e *widget.Entry) {
+	for i, x := range l.entries {
+		if x != e {
+			continue
+		}
+		l.entries = append(l.entries[:i], l.entries[i+1:]...)
+		l.items.Remove(l.items.Objects[i])
+		break
+	}
+	s.updateRestartNote()
+}
+
 // browseDir opens a folder picker for a directory setting and puts the chosen
-// path into the row's entry. Setting the text fires the entry's OnChanged, so
-// the value is validated and the restart note updated exactly as if it had been
-// typed.
+// path into entry. Setting the text fires the entry's OnChanged, so the value
+// is validated and the restart note updated exactly as if it had been typed.
 //
 // The picker starts in the directory the entry currently names, so reopening it
 // after a mistake does not begin from scratch. An unset or unusable path falls
 // back to the picker's default location rather than failing.
-func (s *settings) browseDir(row *settingsRow) {
+func (s *settings) browseDir(entry *widget.Entry) {
 	d := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
 		if err != nil {
 			dialog.ShowError(err, s.win)
@@ -282,10 +419,10 @@ func (s *settings) browseDir(row *settingsRow) {
 		if lu == nil {
 			return // cancelled
 		}
-		row.entry.SetText(lu.Path())
+		entry.SetText(lu.Path())
 	}, s.win)
 
-	if start := listableDir(row.entry.Text); start != nil {
+	if start := listableDir(entry.Text); start != nil {
 		d.SetLocation(start)
 	}
 
@@ -340,9 +477,19 @@ func (s *settings) updateRestartNote() {
 }
 
 // dirty reports whether any input differs from the value it was built with.
+// A list counts as changed only if its non-empty values differ, so adding a
+// blank entry is not yet a change.
 func (s *settings) dirty() bool {
 	for _, row := range s.rows {
 		if row.value() != row.orig {
+			return true
+		}
+	}
+	for _, l := range s.lists {
+		var now, was config.Config
+		_ = l.field.SetList(&now, l.values())
+		_ = l.field.SetList(&was, l.orig)
+		if !slices.Equal(l.field.GetList(now), l.field.GetList(was)) {
 			return true
 		}
 	}
@@ -363,6 +510,12 @@ func (s *settings) save() {
 			ok = false
 		}
 		if !s.validateRow(row) {
+			ok = false
+		}
+	}
+	for _, l := range s.lists {
+		if err := l.field.SetList(&cfg, l.values()); err != nil {
+			dialog.ShowError(err, s.win)
 			ok = false
 		}
 	}

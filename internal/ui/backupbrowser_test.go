@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,22 +43,87 @@ func newTestBrowser(t *testing.T, dir string) *backupBrowser {
 	return b
 }
 
-// The header names the directory being listed, so the user can tell which
-// folder they are looking at without opening Settings.
-func TestBrowserHeaderNamesTheDirectory(t *testing.T) {
-	got := browserHeaderText("/some/backups")
-	if !strings.Contains(got, "/some/backups") {
-		t.Errorf("header = %q, want it to name the directory", got)
+// newTestBrowserDirs builds a browser over the internal dir with backup dirs
+// selectable, as the startup window opens it, without showing it.
+func newTestBrowserDirs(t *testing.T, internal string, dirs ...string) *backupBrowser {
+	t.Helper()
+	fa := test.NewApp()
+	t.Cleanup(fa.Quit)
+
+	b := &backupBrowser{dir: internal, internalDir: internal, dirs: browserDirs(internal, dirs)}
+	b.win = fa.NewWindow("Backups")
+	b.build()
+	b.reload()
+	return b
+}
+
+// The selector lists the internal directory first, marked, then each backup
+// directory without repeats, then Browse…; it starts on the internal one.
+func TestBrowserSelectorOptions(t *testing.T) {
+	internal := seedArchives(t, "2026-01-01-000000")
+	ext := t.TempDir()
+	b := newTestBrowserDirs(t, internal, ext, "", internal, ext)
+
+	want := []string{internal + internalSuffix, ext, browseOption}
+	if got := b.selector.Options; !slices.Equal(got, want) {
+		t.Errorf("options = %q, want %q", got, want)
+	}
+	if got := b.selector.Selected; got != internal+internalSuffix {
+		t.Errorf("selected = %q, want the internal dir", got)
+	}
+	if b.dir != internal {
+		t.Errorf("listing %q, want the internal dir", b.dir)
+	}
+}
+
+// Choosing another directory lists its archives.
+func TestBrowserSelectingDirListsIt(t *testing.T) {
+	internal := seedArchives(t, "2026-01-01-000000")
+	ext := seedArchives(t, "2024-01-01-000000", "2025-01-01-000000")
+	b := newTestBrowserDirs(t, internal, ext)
+
+	b.selector.SetSelected(ext)
+	if b.dir != ext {
+		t.Fatalf("listing %q, want %q", b.dir, ext)
+	}
+	if len(b.archives) != 2 {
+		t.Errorf("archives = %d, want the 2 in %s", len(b.archives), ext)
 	}
 
-	// With no directory set there is nothing to display, and saying so beats
-	// showing an empty path.
-	unset := browserHeaderText("")
-	if strings.Contains(unset, "Displaying") {
-		t.Errorf("header with no backup_dir = %q, want it to say none is set", unset)
+	b.selector.SetSelected(internal + internalSuffix)
+	if b.dir != internal || len(b.archives) != 1 {
+		t.Errorf("back on internal: dir %q with %d archives, want %q with 1", b.dir, len(b.archives), internal)
 	}
-	if !strings.Contains(unset, "Settings") {
-		t.Errorf("header with no backup_dir = %q, want it to point at Settings", unset)
+}
+
+// A directory picked with Browse… is added to the selector once and listed.
+func TestBrowserAddDir(t *testing.T) {
+	internal := seedArchives(t, "2026-01-01-000000")
+	picked := seedArchives(t, "2023-01-01-000000", "2023-02-01-000000", "2023-03-01-000000")
+	b := newTestBrowserDirs(t, internal)
+
+	// Stands in for the folder picker's callback.
+	b.addDir(picked)
+	b.addDir(picked + string(filepath.Separator))
+
+	want := []string{internal + internalSuffix, picked, browseOption}
+	if got := b.selector.Options; !slices.Equal(got, want) {
+		t.Errorf("options = %q, want %q", got, want)
+	}
+	if b.dir != picked || len(b.archives) != 3 {
+		t.Errorf("listing %q with %d archives, want %q with 3", b.dir, len(b.archives), picked)
+	}
+}
+
+// A backup directory that does not exist, like one on an unplugged drive, says
+// so rather than claiming there are no backups yet.
+func TestBrowserUnavailableDir(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "NotMounted")
+	b := newTestBrowserDirs(t, t.TempDir(), gone)
+
+	b.selector.SetSelected(gone)
+	if b.empty.Hidden || b.empty.Text != unavailableDirText(gone) {
+		t.Errorf("empty text = %q (hidden %v), want the unavailable message", b.empty.Text, b.empty.Hidden)
 	}
 }
 
@@ -105,15 +171,15 @@ func TestBrowserRowHasVerifyAndRestore(t *testing.T) {
 		t.Error("Verify has no action bound")
 	}
 
-	restore := findButton(row, "Restore")
+	restore := findButton(row, "Explore…")
 	if restore == nil {
-		t.Fatal("row has no Restore button")
+		t.Fatal("row has no Explore… button")
 	}
 	if restore.Disabled() {
-		t.Error("Restore is disabled, but restoring is implemented")
+		t.Error("Explore… is disabled, but exploring a backup is implemented")
 	}
 	if restore.OnTapped == nil {
-		t.Error("Restore has no action bound")
+		t.Error("Explore… has no action bound")
 	}
 }
 
