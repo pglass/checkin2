@@ -22,8 +22,10 @@ import (
 // one database at the same time.
 const lockSuffix = ".lock"
 
-// snapshotCenter writes a consistent snapshot of c's database to destPath and
-// returns the manifest entry describing it.
+// snapshotCenter writes a consistent snapshot of c's database to destPath,
+// checks it with SQLite's integrity check, and returns the manifest entry
+// describing it. onIntegrityCheck, if not nil, is called just before the
+// integrity check starts, so a caller can report it as its own step.
 //
 // The Center is opened read-only for the duration. Backups run from the startup
 // screen with no Center open, but another instance of the app may hold this
@@ -33,7 +35,7 @@ const lockSuffix = ".lock"
 // A Center whose database file does not exist yet -- created but never opened
 // -- is snapshotted as an empty database rather than treated as an error, so one
 // unused Center cannot fail the whole backup.
-func snapshotCenter(ctx context.Context, c center.Center, destPath string) (CenterInfo, error) {
+func snapshotCenter(ctx context.Context, c center.Center, destPath string, onIntegrityCheck func()) (CenterInfo, error) {
 	info := CenterInfo{Name: c.Name, File: filepath.ToSlash(filepath.Join("centers", snapshotName(c.Name)))}
 
 	dbPath := c.DBPath()
@@ -50,6 +52,9 @@ func snapshotCenter(ctx context.Context, c center.Center, destPath string) (Cent
 			return CenterInfo{}, err
 		}
 		info.SHA256 = sum
+		if onIntegrityCheck != nil {
+			onIntegrityCheck() // reported for every Center, so the steps add up
+		}
 		return info, nil
 	} else if err != nil {
 		return CenterInfo{}, err
@@ -83,6 +88,18 @@ func snapshotCenter(ctx context.Context, c center.Center, destPath string) (Cent
 	// consistent as of one instant, and needs no -wal sidecar of its own.
 	if _, err := db.ExecContext(ctx, `VACUUM INTO `+quoteSQLString(destPath)); err != nil {
 		return CenterInfo{}, fmt.Errorf("snapshot database: %w", err)
+	}
+
+	// VACUUM INTO reads every page of the source, but it copies damage it does
+	// not trip over rather than reporting it, and an interrupted write can leave
+	// the output incomplete. Checking the snapshot catches both before it is
+	// archived and relied on.
+	if onIntegrityCheck != nil {
+		onIntegrityCheck()
+	}
+	if err := integrityCheck(ctx, destPath); err != nil {
+		return CenterInfo{}, fmt.Errorf("the backup copy of this Center failed SQLite's integrity check, "+
+			"so the Center's database may be damaged: %w", err)
 	}
 
 	st, err := os.Stat(destPath)
@@ -136,6 +153,56 @@ func rowCounts(ctx context.Context, path string) (students, logs int64, err erro
 		return 0, 0, fmt.Errorf("count log rows: %w", err)
 	}
 	return students, logs, nil
+}
+
+// maxIntegrityProblems caps how many problems integrityCheck reports. SQLite
+// can list a great many for one damaged file, and the first few say enough.
+const maxIntegrityProblems = 3
+
+// integrityCheck runs SQLite's PRAGMA integrity_check on the database at path:
+// a full read of the file that checks its page and B-tree structure, that every
+// index matches its table, and the NOT NULL, CHECK, and UNIQUE constraints. It
+// returns nil when SQLite reports "ok", and otherwise an error naming the first
+// problems found.
+//
+// A zero-length file passes, as in rowCounts: it is how a Center created but
+// never opened is snapshotted.
+func integrityCheck(ctx context.Context, path string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if st.Size() == 0 {
+		return nil
+	}
+
+	db, err := sql.Open("sqlite", snapshotDSN(path))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`PRAGMA integrity_check(%d)`, maxIntegrityProblems))
+	if err != nil {
+		return fmt.Errorf("run integrity check: %w", err)
+	}
+	defer rows.Close()
+
+	var problems []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			return fmt.Errorf("read integrity check: %w", err)
+		}
+		problems = append(problems, line)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("run integrity check: %w", err)
+	}
+	if len(problems) == 1 && problems[0] == "ok" {
+		return nil
+	}
+	return fmt.Errorf("%s", strings.Join(problems, "; "))
 }
 
 // fileSHA256 returns the hex-encoded SHA-256 of the file at path. It streams,

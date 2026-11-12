@@ -328,6 +328,10 @@ cloud storage.
   the original, then renamed into place. A backup directory that is unavailable
   (an unplugged drive) is reported and skipped; it is never created on the
   system disk in the drive's place. The backup itself still succeeds.
+  Before the backup starts, unavailable backup directories are listed with a
+  warning: connect the drive and press **Refresh** (once everything is
+  available the backup starts after a 4-second countdown), **Proceed** without
+  them, or **Cancel**.
 - **Backup directories are add-only:** archives already there are never
   overwritten or deleted, including ones the internal directory no longer has.
 - **Retention:** every archive is kept; backups are never deleted. Archives are
@@ -357,8 +361,13 @@ which picks any other folder (for example, a drive from another machine). **Veri
 manifest recorded when the backup was made:
 
 1. Extract the archive to a temporary directory.
-2. For each Center, compare the snapshot's **size**, its **SHA-256**, its
-   **Student** row count, and its **Log** row count.
+2. For each Center, compare the snapshot's **size** and its **SHA-256**, run
+   SQLite's **`PRAGMA integrity_check`** on it, then compare its **Student** row
+   count and its **Log** row count.
+
+Restoring a Center runs the same checks on its snapshot first, and each new
+snapshot is integrity-checked right after `VACUUM INTO`, before it goes into the
+archive.
 
 ### Restoring a backup
 

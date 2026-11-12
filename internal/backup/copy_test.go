@@ -233,3 +233,27 @@ func TestRunAndCopyWithoutBackupDirs(t *testing.T) {
 		t.Error("backup not written to the internal dir")
 	}
 }
+
+// UnavailableDirs names only the directories that cannot take backups, without
+// creating anything: a missing directory with a present parent is available.
+func TestUnavailableDirs(t *testing.T) {
+	internal := t.TempDir()
+	present := t.TempDir()
+	creatable := filepath.Join(t.TempDir(), "new")
+	gone := filepath.Join(t.TempDir(), "NotMounted", "backups")
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dirs := []string{internal, present, creatable, gone, file, gone}
+	if got, want := UnavailableDirs(internal, dirs), []string{gone, file}; !slices.Equal(got, want) {
+		t.Errorf("UnavailableDirs = %q, want %q", got, want)
+	}
+	if got := AvailableDirCount(internal, dirs); got != 2 {
+		t.Errorf("AvailableDirCount = %d, want 2", got)
+	}
+	if _, err := os.Stat(creatable); !os.IsNotExist(err) {
+		t.Error("the check created a directory")
+	}
+}

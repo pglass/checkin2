@@ -11,10 +11,11 @@ import (
 	"strings"
 )
 
-// Check names one verification step for a Center's snapshot. The four run in
-// this order, cheapest and most-likely-to-fail first: a truncated archive is
-// caught by size before the file is hashed, and a file that fails its hash is
-// not worth opening as a database.
+// Check names one verification step for a Center's snapshot. They run in this
+// order, cheapest and most-likely-to-fail first: a truncated archive is caught
+// by size before the file is hashed, a file that fails its hash is not worth
+// opening as a database, and a database that fails SQLite's own integrity check
+// is not worth counting rows in.
 type Check int
 
 const (
@@ -26,10 +27,13 @@ const (
 	CheckStudentCount
 	// CheckLogCount compares the Log row count.
 	CheckLogCount
+	// CheckDatabase runs SQLite's PRAGMA integrity_check on it. Declared last
+	// so existing values keep their numbers; Checks sets the order it runs in.
+	CheckDatabase
 )
 
 // Checks lists the per-Center checks in the order Verify runs them.
-var Checks = []Check{CheckSize, CheckIntegrity, CheckStudentCount, CheckLogCount}
+var Checks = []Check{CheckSize, CheckIntegrity, CheckDatabase, CheckStudentCount, CheckLogCount}
 
 // Label is the human-readable name of a check, used in progress messages.
 func (c Check) Label() string {
@@ -42,6 +46,8 @@ func (c Check) Label() string {
 		return "Check Student count"
 	case CheckLogCount:
 		return "Check Log count"
+	case CheckDatabase:
+		return integrityCheckDesc
 	}
 	return "Check"
 }
@@ -193,6 +199,12 @@ func runCheck(ctx context.Context, check Check, want CenterInfo, path string) Ch
 		}
 		if sum != want.SHA256 {
 			r.Detail = "the file's contents do not match the checksum recorded when the backup was made"
+			return r
+		}
+
+	case CheckDatabase:
+		if err := integrityCheck(ctx, path); err != nil {
+			r.Detail = fmt.Sprintf("the database failed SQLite's integrity check: %v", err)
 			return r
 		}
 

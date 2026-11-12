@@ -179,13 +179,21 @@ func (b *backupBar) confirmSecondBackup(onConfirm func()) {
 	popup.Show()
 }
 
-// startBackup runs the backup, with no further confirmation.
+// startBackup runs the backup, with no further confirmation -- unless a backup
+// directory is unavailable, in which case checkBackupDirs warns first and the
+// user can connect the drive, go ahead without it, or cancel.
 func (b *backupBar) startBackup() {
 	centers, err := center.List(b.startup.appDir)
 	if err != nil {
 		b.startup.showError(err)
 		return
 	}
+	checkBackupDirs(b.startup.win, b.startup.backupDir(), b.startup.cfg.BackupDirs,
+		func() { b.runBackup(centers) })
+}
+
+// runBackup takes the backup and shows its progress.
+func (b *backupBar) runBackup(centers []center.Center) {
 	b.button.Disable()
 	showBackupProgress(b.startup.win, centers, b.startup.backupDir(), b.startup.cfg.BackupDirs, func() {
 		b.refresh()
@@ -311,7 +319,7 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir
 		// The verification tail holds each message for the shorter verify
 		// interval: those steps are numerous and quick, and a full second each
 		// would make a backup feel far slower than the work it is doing.
-		firstVerifyStep := len(centers) + 2
+		firstVerifyStep := backup.FirstVerifyStep(len(centers))
 		firstCopyStep := backup.Steps(len(centers)) + 1
 		onProgress, waitForLastMessage := pacedBy(func(step, total int, desc string) {
 			fyne.Do(func() {

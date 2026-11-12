@@ -129,23 +129,55 @@ func uniqueDestDirs(srcDir string, destDirs []string) []string {
 // exist, which is what an unplugged drive looks like.
 var errDirUnavailable = errors.New("directory is not available (is the drive connected?)")
 
+// checkDestDir reports whether dir can take backups without changing anything:
+// it must be a directory, or not exist yet with a parent that does (it is then
+// created on first use, by ensureDestDir). It reports whether dir exists.
+func checkDestDir(dir string) (exists bool, err error) {
+	info, err := os.Stat(dir)
+	if err == nil {
+		if !info.IsDir() {
+			return true, fmt.Errorf("%s is not a directory", dir)
+		}
+		return true, nil
+	}
+	if !os.IsNotExist(err) {
+		return false, err
+	}
+	if _, err := os.Stat(filepath.Dir(dir)); err != nil {
+		return false, errDirUnavailable
+	}
+	return false, nil
+}
+
+// UnavailableDirs returns the backup directories in destDirs that cannot take
+// backups right now -- most often one on a drive that is not connected -- in
+// configured order, with repeats and internalDir left out as CopyToDirs does.
+// Nothing is created: it is a check made before a backup starts, so the user
+// can connect a drive first.
+func UnavailableDirs(internalDir string, destDirs []string) []string {
+	var out []string
+	for _, d := range uniqueDestDirs(internalDir, destDirs) {
+		if _, err := checkDestDir(d); err != nil {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// AvailableDirCount returns how many of destDirs can take backups right now,
+// counted as CopyToDirs would copy to them.
+func AvailableDirCount(internalDir string, destDirs []string) int {
+	return len(uniqueDestDirs(internalDir, destDirs)) - len(UnavailableDirs(internalDir, destDirs))
+}
+
 // ensureDestDir makes sure dir exists, creating only the last path element.
 // MkdirAll is deliberately not used: with a removable drive unplugged, it would
 // recreate the drive's mount path on the system disk (/Volumes/Backup on macOS)
 // and quietly fill that with backups instead of reporting the drive missing.
 func ensureDestDir(dir string) error {
-	info, err := os.Stat(dir)
-	if err == nil {
-		if !info.IsDir() {
-			return fmt.Errorf("%s is not a directory", dir)
-		}
-		return nil
-	}
-	if !os.IsNotExist(err) {
+	exists, err := checkDestDir(dir)
+	if err != nil || exists {
 		return err
-	}
-	if _, err := os.Stat(filepath.Dir(dir)); err != nil {
-		return errDirUnavailable
 	}
 	if err := os.Mkdir(dir, 0o755); err != nil && !os.IsExist(err) {
 		return fmt.Errorf("create backup directory: %w", err)

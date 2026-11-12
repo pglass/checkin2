@@ -103,11 +103,23 @@ type CenterInfo struct {
 // must marshal to its own thread.
 type Progress func(step, total int, desc string)
 
-// Steps returns how many progress steps a backup of n Centers takes: one per
-// Center snapshot, one for writing the archive, then the verification pass over
-// the archive that was just written. The manifest is written into the archive
-// as part of the archive step, so it is not counted separately.
-func Steps(n int) int { return n + 1 + VerifySteps(n) }
+// Steps returns how many progress steps a backup of n Centers takes: two per
+// Center (the snapshot, then its integrity check), one for writing the archive,
+// then the verification pass over the archive that was just written. The
+// manifest is written into the archive as part of the archive step, so it is
+// not counted separately.
+func Steps(n int) int { return snapshotSteps(n) + 1 + VerifySteps(n) }
+
+// snapshotSteps is the number of steps taken by the snapshots of n Centers.
+func snapshotSteps(n int) int { return 2 * n }
+
+// FirstVerifyStep is the step number at which a backup of n Centers starts
+// verifying the archive it wrote.
+func FirstVerifyStep(n int) int { return snapshotSteps(n) + 2 }
+
+// integrityCheckDesc is the progress message for SQLite's integrity check,
+// wherever it runs.
+const integrityCheckDesc = "Running database integrity check"
 
 // Result describes a completed backup.
 type Result struct {
@@ -163,9 +175,9 @@ func Run(ctx context.Context, centers []center.Center, destDir, version string, 
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		report(i+1, fmt.Sprintf("Backing up %s", c.Name))
+		report(2*i+1, fmt.Sprintf("Backing up %s", c.Name))
 		snapPath := filepath.Join(tmpDir, snapshotName(c.Name))
-		info, err := snapshotCenter(ctx, c, snapPath)
+		info, err := snapshotCenter(ctx, c, snapPath, func() { report(2*i+2, integrityCheckDesc) })
 		if err != nil {
 			return Result{}, fmt.Errorf("back up Center %q: %w", c.Name, err)
 		}
@@ -175,7 +187,7 @@ func Run(ctx context.Context, centers []center.Center, destDir, version string, 
 			"bytes", info.SizeBytes, "students", info.StudentCount)
 	}
 
-	report(len(centers)+1, "Creating archive")
+	report(snapshotSteps(len(centers))+1, "Creating archive")
 	archivePath := filepath.Join(destDir, ArchivePrefix+now.Format(archiveTimeFormat)+archiveExt)
 	if err := writeArchive(archivePath, man, snapshots); err != nil {
 		return Result{}, err
@@ -190,7 +202,7 @@ func Run(ctx context.Context, centers []center.Center, destDir, version string, 
 	verifyRes, err := Verify(ctx, archivePath, func(step, _ int, desc string) {
 		// Verification numbers its own steps from 1; offset them so they
 		// continue the backup's progress rather than restarting it.
-		report(len(centers)+1+step, desc)
+		report(snapshotSteps(len(centers))+1+step, desc)
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("verify the backup just written: %w", err)

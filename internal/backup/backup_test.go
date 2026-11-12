@@ -183,7 +183,7 @@ func TestSnapshotIncludesUncheckpointedWALData(t *testing.T) {
 	}
 
 	dest := filepath.Join(t.TempDir(), "snap.db")
-	info, err := snapshotCenter(context.Background(), c, dest)
+	info, err := snapshotCenter(context.Background(), c, dest, nil)
 	if err != nil {
 		t.Fatalf("snapshotCenter: %v", err)
 	}
@@ -272,9 +272,13 @@ func TestRunReportsStepsAtTheirStart(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	// The snapshot and archive steps, then the verification pass over what was
-	// just written.
-	want := []string{"Backing up Alpha", "Backing up Beta", "Creating archive", "Unzipping archive"}
+	// Each snapshot and its integrity check, the archive step, then the
+	// verification pass over what was just written.
+	want := []string{
+		"Backing up Alpha", "Running database integrity check",
+		"Backing up Beta", "Running database integrity check",
+		"Creating archive", "Unzipping archive",
+	}
 	if len(descs) != Steps(2) {
 		t.Fatalf("got %d descriptions %v, want %d", len(descs), descs, Steps(2))
 	}
@@ -297,7 +301,7 @@ func TestRunReportsStepsAtTheirStart(t *testing.T) {
 	// Reported before the work: no archive exists at any announcement up to and
 	// including the archive step's own. Verification runs after the archive is
 	// written, so its steps see one and are not part of this check.
-	for i := 0; i <= 2; i++ {
+	for i := 0; i <= 4; i++ {
 		if archivesAtStep[i] != 0 {
 			t.Errorf("at step %d (%q) there were already %d archives; "+
 				"the step was reported after its work, not before", i+1, descs[i], archivesAtStep[i])
@@ -463,5 +467,62 @@ func TestListArchivesSeesARealBackup(t *testing.T) {
 	}
 	if got[0].SizeBytes <= 0 {
 		t.Errorf("SizeBytes = %d, want > 0", got[0].SizeBytes)
+	}
+}
+
+// The integrity check passes a sound database and an empty (never-opened)
+// snapshot, and reports a database whose pages have been damaged.
+func TestIntegrityCheck(t *testing.T) {
+	appDir := t.TempDir()
+	c := newCenter(t, appDir, "Alpha", 20)
+	if err := integrityCheck(context.Background(), c.DBPath()); err != nil {
+		t.Fatalf("sound database: %v", err)
+	}
+
+	empty := filepath.Join(t.TempDir(), "empty.db")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := integrityCheck(context.Background(), empty); err != nil {
+		t.Errorf("empty snapshot: %v", err)
+	}
+
+	// Snapshot to a single self-contained file, then overwrite everything after
+	// the first page (the header) with garbage.
+	snap := filepath.Join(t.TempDir(), "snap.db")
+	if _, err := snapshotCenter(context.Background(), c, snap, nil); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	data, err := os.ReadFile(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const pageSize = 4096
+	if len(data) <= pageSize {
+		t.Fatalf("snapshot is only %d bytes; need more than one page to damage", len(data))
+	}
+	for i := pageSize; i < len(data); i++ {
+		data[i] = 0xA5
+	}
+	if err := os.WriteFile(snap, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := integrityCheck(context.Background(), snap); err == nil {
+		t.Error("damaged database passed the integrity check")
+	}
+}
+
+// A snapshot reports its integrity check as its own step, after the snapshot
+// is taken.
+func TestSnapshotReportsIntegrityCheck(t *testing.T) {
+	appDir := t.TempDir()
+	c := newCenter(t, appDir, "Alpha", 1)
+	called := 0
+	if _, err := snapshotCenter(context.Background(), c, filepath.Join(t.TempDir(), "s.db"),
+		func() { called++ }); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if called != 1 {
+		t.Errorf("integrity check reported %d times, want 1", called)
 	}
 }
