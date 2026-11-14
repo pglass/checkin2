@@ -56,8 +56,8 @@ You will add students to the program, use a QR code to check in and out, and lea
      * Enter the name of the adult checking in this student
      * Click "Check In" to complete the check-in
    * Scan the QR code again to check the student out
-     * Recent authorized adults for this student are suggested as clickable buttons immediately below the text box.
-     * Enter the adult name by clicking the button of a recent adult's name. Or type a name into the check box.
+     * Recent authorized adults for this student are suggested as clickable buttons below the text box.
+     * Enter the adult name by clicking the a recent adult's button, or type a name into the text box.
      * Click "Check Out" to check the student out
    * _(Checked-in students are sorted to the top of the list)_
    * _(The program ignores quickly-repeated QR code scans. Once a QR code is scanned once, the same QR code is ignored for several seconds.)_
