@@ -1,31 +1,29 @@
 package volume
 
 import (
-	"bytes"
-	"context"
-	"encoding/xml"
+	"encoding/binary"
+	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // volumesDir is where macOS mounts every drive other than the system disk.
 const volumesDir = "/Volumes"
 
-// diskutilTimeout bounds one diskutil call. It normally takes well under a
-// second, but a drive that is failing can stall it.
-const diskutilTimeout = 10 * time.Second
+// ErrDuplicateID is returned by Resolve when more than one connected drive has
+// the directory's ID -- a cloned drive, or sticks imaged from the same source --
+// so there is no telling which one the directory is on.
+var ErrDuplicateID = errors.New("more than one connected drive has this drive's ID")
 
-// ID returns the ID of the partition holding dir, or "" when dir is not on a
-// drive mounted under /Volumes: the system disk is always mounted in the same
-// place, so its paths need no ID.
-//
-// The ID is the partition's UUID where it has one (a GPT drive). Otherwise --
-// most USB sticks are MBR-partitioned FAT32, and diskutil reports no partition
-// UUID for those -- it is the volume UUID, which macOS derives from the
-// filesystem's serial number, so it changes if the drive is reformatted.
+// ID returns the volume UUID of the drive holding dir, or "" when dir is not on
+// a drive mounted under /Volumes: the system disk is always mounted in the same
+// place, so its paths need no ID. The volume UUID is the one diskutil reports;
+// for a FAT drive macOS derives it from the filesystem's serial number, so it
+// changes if the drive is reformatted.
 //
 // dir need not exist, but its drive must be connected.
 func ID(dir string) (string, error) {
@@ -33,30 +31,25 @@ func ID(dir string) (string, error) {
 	if !ok {
 		return "", nil
 	}
-	info, err := diskutilInfo(mount)
-	if err != nil {
-		return "", err
-	}
-	// diskutil also answers for a plain folder at /Volumes/Name left behind on
-	// the system disk, reporting the system disk's mount point; that is not
-	// the drive dir names.
-	if info["MountPoint"] != mount {
+	// statfs reports the filesystem a path is on, so a plain folder left at
+	// /Volumes/Name on the system disk, or the /Volumes/Macintosh HD link to
+	// it, is not taken for a drive.
+	var st unix.Statfs_t
+	if err := unix.Statfs(mount, &st); err != nil {
 		return "", ErrNotMounted
 	}
-	if id := info["DiskUUID"]; id != "" {
-		return id, nil
+	if unix.ByteSliceToString(st.Mntonname[:]) != mount {
+		return "", ErrNotMounted
 	}
-	if id := info["VolumeUUID"]; id != "" {
-		return id, nil
-	}
-	return "", fmt.Errorf("no partition or volume UUID for %s", mount)
+	return volumeUUID(mount)
 }
 
 // Resolve returns where dir is now: its path below its drive's mount point,
-// moved to wherever the partition with the given ID is mounted. dir is returned
-// unchanged when id is empty or dir is not on a drive under /Volumes, and
-// ErrNotMounted when the partition is not connected -- in which case dir must
-// not be used, since another drive may be mounted at its old path.
+// moved to wherever the drive with the given ID is mounted. dir is returned
+// unchanged when id is empty or dir is not on a drive under /Volumes. It
+// returns ErrNotMounted when no connected drive has the ID, and ErrDuplicateID
+// when several do; dir must not be used then, since another drive may be
+// mounted at its old path.
 func Resolve(dir, id string) (string, error) {
 	if id == "" {
 		return dir, nil
@@ -65,11 +58,79 @@ func Resolve(dir, id string) (string, error) {
 	if !ok {
 		return dir, nil
 	}
-	info, err := diskutilInfo(id)
-	if err != nil || info["MountPoint"] == "" {
-		return "", ErrNotMounted
+	mounts, err := volumeMounts()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(info["MountPoint"], rel), nil
+	var found []string
+	for _, m := range mounts {
+		if u, err := volumeUUID(m); err == nil && u == id {
+			found = append(found, m)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", ErrNotMounted
+	case 1:
+		return filepath.Join(found[0], rel), nil
+	}
+	return "", ErrDuplicateID
+}
+
+// volumeMounts returns the mount points of the mounted drives under /Volumes.
+func volumeMounts() ([]string, error) {
+	n, err := unix.Getfsstat(nil, unix.MNT_NOWAIT)
+	if err != nil {
+		return nil, fmt.Errorf("list mounted drives: %w", err)
+	}
+	// Room for a drive mounted between the two calls; one beyond that is
+	// simply not seen this time.
+	buf := make([]unix.Statfs_t, n+4)
+	n, err = unix.Getfsstat(buf, unix.MNT_NOWAIT)
+	if err != nil {
+		return nil, fmt.Errorf("list mounted drives: %w", err)
+	}
+	var out []string
+	for _, st := range buf[:n] {
+		if m := unix.ByteSliceToString(st.Mntonname[:]); strings.HasPrefix(m, volumesDir+"/") {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+// volumeUUID returns the volume UUID of the filesystem mounted at mount, read
+// with getattrlist(2). x/sys/unix has no wrapper for getattrlist, so it is
+// called by number.
+func volumeUUID(mount string) (string, error) {
+	al := unix.Attrlist{
+		Bitmapcount: unix.ATTR_BIT_MAP_COUNT,
+		Commonattr:  unix.ATTR_CMN_RETURNED_ATTRS,
+		Volattr:     unix.ATTR_VOL_INFO | unix.ATTR_VOL_UUID,
+	}
+	// The reply: its length (uint32), the attributes actually returned (five
+	// uint32 bitmaps: common, volume, dir, file, fork), then the UUID.
+	const (
+		volattrOff = 4 + 4
+		uuidOff    = 4 + 5*4
+	)
+	var buf [uuidOff + 16]byte
+	p, err := unix.BytePtrFromString(mount)
+	if err != nil {
+		return "", err
+	}
+	_, _, errno := unix.Syscall6(unix.SYS_GETATTRLIST,
+		uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(&al)),
+		uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)), 0, 0)
+	if errno != 0 {
+		return "", fmt.Errorf("read volume UUID of %s: %w", mount, errno)
+	}
+	// A filesystem without a UUID leaves the attribute out of the reply.
+	if binary.LittleEndian.Uint32(buf[volattrOff:])&unix.ATTR_VOL_UUID == 0 {
+		return "", fmt.Errorf("%s has no volume UUID", mount)
+	}
+	u := buf[uuidOff:]
+	return fmt.Sprintf("%X-%X-%X-%X-%X", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16]), nil
 }
 
 // splitVolume splits a path under /Volumes into its drive's mount point and
@@ -83,53 +144,4 @@ func splitVolume(dir string) (mount, rel string, ok bool) {
 	}
 	name, rel, _ := strings.Cut(after, "/")
 	return filepath.Join(volumesDir, name), rel, true
-}
-
-// diskutilInfo runs `diskutil info -plist` on device (a mount point or a UUID)
-// and returns the string values of its top-level dictionary.
-func diskutilInfo(device string) (map[string]string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), diskutilTimeout)
-	defer cancel()
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "diskutil", "info", "-plist", device)
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			err = fmt.Errorf("%w: %s", err, msg)
-		}
-		return nil, fmt.Errorf("diskutil info %s: %w", device, err)
-	}
-	return plistStrings(out)
-}
-
-// plistStrings returns the <string> values of an XML property list's top-level
-// <dict>, by key. Values of any other type (integers, booleans, nested
-// containers) are skipped.
-func plistStrings(data []byte) (map[string]string, error) {
-	var doc struct {
-		Dict struct {
-			// A dict's children alternate <key> and a value element.
-			Items []struct {
-				XMLName xml.Name
-				Text    string `xml:",chardata"`
-			} `xml:",any"`
-		} `xml:"dict"`
-	}
-	if err := xml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parse diskutil plist: %w", err)
-	}
-	out := map[string]string{}
-	var key string
-	for _, it := range doc.Dict.Items {
-		if it.XMLName.Local == "key" {
-			key = it.Text
-			continue
-		}
-		if it.XMLName.Local == "string" {
-			out[key] = it.Text
-		}
-		key = ""
-	}
-	return out, nil
 }

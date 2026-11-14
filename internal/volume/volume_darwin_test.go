@@ -1,7 +1,7 @@
 package volume
 
 import (
-	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -25,32 +25,13 @@ func TestSplitVolume(t *testing.T) {
 	}
 }
 
-func TestPlistStrings(t *testing.T) {
-	data := []byte(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Bootable</key>
-	<false/>
-	<key>MountPoint</key>
-	<string>/Volumes/USB</string>
-	<key>Size</key>
-	<integer>63864569856</integer>
-	<key>Nested</key>
-	<array><string>ignored</string></array>
-	<key>VolumeUUID</key>
-	<string>02F42F02-4309-35D1-A149-0F88047B266D</string>
-</dict>
-</plist>`)
-	got, err := plistStrings(data)
+// The system disk's volume UUID reads, in diskutil's format, without error.
+func TestVolumeUUIDOfRoot(t *testing.T) {
+	u, err := volumeUUID("/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{
-		"MountPoint": "/Volumes/USB",
-		"VolumeUUID": "02F42F02-4309-35D1-A149-0F88047B266D",
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("plistStrings = %q, want %q", got, want)
+	if len(u) != 36 || strings.Count(u, "-") != 4 {
+		t.Errorf("volumeUUID(/) = %q, want a UUID", u)
 	}
 }
