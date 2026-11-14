@@ -58,7 +58,9 @@ func TestFieldsWellFormed(t *testing.T) {
 			if f.GetList == nil || f.SetList == nil {
 				t.Errorf("list key %q missing GetList or SetList", f.Key)
 			}
-			if f.AddLabel == "" || f.RemovePrompt == "" || f.ListExample == "" {
+			// A paired field is edited through the field it pairs with, so
+			// it has no controls or example of its own.
+			if f.PairedWith == "" && (f.AddLabel == "" || f.RemovePrompt == "" || f.ListExample == "") {
 				t.Errorf("list key %q missing AddLabel, RemovePrompt, or ListExample", f.Key)
 			}
 			continue

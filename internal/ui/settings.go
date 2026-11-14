@@ -149,7 +149,10 @@ func (a *App) settingsRestartNote() string {
 // applySettings stores the saved settings. They are not applied to the running
 // app: the camera and QR scanning keep using the values read at startup, which
 // is what the window's restart warning is about.
-func (a *App) applySettings(cfg config.Config) { a.cfg = cfg }
+func (a *App) applySettings(cfg config.Config) {
+	a.cfg = cfg
+	useBackupDirIDs(cfg)
+}
 
 func (a *App) showSettingsWindow() {
 	if a.settingsWin != nil {
@@ -370,7 +373,26 @@ func (s *settings) addListEntry(l *settingsList, v string) {
 		buttons.Add(widget.NewButton("Browse…", func() { s.browseDir(e) }))
 	}
 	buttons.Add(widget.NewButton("Remove", func() { s.confirmRemoveListEntry(l, e) }))
-	l.items.Add(container.NewBorder(nil, nil, nil, buttons, e))
+	row := container.NewBorder(nil, nil, nil, buttons, e)
+
+	// A backup directory whose drive is now mounted elsewhere says where, for
+	// as long as the entry still holds the saved path the note is about.
+	if l.field.Key == config.KeyBackupDirs && v != "" {
+		if now := movedBackupDir(s.host.settingsConfig(), v); now != "" {
+			note := settingsDesc("Now at " + now)
+			e.OnChanged = func(text string) {
+				if text == v {
+					note.Show()
+				} else {
+					note.Hide()
+				}
+				s.updateRestartNote()
+			}
+			l.items.Add(container.NewVBox(row, note))
+			return
+		}
+	}
+	l.items.Add(row)
 }
 
 // confirmRemoveListEntry asks before removing e from l. An empty entry holds
@@ -522,6 +544,7 @@ func (s *settings) save() {
 	if !ok {
 		return // errors are already displayed under the offending inputs
 	}
+	cfg.BackupDirIDs = backupDirIDs(cfg.BackupDirs, s.host.settingsConfig().BackupDirIDs)
 
 	if err := config.Write(s.host.settingsPath(), cfg); err != nil {
 		dialog.ShowError(err, s.win)

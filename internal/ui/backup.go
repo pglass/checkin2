@@ -162,17 +162,21 @@ func (b *backupBar) confirmSecondBackup(note string, onConfirm func()) {
 
 	msg := widget.NewLabel("A backup was already created today. Make another backup?")
 	msg.Wrapping = fyne.TextWrapWord
+	msg.Alignment = fyne.TextAlignCenter
 
 	body := container.NewVBox(
 		msg,
+		blankLine(),
 		container.NewCenter(container.NewHBox(cancelBtn, backUpBtn)),
 	)
 	if note != "" {
 		n := widget.NewLabel(note)
 		n.Wrapping = fyne.TextWrapWord
+		n.Alignment = fyne.TextAlignCenter
 		body.Objects = append([]fyne.CanvasObject{n}, body.Objects...)
 	}
-	popup = dialog.NewCustomWithoutButtons("Backup", body, b.startup.win)
+	popup = dialog.NewCustomWithoutButtons("Backup", centerVertically(body), b.startup.win)
+	fitBackupPopup(popup, b.startup.win)
 	popup.Show()
 }
 
@@ -206,7 +210,7 @@ type backupProgress struct {
 	bar    *widget.ProgressBar
 	status *widget.Label
 	// summary replaces status once the run succeeds; see backupSummarySegments.
-	summary *widget.RichText
+	summary *backupMessage
 	// done replaces the progress view's buttons once the run finishes, so the
 	// window stays up with the outcome instead of vanishing.
 	closeBtn *widget.Button
@@ -291,13 +295,13 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir
 	p.bar.SetValue(0)
 
 	p.status = widget.NewLabel("Starting…")
+	p.status.Alignment = fyne.TextAlignCenter
 	p.status.Wrapping = fyne.TextWrapWord
 
 	// The outcome replaces the status line once the run succeeds. A RichText,
 	// not a Label, for its bulleted lists of monospace paths.
-	p.summary = widget.NewRichText()
-	p.summary.Wrapping = fyne.TextWrapWord
-	p.summary.Hide()
+	p.summary = newBackupMessage()
+	p.summary.box.Hide()
 
 	p.closeBtn = widget.NewButton("Close", func() {
 		p.dialog.Hide()
@@ -312,12 +316,13 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir
 
 	body := container.NewVBox(
 		p.status,
-		p.summary,
+		p.summary.box,
 		p.bar,
+		blankLine(),
 		container.NewHBox(layout.NewSpacer(), p.closeBtn),
 	)
-	p.dialog = dialog.NewCustomWithoutButtons("Backup", body, parent)
-	p.dialog.Resize(fyne.NewSize(380, 180))
+	p.dialog = dialog.NewCustomWithoutButtons("Backup", centerVertically(body), parent)
+	fitBackupPopup(p.dialog, parent)
 	p.dialog.Show()
 
 	go func() {
@@ -360,14 +365,61 @@ func (p *backupProgress) finish(res backup.Result, err error) {
 		p.bar.SetValue(p.bar.Min)
 	} else {
 		p.status.Hide()
-		p.summary.Segments = backupSummarySegments(res)
-		p.summary.Refresh()
-		p.summary.Show()
+		p.summary.set(backupSummarySegments(res))
+		p.summary.box.Show()
 		p.bar.SetValue(p.bar.Max)
-		// Wider than the progress view, so the paths in the summary fit.
-		p.dialog.Resize(fyne.NewSize(520, p.dialog.MinSize().Height))
 	}
 	p.closeBtn.Enable()
+}
+
+// backupPopupFraction is how much of its window a Backup pop-up covers, in
+// each dimension, up to backupPopupMax.
+const backupPopupFraction = 0.9
+
+// backupPopupMax caps a Backup pop-up's size, so over a large window it stays
+// a pop-up rather than a second window's worth of empty space.
+var backupPopupMax = fyne.NewSize(600, 600)
+
+// fitBackupPopup sizes d to backupPopupFraction of win, up to backupPopupMax,
+// so every Backup pop-up has room for long paths whatever size the window is.
+func fitBackupPopup(d dialog.Dialog, win fyne.Window) {
+	d.Resize(backupPopupSize(win))
+}
+
+// backupPopupSize is the size of a Backup pop-up over win.
+func backupPopupSize(win fyne.Window) fyne.Size {
+	s := win.Canvas().Size()
+	return fyne.NewSize(
+		min(s.Width*backupPopupFraction, backupPopupMax.Width),
+		min(s.Height*backupPopupFraction, backupPopupMax.Height))
+}
+
+// centerSegments centers every line of segs horizontally, for the text of a
+// Backup pop-up. It changes the segments in place and returns them.
+func centerSegments(segs []widget.RichTextSegment) []widget.RichTextSegment {
+	for _, s := range segs {
+		switch v := s.(type) {
+		case *widget.TextSegment:
+			v.Style.Alignment = fyne.TextAlignCenter
+		case *widget.ParagraphSegment:
+			centerSegments(v.Texts)
+		}
+	}
+	return segs
+}
+
+// blankLine is one empty line of space, put above a Backup pop-up's buttons
+// so they do not crowd the text.
+func blankLine() fyne.CanvasObject {
+	return widget.NewLabel("")
+}
+
+// centerVertically centers content top to bottom in whatever height it is
+// given, at full width so wrapped text still uses the pop-up's width. A Backup
+// pop-up is sized to its window, not its content, so without this a short
+// message would sit at the top over empty space.
+func centerVertically(content fyne.CanvasObject) fyne.CanvasObject {
+	return container.NewVBox(layout.NewSpacer(), content, layout.NewSpacer())
 }
 
 // backupSummarySegments is the message shown when a backup finishes: how many
@@ -382,7 +434,7 @@ func backupSummarySegments(res backup.Result) []widget.RichTextSegment {
 		noun = "center"
 	}
 
-	reached := []string{filepath.Dir(res.Path)}
+	reached := []string{filepath.Dir(res.Path)} // the internal directory never moves
 	var skipped, failed []string
 	reasons := map[string]string{}
 	failedDirs := map[string]bool{}
@@ -409,7 +461,7 @@ func backupSummarySegments(res backup.Result) []widget.RichTextSegment {
 			Text:  fmt.Sprintf("Backed up %d %s to %d location(s):", n, noun, len(reached)),
 			Style: precheckPlainEnd,
 		},
-		pathList(reached, nil),
+		pathList(reached, res.Copies.Moved, nil),
 	}
 	if len(skipped) > 0 {
 		segs = append(segs, precheckBlankLine(),
@@ -417,7 +469,7 @@ func backupSummarySegments(res backup.Result) []widget.RichTextSegment {
 				Text:  fmt.Sprintf("Skipped backup to %d unavailable location(s):", len(skipped)),
 				Style: precheckPlainEnd,
 			},
-			pathList(skipped, nil))
+			pathList(skipped, nil, nil))
 	}
 	if len(failed) > 0 {
 		segs = append(segs, precheckBlankLine(),
@@ -425,7 +477,7 @@ func backupSummarySegments(res backup.Result) []widget.RichTextSegment {
 				Text:  fmt.Sprintf("Failed backup to %d location(s):", len(failed)),
 				Style: precheckPlainEnd,
 			},
-			pathList(failed, reasons))
+			pathList(failed, res.Copies.Moved, reasons))
 	}
 	return segs
 }
@@ -436,18 +488,86 @@ func backupSummarySegments(res backup.Result) []widget.RichTextSegment {
 // Not a widget.ListSegment: RichText draws its bullet at the normal text size,
 // top-aligned with the line, so beside small text the bullet sits visibly high.
 // A dash in the path's own style lines up with it.
-func pathList(paths []string, reasons map[string]string) widget.RichTextSegment {
+//
+// A path in moved -- a backup directory whose drive is mounted somewhere else
+// now (see backup.CopyResult.Moved) -- is followed by "(now at <path>)". Only
+// the paths are monospace.
+func pathList(paths []string, moved, reasons map[string]string) widget.RichTextSegment {
+	path := precheckPathEnd
+	path.Inline = true
+	// "(now at ...)" belongs with the paths, so it is their small size too.
+	pathWords := path
+	pathWords.TextStyle = fyne.TextStyle{}
+
 	lines := make([]widget.RichTextSegment, 0, len(paths))
 	for _, d := range paths {
+		var tail []widget.RichTextSegment
+		if now := moved[d]; now != "" {
+			tail = append(tail,
+				&widget.TextSegment{Text: " (now at ", Style: pathWords},
+				&widget.TextSegment{Text: now, Style: path},
+				&widget.TextSegment{Text: ")", Style: pathWords})
+		}
 		if r := reasons[d]; r != "" {
-			path := precheckPathEnd
-			path.Inline = true
-			lines = append(lines,
-				&widget.TextSegment{Text: "- " + d, Style: path},
-				&widget.TextSegment{Text: ": " + r, Style: precheckPlainEnd})
+			tail = append(tail, &widget.TextSegment{Text: ": " + r, Style: precheckPlain})
+		}
+		if len(tail) == 0 {
+			lines = append(lines, &widget.TextSegment{Text: "- " + d, Style: precheckPathEnd})
 			continue
 		}
-		lines = append(lines, &widget.TextSegment{Text: "- " + d, Style: precheckPathEnd})
+		// The line ends after its last segment, which must not be Inline.
+		last := tail[len(tail)-1].(*widget.TextSegment)
+		last.Style.Inline = false
+		lines = append(lines, &widget.TextSegment{Text: "- " + d, Style: path})
+		lines = append(lines, tail...)
 	}
-	return &widget.ParagraphSegment{Texts: lines}
+	return pathListSegment{&widget.ParagraphSegment{Texts: lines}}
+}
+
+// pathListSegment is a list of paths made by pathList. Where a Backup pop-up
+// centers its text, a path list is a left-aligned block -- so the paths line up
+// with each other -- that is centered as a whole; see backupMessage.
+type pathListSegment struct{ *widget.ParagraphSegment }
+
+// backupMessage shows a Backup pop-up's message: its text centered line by
+// line, and each path list (pathListSegment) left-aligned in a block centered
+// between them.
+type backupMessage struct {
+	box *fyne.Container
+	// segs is the message last set, for tests.
+	segs []widget.RichTextSegment
+}
+
+func newBackupMessage() *backupMessage {
+	return &backupMessage{box: container.NewVBox()}
+}
+
+// set replaces the message with segs.
+func (m *backupMessage) set(segs []widget.RichTextSegment) {
+	m.segs = segs
+	var objs []fyne.CanvasObject
+	var text []widget.RichTextSegment
+	flush := func() {
+		if len(text) == 0 {
+			return
+		}
+		t := widget.NewRichText(centerSegments(text)...)
+		t.Wrapping = fyne.TextWrapWord
+		objs = append(objs, t)
+		text = nil
+	}
+	for _, s := range segs {
+		list, ok := s.(pathListSegment)
+		if !ok {
+			text = append(text, s)
+			continue
+		}
+		flush()
+		// Not wrapped, so the block is as wide as its longest path and
+		// NewCenter can center it.
+		objs = append(objs, container.NewCenter(widget.NewRichText(list.ParagraphSegment)))
+	}
+	flush()
+	m.box.Objects = objs
+	m.box.Refresh()
 }

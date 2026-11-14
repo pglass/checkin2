@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/pglass/checkin/internal/center"
@@ -27,14 +28,48 @@ func InternalDir(appDir string) string {
 	return filepath.Join(filepath.Dir(appDir), filepath.Base(appDir)+"-backups")
 }
 
+// dirResolver maps a configured backup directory to where it is right now; see
+// SetDirResolver.
+var (
+	dirResolverMu sync.RWMutex
+	dirResolver   = func(dir string) (string, error) { return dir, nil }
+)
+
+// SetDirResolver sets how a configured backup directory is mapped to the path
+// it is at right now. A removable drive's mount point can change between
+// connections (a drive letter on Windows, "/Volumes/Name 1" on macOS), so the
+// configured path may name another drive, or none; resolve returns the path to
+// use, or an error if the directory's drive is not connected. A directory that
+// fails to resolve is reported unavailable and never written to. By default the
+// configured path is used as it is.
+func SetDirResolver(resolve func(dir string) (string, error)) {
+	dirResolverMu.Lock()
+	defer dirResolverMu.Unlock()
+	dirResolver = resolve
+}
+
+// ResolveDir returns where the configured backup directory dir is right now,
+// with the resolver set by SetDirResolver, or an error if its drive is not
+// connected.
+func ResolveDir(dir string) (string, error) {
+	dirResolverMu.RLock()
+	resolve := dirResolver
+	dirResolverMu.RUnlock()
+	return resolve(dir)
+}
+
 // CopyJob is one archive to be copied into one external directory.
 type CopyJob struct {
 	Archive Archive
+	// DestDir is the directory as configured; Dir is where it is right now
+	// (see SetDirResolver), which the archive is copied into.
 	DestDir string
+	Dir     string
 }
 
 // CopyFailure is a copy that did not happen: either one archive failed, or the
-// whole directory was unavailable (Archive is empty then).
+// whole directory was unavailable (Archive is empty then). DestDir is the
+// directory as configured.
 type CopyFailure struct {
 	DestDir string
 	Archive string
@@ -43,9 +78,13 @@ type CopyFailure struct {
 
 // CopyResult describes the copies made to the external directories.
 type CopyResult struct {
-	// Dirs are the external directories considered, in configured order, with
-	// repeats and the internal directory itself left out.
+	// Dirs are the external directories considered, as configured and in
+	// configured order, with repeats and the internal directory itself left
+	// out.
 	Dirs []string
+	// Moved maps each of Dirs that is somewhere else right now, because its
+	// drive is mounted at a new path, to where it is. See DirLabel.
+	Moved map[string]string
 	// Copied are the copies that were made and checked.
 	Copied []CopyJob
 	// Failures are the copies that were not.
@@ -59,6 +98,7 @@ func (r CopyResult) OK() bool { return len(r.Failures) == 0 }
 // missing, and the directories that could not be used at all.
 type copyPlan struct {
 	dirs   []string
+	moved  map[string]string
 	jobs   []CopyJob
 	failed []CopyFailure
 }
@@ -84,11 +124,23 @@ func planCopies(srcDir string, destDirs []string) copyPlan {
 	}
 	for _, d := range uniqueDestDirs(srcDir, destDirs) {
 		p.dirs = append(p.dirs, d)
-		if err := ensureDestDir(d); err != nil {
+		r, err := ResolveDir(d)
+		if err != nil {
+			slog.Warn("backup directory not found", "dir", d, "err", err)
+			p.failed = append(p.failed, CopyFailure{DestDir: d, Err: ErrDirUnavailable})
+			continue
+		}
+		if filepath.Clean(r) != filepath.Clean(d) {
+			if p.moved == nil {
+				p.moved = map[string]string{}
+			}
+			p.moved[d] = r
+		}
+		if err := ensureDestDir(r); err != nil {
 			p.failed = append(p.failed, CopyFailure{DestDir: d, Err: err})
 			continue
 		}
-		have, err := List(d)
+		have, err := List(r)
 		if err != nil {
 			p.failed = append(p.failed, CopyFailure{DestDir: d, Err: err})
 			continue
@@ -101,7 +153,7 @@ func planCopies(srcDir string, destDirs []string) copyPlan {
 		// contiguous history rather than only the newest archives.
 		for i := len(src) - 1; i >= 0; i-- {
 			if !present[src[i].Name] {
-				p.jobs = append(p.jobs, CopyJob{Archive: src[i], DestDir: d})
+				p.jobs = append(p.jobs, CopyJob{Archive: src[i], DestDir: d, Dir: r})
 			}
 		}
 	}
@@ -123,6 +175,16 @@ func uniqueDestDirs(srcDir string, destDirs []string) []string {
 		out = append(out, d)
 	}
 	return out
+}
+
+// DirLabel is how a backup directory is shown to the user: its configured path,
+// followed by where it is now if its drive has moved (now is from
+// CopyResult.Moved; "" if it has not).
+func DirLabel(dir, now string) string {
+	if now == "" {
+		return dir
+	}
+	return fmt.Sprintf("%s (now at %s)", dir, now)
 }
 
 // ErrDirUnavailable is reported for an external directory whose parent does not
@@ -157,7 +219,11 @@ func checkDestDir(dir string) (exists bool, err error) {
 func UnavailableDirs(internalDir string, destDirs []string) []string {
 	var out []string
 	for _, d := range uniqueDestDirs(internalDir, destDirs) {
-		if _, err := checkDestDir(d); err != nil {
+		r, err := ResolveDir(d)
+		if err == nil {
+			_, err = checkDestDir(r)
+		}
+		if err != nil {
 			out = append(out, d)
 		}
 	}
@@ -276,7 +342,7 @@ func CopyToDirs(ctx context.Context, srcDir string, destDirs []string, onProgres
 // total. CopyToDirs and RunAndCopy both use it, the latter to continue the
 // backup's own step numbering.
 func runCopies(ctx context.Context, p copyPlan, offset, total int, onProgress Progress) CopyResult {
-	res := CopyResult{Dirs: p.dirs, Failures: p.failed}
+	res := CopyResult{Dirs: p.dirs, Moved: p.moved, Failures: p.failed}
 	for _, f := range p.failed {
 		slog.Warn("backup directory unavailable", "dir", f.DestDir, "err", f.Err)
 	}
@@ -286,14 +352,15 @@ func runCopies(ctx context.Context, p copyPlan, offset, total int, onProgress Pr
 			continue
 		}
 		if onProgress != nil {
-			onProgress(offset+i+1, total, fmt.Sprintf("Copy backup %s to %s", job.Archive.Name, job.DestDir))
+			onProgress(offset+i+1, total, fmt.Sprintf("Copy backup %s to %s",
+				job.Archive.Name, DirLabel(job.DestDir, p.moved[job.DestDir])))
 		}
-		if err := copyArchive(job.Archive, job.DestDir); err != nil {
-			slog.Warn("backup copy failed", "archive", job.Archive.Name, "dir", job.DestDir, "err", err)
+		if err := copyArchive(job.Archive, job.Dir); err != nil {
+			slog.Warn("backup copy failed", "archive", job.Archive.Name, "dir", job.Dir, "err", err)
 			res.Failures = append(res.Failures, CopyFailure{DestDir: job.DestDir, Archive: job.Archive.Name, Err: err})
 			continue
 		}
-		slog.Info("backup copied", "archive", job.Archive.Name, "dir", job.DestDir)
+		slog.Info("backup copied", "archive", job.Archive.Name, "dir", job.Dir)
 		res.Copied = append(res.Copied, job)
 	}
 	return res

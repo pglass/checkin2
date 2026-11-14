@@ -73,7 +73,7 @@ func (f *precheckFixture) runTick(t *testing.T) {
 	fn()
 }
 
-func (f *precheckFixture) text() string { return segmentsText(f.p.body.Segments) }
+func (f *precheckFixture) text() string { return segmentsText(f.p.body.segs) }
 
 // buttonLabels are the dialog's buttons, left to right.
 func (f *precheckFixture) buttonLabels() []string {
@@ -136,7 +136,7 @@ func TestPrecheckWarningStyles(t *testing.T) {
 	}
 	// The dash shares the path's style, so the two line up (a ListSegment's
 	// bullet is drawn at full size and sits high beside small text).
-	item := segs[1].(*widget.ParagraphSegment).Texts[0].(*widget.TextSegment)
+	item := segs[1].(pathListSegment).Texts[0].(*widget.TextSegment)
 	if item.Text != "- /x" || !item.Style.TextStyle.Monospace || item.Style.SizeName != precheckPathEnd.SizeName {
 		t.Errorf("path = %q with style %+v, want small monospace \"- /x\"", item.Text, item.Style)
 	}

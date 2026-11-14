@@ -33,7 +33,7 @@ type backupPrecheck struct {
 	proceed func()
 
 	dialog  dialog.Dialog
-	body    *widget.RichText
+	body    *backupMessage
 	buttons *fyne.Container
 
 	refreshBtn *widget.Button
@@ -86,8 +86,7 @@ func checkBackupDirs(parent fyne.Window, internalDir string, dirs []string, note
 
 // build creates the dialog in its warning state.
 func (p *backupPrecheck) build() {
-	p.body = widget.NewRichText()
-	p.body.Wrapping = fyne.TextWrapWord
+	p.body = newBackupMessage()
 
 	p.refreshBtn = widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), p.refresh)
 	p.cancelBtn = widget.NewButton("Cancel", p.cancel)
@@ -98,18 +97,19 @@ func (p *backupPrecheck) build() {
 	p.showWarning()
 
 	content := container.NewBorder(nil,
-		container.NewVBox(widget.NewSeparator(), p.buttons), nil, nil,
-		container.NewVScroll(p.body))
+		container.NewVBox(blankLine(), widget.NewSeparator(), p.buttons), nil, nil,
+		// Centered inside the scroll, which stretches its content to fill:
+		// the buttons stay at the bottom, and a long list still scrolls.
+		container.NewVScroll(centerVertically(p.body.box)))
 	p.dialog = dialog.NewCustomWithoutButtons("Backup", content, p.parent)
-	p.dialog.Resize(fyne.NewSize(520, 380))
+	fitBackupPopup(p.dialog, p.parent)
 }
 
 // showWarning lists the unavailable directories with Refresh, Cancel and
 // Proceed.
 func (p *backupPrecheck) showWarning() {
 	available := 1 + backup.AvailableDirCount(p.internalDir, p.dirs) // the internal dir is always available
-	p.body.Segments = withNote(p.note, precheckWarningSegments(p.unavailable, p.refreshes, available))
-	p.body.Refresh()
+	p.body.set(withNote(p.note, precheckWarningSegments(p.unavailable, p.refreshes, available)))
 	p.setButtons(p.refreshBtn, p.cancelBtn, p.proceedBtn)
 }
 
@@ -137,8 +137,7 @@ func (p *backupPrecheck) refresh() {
 
 // showCountdown renders the all-available message with the seconds left.
 func (p *backupPrecheck) showCountdown() {
-	p.body.Segments = withNote(p.note, precheckCountdownSegments(p.remaining))
-	p.body.Refresh()
+	p.body.set(withNote(p.note, precheckCountdownSegments(p.remaining)))
 }
 
 // scheduleTick arranges the next second of the countdown.
@@ -233,7 +232,7 @@ func precheckWarningSegments(unavailable []string, refreshes, available int) []w
 			&widget.TextSegment{Text: "Warning", Style: precheckBold},
 			&widget.TextSegment{Text: ": " + lead, Style: precheckPlainEnd},
 		}},
-		pathList(unavailable, nil),
+		pathList(unavailable, nil, nil),
 		precheckBlankLine(),
 		&widget.ParagraphSegment{Texts: []widget.RichTextSegment{
 			&widget.TextSegment{Text: "If any are located on an external drive, ", Style: precheckPlain},
@@ -282,6 +281,8 @@ func segmentsText(segs []widget.RichTextSegment) string {
 				out += "\n"
 			}
 		case *widget.ParagraphSegment:
+			out += segmentsText(v.Texts)
+		case pathListSegment:
 			out += segmentsText(v.Texts)
 		case *widget.ListSegment:
 			for _, it := range v.Items {

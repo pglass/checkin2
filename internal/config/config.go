@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -36,6 +37,11 @@ type Config struct {
 	// machine-specific, and copying backups somewhere the user never chose
 	// would be worse than not copying them.
 	BackupDirs []string
+	// BackupDirIDs maps a backup directory, cleaned with filepath.Clean, to the
+	// ID of the drive it is on (see volume.ID), so the directory can be found
+	// when its drive is mounted somewhere else. A directory without one, such
+	// as one on the system disk, is used at its path.
+	BackupDirIDs map[string]string
 	// QRBaseURL is the base that a student's encoded name is appended to when a
 	// QR code is generated. It is deliberately absent from the Settings window:
 	// changing it invalidates every card already printed against the old base,
@@ -128,15 +134,21 @@ func Load(path string) (Config, error) {
 		return cfg, err
 	}
 
+	for _, items := range lists {
+		sort.SliceStable(items, func(i, j int) bool { return items[i].n < items[j].n })
+	}
 	for _, f := range Fields {
 		if !f.List {
 			continue
 		}
-		items := lists[f.Key]
-		sort.SliceStable(items, func(i, j int) bool { return items[i].n < items[j].n })
-		vals := make([]string, 0, len(items))
-		for _, it := range items {
-			vals = append(vals, it.val)
+		var vals []string
+		if f.PairedWith != "" {
+			vals = pairedValues(cfg, f.PairedWith, lists[f.PairedWith], lists[f.Key])
+		} else {
+			vals = make([]string, 0, len(lists[f.Key]))
+			for _, it := range lists[f.Key] {
+				vals = append(vals, it.val)
+			}
 		}
 		if err := f.SetList(&cfg, vals); err != nil {
 			return cfg, fmt.Errorf("%s: %w", path, err)
@@ -161,6 +173,34 @@ func Load(path string) (Config, error) {
 type listItem struct {
 	n   int
 	val string
+}
+
+// pairedValues lines up a paired field's values with the already-set values of
+// the field it pairs with (see Field.PairedWith). Items are matched by number
+// as written in the file, and then by value, so a repeat the other field
+// dropped, or a gap in its numbering, cannot shift a value onto the wrong item.
+func pairedValues(cfg Config, parentKey string, parentItems, items []listItem) []string {
+	byNum := map[int]string{}
+	for _, it := range items {
+		byNum[it.n] = it.val
+	}
+	byVal := map[string]string{}
+	for _, it := range parentItems {
+		if v := byNum[it.n]; v != "" {
+			if _, seen := byVal[filepath.Clean(it.val)]; !seen {
+				byVal[filepath.Clean(it.val)] = v
+			}
+		}
+	}
+	var out []string
+	for _, f := range Fields {
+		if f.List && f.Key == parentKey {
+			for _, v := range f.GetList(cfg) {
+				out = append(out, byVal[filepath.Clean(v)])
+			}
+		}
+	}
+	return out
 }
 
 // Write persists cfg to path in INI format (overwriting any existing file).
@@ -193,6 +233,14 @@ func Write(path string, cfg Config) error {
 // it writes a commented-out example instead, so the file still shows how to add
 // one by hand.
 func writeList(b *strings.Builder, f Field, vals []string) {
+	if f.PairedWith != "" {
+		for i, v := range vals {
+			if v != "" {
+				fmt.Fprintf(b, "%s%d = %s\n", f.Key, i+1, v)
+			}
+		}
+		return
+	}
 	fmt.Fprintf(b, "# One per line, numbered: %s1, %s2, ...\n", f.Key, f.Key)
 	if len(vals) == 0 {
 		fmt.Fprintf(b, "# %s1 = %s\n", f.Key, f.ListExample)

@@ -3,6 +3,8 @@ package backup
 import (
 	"bytes"
 	"context"
+	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -255,5 +257,50 @@ func TestUnavailableDirs(t *testing.T) {
 	}
 	if _, err := os.Stat(creatable); !os.IsNotExist(err) {
 		t.Error("the check created a directory")
+	}
+}
+
+// A directory is checked and copied to where the resolver says it is now, and
+// one that does not resolve is unavailable and left untouched, even though a
+// directory exists at its configured path.
+func TestCopyToDirsUsesDirResolver(t *testing.T) {
+	src := t.TempDir()
+	seedNamedArchives(t, src, "2025-01-01-000000")
+	moved, movedNow := t.TempDir(), t.TempDir()
+	gone := t.TempDir() // exists, but its drive is "not connected"
+
+	SetDirResolver(func(dir string) (string, error) {
+		switch dir {
+		case moved:
+			return movedNow, nil
+		case gone:
+			return "", errors.New("drive is not connected")
+		}
+		return dir, nil
+	})
+	t.Cleanup(func() { SetDirResolver(func(dir string) (string, error) { return dir, nil }) })
+
+	if got := UnavailableDirs(src, []string{moved, gone}); !slices.Equal(got, []string{gone}) {
+		t.Errorf("UnavailableDirs = %q, want only %q", got, gone)
+	}
+	res := CopyToDirs(context.Background(), src, []string{moved, gone}, nil)
+	if len(res.Failures) != 1 || res.Failures[0].DestDir != gone || res.Failures[0].Err != ErrDirUnavailable {
+		t.Errorf("failures = %+v, want only %s, unavailable", res.Failures, gone)
+	}
+	if want := map[string]string{moved: movedNow}; !maps.Equal(res.Moved, want) {
+		t.Errorf("Moved = %q, want %q", res.Moved, want)
+	}
+	for _, c := range res.Copied {
+		if c.DestDir != moved || c.Dir != movedNow {
+			t.Errorf("copied %+v, want DestDir %s and Dir %s", c, moved, movedNow)
+		}
+	}
+	if got := archiveNames(t, movedNow); len(got) != 1 {
+		t.Errorf("resolved dir archives = %q, want the one archive", got)
+	}
+	for _, d := range []string{moved, gone} {
+		if got := archiveNames(t, d); len(got) != 0 {
+			t.Errorf("%s archives = %q, want none", d, got)
+		}
 	}
 }

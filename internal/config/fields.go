@@ -71,6 +71,13 @@ type Field struct {
 	// RemovePrompt is the confirmation shown before a List value is removed in
 	// the settings UI. It is a format string taking the value being removed.
 	RemovePrompt string
+	// PairedWith makes a List field a companion to another List field, named
+	// by its Key: item N of this field belongs to item N of that one, so
+	// backup_dirs_uid3 is the drive ID of backup_dirs3. Load pairs them by
+	// number before the other field drops repeats, so they cannot fall out of
+	// step, and SetList receives one value per item of that field ("" where an
+	// item has none). Write leaves out empty values.
+	PairedWith string
 }
 
 // Fields lists every user-editable setting, in the order they appear both in
@@ -141,6 +148,20 @@ var Fields = []Field{
 		RemovePrompt: "This will remove %s from the list of backup directories. (No existing backups will be deleted)",
 	},
 	{
+		Key:     KeyBackupDirIDs,
+		Section: "backup",
+		Desc: "Set automatically: backup_dirs_uidN identifies the drive that backup_dirsN is on, " +
+			"so backups still reach it when the drive is mounted somewhere else (a different " +
+			"drive letter or volume path). Delete the line if the directory has moved to another drive.",
+		StructField: "BackupDirIDs",
+		FreeText:    true,
+		Hidden:      true,
+		List:        true,
+		PairedWith:  KeyBackupDirs,
+		GetList:     BackupDirIDList,
+		SetList:     setBackupDirIDs,
+	},
+	{
 		Key:     "qr_base_url",
 		Section: "qr",
 		Desc: "Base URL that generated QR codes point at. The student's name is base64url-encoded " +
@@ -164,6 +185,9 @@ var Fields = []Field{
 
 // KeyBackupDirs is the key prefix of the external backup directories list.
 const KeyBackupDirs = "backup_dirs"
+
+// KeyBackupDirIDs is the key prefix of the backup directories' drive IDs.
+const KeyBackupDirIDs = "backup_dirs_uid"
 
 // fieldByKey looks up a single-valued field by its INI key
 // (case-insensitively). List fields are found with listFieldByKey.
@@ -220,6 +244,42 @@ func setBackupDirs(c *Config, vals []string) error {
 		out = append(out, v)
 	}
 	c.BackupDirs = out
+	return nil
+}
+
+// BackupDirIDList returns c's drive IDs in BackupDirs order, "" for a directory
+// with none.
+func BackupDirIDList(c Config) []string {
+	if len(c.BackupDirIDs) == 0 {
+		return nil
+	}
+	out := make([]string, len(c.BackupDirs))
+	for i, d := range c.BackupDirs {
+		out[i] = c.BackupDirIDs[filepath.Clean(d)]
+	}
+	return out
+}
+
+// BackupDirID returns the drive ID saved for dir, or "" if there is none.
+func (c Config) BackupDirID(dir string) string {
+	return c.BackupDirIDs[filepath.Clean(dir)]
+}
+
+// setBackupDirIDs stores one drive ID per item of BackupDirs, which must be set
+// first; see Field.PairedWith. Empty IDs are left out.
+func setBackupDirIDs(c *Config, vals []string) error {
+	var out map[string]string // nil when empty, matching Default
+	for i, v := range vals {
+		v = strings.TrimSpace(v)
+		if v == "" || i >= len(c.BackupDirs) {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[filepath.Clean(c.BackupDirs[i])] = v
+	}
+	c.BackupDirIDs = out
 	return nil
 }
 

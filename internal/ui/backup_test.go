@@ -11,6 +11,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/backup"
@@ -144,6 +145,47 @@ func TestBackupSummarySkippedAndFailed(t *testing.T) {
 		"\nFailed backup to 1 location(s):\n- /full: no space left on device\n"
 	if got != want {
 		t.Errorf("summary = %q, want %q", got, want)
+	}
+}
+
+// A directory whose drive has moved is listed with where it is now.
+func TestBackupSummaryMovedDir(t *testing.T) {
+	got := segmentsText(backupSummarySegments(backup.Result{
+		Path:     "/internal/a.zip",
+		Manifest: backup.Manifest{Centers: []backup.CenterInfo{{Name: "Alpha"}}},
+		Copies: backup.CopyResult{
+			Dirs:  []string{"/Volumes/USB/b", "/Volumes/OLD/b"},
+			Moved: map[string]string{"/Volumes/OLD/b": "/Volumes/NEW/b"},
+		},
+	}))
+	want := "Backed up 1 center to 3 location(s):\n- /internal\n- /Volumes/USB/b\n" +
+		"- /Volumes/OLD/b (now at /Volumes/NEW/b)\n"
+	if got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+
+	// Only the two paths are monospace, not the words around them, but the
+	// whole line is the paths' small size.
+	list := backupSummarySegments(backup.Result{
+		Path:     "/internal/a.zip",
+		Manifest: backup.Manifest{Centers: []backup.CenterInfo{{Name: "Alpha"}}},
+		Copies: backup.CopyResult{
+			Dirs:  []string{"/Volumes/OLD/b"},
+			Moved: map[string]string{"/Volumes/OLD/b": "/Volumes/NEW/b"},
+		},
+	})[1].(pathListSegment).Texts
+	var mono []string
+	for _, seg := range list {
+		ts := seg.(*widget.TextSegment)
+		if ts.Style.TextStyle.Monospace {
+			mono = append(mono, ts.Text)
+		}
+		if ts.Style.SizeName != theme.SizeNameCaptionText {
+			t.Errorf("segment %q is not the small size", ts.Text)
+		}
+	}
+	if want := []string{"- /internal", "- /Volumes/OLD/b", "/Volumes/NEW/b"}; !slices.Equal(mono, want) {
+		t.Errorf("monospace segments = %q, want %q", mono, want)
 	}
 }
 
@@ -681,5 +723,54 @@ func TestConfirmSecondBackupShowsNote(t *testing.T) {
 	}
 	if len(texts) == 0 || texts[0] != note {
 		t.Errorf("dialog labels = %q, want the note first", texts)
+	}
+}
+
+// A Backup pop-up covers 90% of its window in each dimension, up to 600x600.
+func TestFitBackupPopup(t *testing.T) {
+	win := test.NewTempWindow(t, widget.NewLabel(""))
+	for _, tc := range []struct{ win, want fyne.Size }{
+		{fyne.NewSize(500, 400), fyne.NewSize(450, 360)},
+		{fyne.NewSize(1000, 500), fyne.NewSize(600, 450)},
+		{fyne.NewSize(2000, 2000), fyne.NewSize(600, 600)},
+	} {
+		win.Resize(tc.win)
+		if got := backupPopupSize(win); got != tc.want {
+			t.Errorf("window %v: pop-up size = %v, want %v", tc.win, got, tc.want)
+		}
+	}
+}
+
+// A Backup pop-up's text is centered, but a path list is its own left-aligned
+// block, centered as a whole.
+func TestBackupMessageCentersTextAndPathBlock(t *testing.T) {
+	m := newBackupMessage()
+	m.set(precheckWarningSegments([]string{"/a", "/bb"}, 0, 2))
+
+	var text, lists int
+	for _, o := range m.box.Objects {
+		switch v := o.(type) {
+		case *widget.RichText:
+			text++
+			for _, s := range v.Segments {
+				if p, ok := s.(*widget.ParagraphSegment); ok {
+					s = p.Texts[0]
+				}
+				if ts, ok := s.(*widget.TextSegment); ok && ts.Style.Alignment != fyne.TextAlignCenter {
+					t.Errorf("text %q is not centered", ts.Text)
+				}
+			}
+		case *fyne.Container: // container.NewCenter around the path list
+			lists++
+			list := v.Objects[0].(*widget.RichText)
+			for _, s := range list.Segments[0].(*widget.ParagraphSegment).Texts {
+				if ts := s.(*widget.TextSegment); ts.Style.Alignment != fyne.TextAlignLeading {
+					t.Errorf("path %q is not left-aligned", ts.Text)
+				}
+			}
+		}
+	}
+	if text != 2 || lists != 1 {
+		t.Errorf("got %d text blocks and %d path lists, want 2 around 1", text, lists)
 	}
 }

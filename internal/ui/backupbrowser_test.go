@@ -127,6 +127,34 @@ func TestBrowserUnavailableDir(t *testing.T) {
 	}
 }
 
+// A backup directory whose drive is mounted somewhere else is shown by its
+// configured path, listed from where it is now, and says where that is.
+func TestBrowserMovedDir(t *testing.T) {
+	configured := filepath.Join(t.TempDir(), "OldName")
+	now := seedArchives(t, "2025-01-01-000000", "2025-02-01-000000")
+	backup.SetDirResolver(func(dir string) (string, error) {
+		if dir == configured {
+			return now, nil
+		}
+		return dir, nil
+	})
+	t.Cleanup(func() { backup.SetDirResolver(func(dir string) (string, error) { return dir, nil }) })
+	b := newTestBrowserDirs(t, t.TempDir(), configured)
+
+	b.selector.SetSelected(configured)
+	if len(b.archives) != 2 {
+		t.Errorf("archives = %d, want the 2 at %s", len(b.archives), now)
+	}
+	if got := b.nowAt.String(); b.nowAt.Hidden || got != "Now at "+now {
+		t.Errorf("nowAt = %q (hidden %v), want %q", got, b.nowAt.Hidden, "Now at "+now)
+	}
+
+	b.selector.SetSelected(b.optionFor(b.internalDir))
+	if !b.nowAt.Hidden {
+		t.Error("nowAt still shown for the internal directory")
+	}
+}
+
 // Archives are listed newest first, which is the order the rows are rendered in.
 func TestBrowserListsArchivesNewestFirst(t *testing.T) {
 	dir := seedArchives(t, "2024-01-02-030405", "2026-05-06-070809", "2025-03-04-050607")

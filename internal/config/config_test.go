@@ -103,6 +103,46 @@ func TestBackupDirsLoadAndWrite(t *testing.T) {
 	}
 }
 
+// Drive IDs pair with backup_dirs by number, through gaps in the numbering and
+// a repeated directory that Load drops, and are written back next to their
+// directories' new numbers.
+func TestBackupDirIDsPairByNumber(t *testing.T) {
+	path := writeSettings(t, "[backup]\n"+
+		"backup_dirs2 = /a\nbackup_dirs4 = /a/\nbackup_dirs7 = /b\nbackup_dirs9 = /c\n"+
+		"backup_dirs_uid2 = ID-A\nbackup_dirs_uid7 = ID-B\nbackup_dirs_uid8 = ID-ORPHAN\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := []string{"/a", "/b", "/c"}; !reflect.DeepEqual(cfg.BackupDirs, want) {
+		t.Fatalf("BackupDirs = %q, want %q", cfg.BackupDirs, want)
+	}
+	if want := map[string]string{"/a": "ID-A", "/b": "ID-B"}; !reflect.DeepEqual(cfg.BackupDirIDs, want) {
+		t.Fatalf("BackupDirIDs = %q, want %q", cfg.BackupDirIDs, want)
+	}
+
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	text := string(data)
+	for _, want := range []string{"backup_dirs_uid1 = ID-A\n", "backup_dirs_uid2 = ID-B\n"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("written file lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "backup_dirs_uid3") || strings.Contains(text, "ID-ORPHAN") {
+		t.Errorf("written file has an ID for /c or the orphan:\n%s", text)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reflect.DeepEqual(got, cfg) {
+		t.Errorf("reload = %+v, want %+v", got, cfg)
+	}
+}
+
 // With no directories the file carries a commented-out example, which loads
 // as no directories.
 func TestBackupDirsEmptyWritesExample(t *testing.T) {

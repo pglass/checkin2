@@ -10,6 +10,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/backup"
@@ -95,6 +96,9 @@ type backupBrowser struct {
 	dirs []string
 	// selector picks dir from dirs, or Browse….
 	selector *widget.Select
+	// nowAt sits under the selector and says where dir is now when its drive
+	// is mounted somewhere other than its configured path; hidden otherwise.
+	nowAt *widget.RichText
 	// appDir is where a restored Center is created.
 	appDir string
 	// onRestored is called after a Center is restored, so the Center selection
@@ -139,7 +143,14 @@ func (b *backupBrowser) build() {
 	// Attached after the initial selection, so building the window does not
 	// count as the user choosing a directory.
 	b.selector.OnChanged = b.onSelect
-	header := container.NewBorder(nil, nil, widget.NewLabel(browserHeaderText), nil, b.selector)
+	b.nowAt = widget.NewRichText(&widget.TextSegment{Style: widget.RichTextStyle{
+		ColorName: theme.ColorNamePlaceHolder,
+		SizeName:  theme.SizeNameCaptionText,
+	}})
+	b.nowAt.Wrapping = fyne.TextWrapWord
+	b.nowAt.Hide()
+	header := container.NewBorder(nil, nil, widget.NewLabel(browserHeaderText), nil,
+		container.NewVBox(b.selector, b.nowAt))
 
 	b.empty = widget.NewLabel(emptyListText())
 	b.empty.Wrapping = fyne.TextWrapWord
@@ -187,6 +198,19 @@ func (b *backupBrowser) build() {
 		container.NewStack(b.list, b.empty),
 	))
 	b.win.SetContent(b.listView)
+}
+
+// showNowAt shows "Now at <now>" under the selector when now, where the
+// selected directory is right now, differs from its configured path, and hides
+// the line otherwise.
+func (b *backupBrowser) showNowAt(now string) {
+	if now == "" || filepath.Clean(now) == filepath.Clean(b.dir) {
+		b.nowAt.Hide()
+		return
+	}
+	b.nowAt.Segments[0].(*widget.TextSegment).Text = "Now at " + now
+	b.nowAt.Refresh()
+	b.nowAt.Show()
 }
 
 // options are the selector's entries: one per directory, then Browse….
@@ -302,14 +326,26 @@ func (b *backupBrowser) verify(a backup.Archive) {
 
 // reload re-lists the backup directory and repaints. Listing is by file name
 // only, so this is cheap enough to call whenever the window is shown.
+//
+// The selector shows the directory as configured; it is listed wherever its
+// drive is mounted now (see backup.ResolveDir), which nowAt names if that is
+// somewhere else.
 func (b *backupBrowser) reload() {
-	if _, err := os.Stat(b.dir); os.IsNotExist(err) {
+	dir, err := backup.ResolveDir(b.dir)
+	b.showNowAt(dir)
+	if err != nil {
 		b.archives = nil
 		b.list.Refresh()
 		b.showEmpty(unavailableDirText(b.dir))
 		return
 	}
-	archives, err := backup.ListArchives(b.dir)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		b.archives = nil
+		b.list.Refresh()
+		b.showEmpty(unavailableDirText(b.dir))
+		return
+	}
+	archives, err := backup.ListArchives(dir)
 	if err != nil {
 		slog.Error("could not list backups", "dir", b.dir, "err", err)
 		b.archives = nil
