@@ -27,6 +27,9 @@ type Config struct {
 	// QRScanCooldown is how long a scanned code is ignored after a successful
 	// scan, so the same student's dialog is not re-triggered immediately.
 	QRScanCooldown time.Duration
+	// AutoBackupFrequencyDays is how many days old the newest backup may get
+	// before one is taken automatically at startup.
+	AutoBackupFrequencyDays int
 	// BackupDirs are the external directories every backup archive is copied
 	// to, after it is written and verified in the internal backup directory
 	// (see backup.InternalDir). None by default: an external location is
@@ -43,11 +46,12 @@ type Config struct {
 // Default returns the built-in default settings.
 func Default() Config {
 	return Config{
-		CameraFPS:           6,
-		CameraRequestWidth:  640,
-		CameraRequestHeight: 480,
-		QRScanCooldown:      8 * time.Second,
-		QRBaseURL:           qr.DefaultBaseURL,
+		CameraFPS:               6,
+		CameraRequestWidth:      640,
+		CameraRequestHeight:     480,
+		QRScanCooldown:          8 * time.Second,
+		AutoBackupFrequencyDays: 2,
+		QRBaseURL:               qr.DefaultBaseURL,
 	}
 }
 

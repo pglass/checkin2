@@ -27,6 +27,8 @@ type backupPrecheck struct {
 	parent      fyne.Window
 	internalDir string
 	dirs        []string
+	// note, if not empty, opens the message; see backupBar.confirm.
+	note string
 	// proceed starts the backup; called at most once.
 	proceed func()
 
@@ -65,14 +67,16 @@ func afterFunc(d time.Duration, f func()) (stop func()) {
 // available, and otherwise shows the pre-check dialog over parent, which calls
 // proceed only if the user goes ahead (or a Refresh finds everything and the
 // countdown runs out).
-func checkBackupDirs(parent fyne.Window, internalDir string, dirs []string, proceed func()) *backupPrecheck {
+//
+// A non-empty note is shown first in the dialog's message.
+func checkBackupDirs(parent fyne.Window, internalDir string, dirs []string, note string, proceed func()) *backupPrecheck {
 	unavailable := backup.UnavailableDirs(internalDir, dirs)
 	if len(unavailable) == 0 {
 		proceed()
 		return nil
 	}
 	p := &backupPrecheck{
-		parent: parent, internalDir: internalDir, dirs: dirs,
+		parent: parent, internalDir: internalDir, dirs: dirs, note: note,
 		proceed: proceed, unavailable: unavailable, after: afterFunc,
 	}
 	p.build()
@@ -104,7 +108,7 @@ func (p *backupPrecheck) build() {
 // Proceed.
 func (p *backupPrecheck) showWarning() {
 	available := 1 + backup.AvailableDirCount(p.internalDir, p.dirs) // the internal dir is always available
-	p.body.Segments = precheckWarningSegments(p.unavailable, p.refreshes, available)
+	p.body.Segments = withNote(p.note, precheckWarningSegments(p.unavailable, p.refreshes, available))
 	p.body.Refresh()
 	p.setButtons(p.refreshBtn, p.cancelBtn, p.proceedBtn)
 }
@@ -133,7 +137,7 @@ func (p *backupPrecheck) refresh() {
 
 // showCountdown renders the all-available message with the seconds left.
 func (p *backupPrecheck) showCountdown() {
-	p.body.Segments = precheckCountdownSegments(p.remaining)
+	p.body.Segments = withNote(p.note, precheckCountdownSegments(p.remaining))
 	p.body.Refresh()
 }
 
@@ -203,6 +207,18 @@ func precheckBlankLine() widget.RichTextSegment {
 	return &widget.TextSegment{Style: precheckPlainEnd}
 }
 
+// withNote puts note, on its own line followed by a blank one, ahead of segs.
+// An empty note leaves segs as they are.
+func withNote(note string, segs []widget.RichTextSegment) []widget.RichTextSegment {
+	if note == "" {
+		return segs
+	}
+	return append([]widget.RichTextSegment{
+		&widget.TextSegment{Text: note, Style: precheckPlainEnd},
+		precheckBlankLine(),
+	}, segs...)
+}
+
 // precheckWarningSegments is the warning naming the unavailable directories.
 // refreshes is shown once the user has pressed Refresh at least once, so a
 // press that changed nothing still visibly did something. available counts the
@@ -212,18 +228,12 @@ func precheckWarningSegments(unavailable []string, refreshes, available int) []w
 	if refreshes > 0 {
 		lead = fmt.Sprintf("The following backup location(s) are not available after %d refresh(es):", refreshes)
 	}
-	items := make([]widget.RichTextSegment, 0, len(unavailable))
-	for _, d := range unavailable {
-		items = append(items, &widget.ParagraphSegment{Texts: []widget.RichTextSegment{
-			&widget.TextSegment{Text: d, Style: precheckPathEnd},
-		}})
-	}
 	return []widget.RichTextSegment{
 		&widget.ParagraphSegment{Texts: []widget.RichTextSegment{
 			&widget.TextSegment{Text: "Warning", Style: precheckBold},
 			&widget.TextSegment{Text: ": " + lead, Style: precheckPlainEnd},
 		}},
-		&widget.ListSegment{Items: items},
+		pathList(unavailable, nil),
 		precheckBlankLine(),
 		&widget.ParagraphSegment{Texts: []widget.RichTextSegment{
 			&widget.TextSegment{Text: "If any are located on an external drive, ", Style: precheckPlain},
@@ -234,8 +244,8 @@ func precheckWarningSegments(unavailable []string, refreshes, available int) []w
 		&widget.TextSegment{
 			Text: fmt.Sprintf(
 				"Press 'Proceed' to backup into %d other available backup location(s). "+
-					"The unavailable backup location(s) will be skipped this time, and they will "+
-					"be backfilled with recent backup archives next time.", available),
+					"The unavailable backup location(s) will be skipped this time, and backfilled "+
+					"next time they are available.", available),
 			Style: widget.RichTextStyleParagraph,
 		},
 	}

@@ -117,6 +117,16 @@ var Fields = []Field{
 		},
 	},
 	{
+		Key:         "auto_backup_frequency_days",
+		Section:     "backup",
+		Desc:        "Automatic backup runs at startup this often, in days (specifically, if no backup is younger than this many days).",
+		StructField: "AutoBackupFrequencyDays",
+		Get:         func(c Config) string { return strconv.Itoa(c.AutoBackupFrequencyDays) },
+		Set: func(c *Config, s string) error {
+			return setPositiveInt(&c.AutoBackupFrequencyDays, "auto_backup_frequency_days", s)
+		},
+	},
+	{
 		Key:          KeyBackupDirs,
 		Section:      "backup",
 		Desc:         "Each new backup archive is copied to every one of these directories.",

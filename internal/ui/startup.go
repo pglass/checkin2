@@ -110,6 +110,11 @@ func ShowStartup(fa fyne.App, appDir string, cfg config.Config, cfgPath string, 
 	if len(s.centers) == 0 {
 		s.showAddDialog()
 	}
+
+	// Backups run from this window, with no Center open, so this is where the
+	// automatic one starts. Its dialogs are modal over the window, so no Center
+	// can be opened from under a running backup.
+	s.backups.autoBackup()
 }
 
 func (s *startup) build() {
@@ -232,13 +237,12 @@ func (s *startup) backupDir() string { return backup.InternalDir(s.appDir) }
 // hasCenterData reports whether any Center has a database yet. A Center is a
 // directory, created before it is ever opened, so its mere existence does not
 // mean there is anything to back up; the database file is what says data
-// exists. Used by the backup row to decide whether an overdue backup is worth
-// warning about.
+// exists. Used to decide whether the automatic backup has anything to back up.
 func (s *startup) hasCenterData() bool {
 	for _, c := range s.centers {
-		// Backups skip deactivated Centers, so their data must not be what makes
-		// the screen ask for a backup -- it would ask for one that then would not
-		// cover the data that prompted it.
+		// Backups skip deactivated Centers, so their data must not be what
+		// triggers a backup -- it would take one that then would not cover the
+		// data that prompted it.
 		if c.Deactivated() {
 			continue
 		}

@@ -132,8 +132,8 @@ func TestCopyToDirsSkipsUnavailableDir(t *testing.T) {
 	ok := t.TempDir()
 
 	res := CopyToDirs(context.Background(), src, []string{gone, ok}, nil)
-	if len(res.Failures) != 1 || res.Failures[0].DestDir != gone || res.Failures[0].Err != errDirUnavailable {
-		t.Errorf("failures = %+v, want one errDirUnavailable for %s", res.Failures, gone)
+	if len(res.Failures) != 1 || res.Failures[0].DestDir != gone || res.Failures[0].Err != ErrDirUnavailable {
+		t.Errorf("failures = %+v, want one ErrDirUnavailable for %s", res.Failures, gone)
 	}
 	if _, err := os.Stat(filepath.Dir(gone)); !os.IsNotExist(err) {
 		t.Errorf("unavailable drive path was created: %v", err)

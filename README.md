@@ -307,6 +307,10 @@ directory**, then copies it to each configured **backup directory**
 (`backup_dirs`). Backup directories can be on separate storage or synced to
 cloud storage.
 
+- **Automatic backups:** at startup, if no backup in the internal directory is
+  younger than `auto_backup_frequency_days` (default `2`), a backup runs just as
+  if **Back Up Now** were pressed. Any dialog it raises opens with "Automatic
+  backup wants to proceed (runs every 2 days)". Nothing runs while no Center has data.
 - **Internal backup directory:** always on, and not configurable. It sits beside
   the app directory: `checkin-backups` next to `checkin` (on macOS,
   `~/Library/Application Support/checkin-backups`). Every backup is written and

@@ -11,7 +11,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
-	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/pglass/checkin/internal/backup"
@@ -33,8 +32,10 @@ func newTestStartupWithConfig(t *testing.T, cfg config.Config, names ...string) 
 		}
 	}
 
-	s := &startup{fyneApp: fa, appDir: dir, cfg: cfg,
-		onOpen: func(center.Center, fyne.Window) error { return nil }}
+	s := &startup{
+		fyneApp: fa, appDir: dir, cfg: cfg,
+		onOpen: func(center.Center, fyne.Window) error { return nil },
+	}
 	s.win = fa.NewWindow("startup")
 	s.build()
 	s.reload()
@@ -102,53 +103,47 @@ func TestBackupBarShowsExistingBackupTime(t *testing.T) {
 	}
 }
 
-// backupSummary names both how many Centers were archived and where the file
-// went, and gets the singular/plural right.
+// The summary counts the Centers and lists every location the backup reached,
+// the internal directory first, with the right singular or plural.
 func TestBackupSummary(t *testing.T) {
-	one := backupSummary(backup.Result{
-		Path:     "/backups/a.zip",
+	one := segmentsText(backupSummarySegments(backup.Result{
+		Path:     "/internal/a.zip",
 		Manifest: backup.Manifest{Centers: []backup.CenterInfo{{Name: "Alpha"}}},
-	})
-	if !strings.Contains(one, "1 Center") || strings.Contains(one, "Centers") {
-		t.Errorf("summary = %q, want singular Center", one)
-	}
-	if !strings.Contains(one, "/backups/a.zip") {
-		t.Errorf("summary = %q, want the archive path", one)
+	}))
+	if want := "Backed up 1 center to 1 location(s):\n- /internal\n"; one != want {
+		t.Errorf("summary = %q, want %q", one, want)
 	}
 
-	two := backupSummary(backup.Result{
-		Path:     "/backups/b.zip",
+	two := segmentsText(backupSummarySegments(backup.Result{
+		Path:     "/internal/b.zip",
 		Manifest: backup.Manifest{Centers: []backup.CenterInfo{{Name: "Alpha"}, {Name: "Beta"}}},
-	})
-	if !strings.Contains(two, "2 Centers") {
-		t.Errorf("summary = %q, want plural Centers", two)
-	}
-	if strings.Contains(two, "Copied") {
-		t.Errorf("summary = %q, want no copy section with no backup_dirs", two)
+		Copies:   backup.CopyResult{Dirs: []string{"/usb", "/cloud"}},
+	}))
+	if want := "Backed up 2 centers to 3 location(s):\n- /internal\n- /usb\n- /cloud\n"; two != want {
+		t.Errorf("summary = %q, want %q", two, want)
 	}
 }
 
-// The summary lists the backup directories reached and, separately, those not
-// reached with the reason.
-func TestBackupSummaryCopies(t *testing.T) {
-	got := backupSummary(backup.Result{
+// Unavailable directories are listed as skipped; a copy that failed for another
+// reason is listed separately, with the first reason.
+func TestBackupSummarySkippedAndFailed(t *testing.T) {
+	got := segmentsText(backupSummarySegments(backup.Result{
 		Path:     "/internal/a.zip",
 		Manifest: backup.Manifest{Centers: []backup.CenterInfo{{Name: "Alpha"}}},
 		Copies: backup.CopyResult{
-			Dirs: []string{"/usb", "/cloud", "/gone"},
+			Dirs: []string{"/usb", "/gone", "/full"},
 			Failures: []backup.CopyFailure{
-				{DestDir: "/gone", Err: errors.New("not available")},
-				{DestDir: "/gone", Err: errors.New("second error")},
+				{DestDir: "/gone", Err: backup.ErrDirUnavailable},
+				{DestDir: "/full", Err: errors.New("no space left on device")},
+				{DestDir: "/full", Err: errors.New("second error")},
 			},
 		},
-	})
-	for _, want := range []string{"Copied to:\n/usb\n/cloud", "Not copied to:\n/gone: not available"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("summary = %q, want it to contain %q", got, want)
-		}
-	}
-	if strings.Contains(got, "second error") {
-		t.Errorf("summary = %q, want only the first error per directory", got)
+	}))
+	want := "Backed up 1 center to 2 location(s):\n- /internal\n- /usb\n" +
+		"\nSkipped backup to 1 unavailable location(s):\n- /gone\n" +
+		"\nFailed backup to 1 location(s):\n- /full: no space left on device\n"
+	if got != want {
+		t.Errorf("summary = %q, want %q", got, want)
 	}
 }
 
@@ -373,50 +368,6 @@ func TestPacedByUsesPerStepMinimums(t *testing.T) {
 	}
 }
 
-// backupNeeded fires on the two lapses that matter -- data with no backup at
-// all, and a backup that has gone stale -- and stays quiet when there is
-// nothing to back up or backups are switched off by choice.
-func TestBackupNeeded(t *testing.T) {
-	now := time.Date(2026, 3, 4, 15, 6, 0, 0, time.Local)
-
-	cases := []struct {
-		name       string
-		hasData    bool
-		at         time.Time
-		ok         bool
-		wantReason string
-	}{
-		{"data but never backed up", true, time.Time{}, false, "No backup found"},
-		{"stale backup", true, now.Add(-8 * 24 * time.Hour), true, "Over 7d since last backup"},
-		{"exactly at the interval", true, now.Add(-backupInterval), true, "Over 7d since last backup"},
-		{"recent backup", true, now.Add(-24 * time.Hour), true, ""},
-		{"just inside the interval", true, now.Add(-backupInterval + time.Minute), true, ""},
-		// A fresh install has Centers but no databases: nothing to lose yet.
-		{"no data yet", false, time.Time{}, false, ""},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			reason, need := backupNeeded(tc.hasData, tc.at, tc.ok, now)
-			if need != (tc.wantReason != "") {
-				t.Fatalf("need = %v, want %v (reason %q)", need, tc.wantReason != "", reason)
-			}
-			if reason != tc.wantReason {
-				t.Errorf("reason = %q, want %q", reason, tc.wantReason)
-			}
-		})
-	}
-}
-
-// The warning names the rule that fired, so the user knows whether they have
-// never backed up or merely let one go stale.
-func TestBackupNeededText(t *testing.T) {
-	got := backupNeededText("No backup found")
-	if got != "Backup is needed (No backup found)" {
-		t.Errorf("text = %q", got)
-	}
-}
-
 // A Center directory on its own is not data: the database file is. Otherwise a
 // fresh install would demand a backup of nothing.
 func TestHasCenterData(t *testing.T) {
@@ -432,40 +383,6 @@ func TestHasCenterData(t *testing.T) {
 	s.reload()
 	if !s.hasCenterData() {
 		t.Error("hasCenterData with a database file = false, want true")
-	}
-}
-
-// A due backup takes over the row: full-size error-coloured warning in place of
-// the caption-sized date, so it is not skimmed past.
-func TestBackupBarWarnsWhenBackupNeeded(t *testing.T) {
-	s, dir := newTestStartupWithConfig(t, config.Default(), "Alpha")
-	if err := os.WriteFile(filepath.Join(dir, "Alpha", center.DBFileName), []byte("x"), 0o644); err != nil {
-		t.Fatalf("seed db: %v", err)
-	}
-	s.reload()
-
-	if got := s.backups.label.Text; got != "Backup is needed (No backup found)" {
-		t.Errorf("label = %q, want the no-backup warning", got)
-	}
-	if s.backups.label.TextSize == theme.CaptionTextSize() {
-		t.Error("warning is caption-sized, want normal size")
-	}
-	if s.backups.label.Color != theme.Color(theme.ColorNameError) {
-		t.Error("warning is not the error colour")
-	}
-
-	// A fresh archive clears it, and the row goes back to the quiet caption.
-	seedArchive(t, s.backupDir(), time.Now())
-	s.backups.refresh()
-
-	if got := s.backups.label.Text; !strings.HasPrefix(got, "Last backup: ") {
-		t.Errorf("label = %q, want the last-backup line once a backup exists", got)
-	}
-	if s.backups.label.TextSize != theme.CaptionTextSize() {
-		t.Error("cleared row is not caption-sized")
-	}
-	if s.backups.label.Color != theme.Color(theme.ColorNameForeground) {
-		t.Error("cleared row is not the foreground colour")
 	}
 }
 
@@ -515,16 +432,16 @@ func newTestBackupBarWithArchive(t *testing.T, at time.Time, answer bool) (asked
 	}
 
 	asked, started = new(bool), new(bool)
-	s.backups.confirm = func(onConfirm func()) {
+	s.backups.confirm = func(_ string, onConfirm func()) {
 		*asked = true
 		if answer {
 			onConfirm()
 		}
 	}
 	// Stand in for start(), so the decision is observed without a real backup.
-	s.backups.start = func() { *started = true }
+	s.backups.start = func(string) { *started = true }
 
-	s.backups.run()
+	s.backups.run("")
 	return asked, started
 }
 
@@ -581,7 +498,7 @@ func TestConfirmSecondBackupDialog(t *testing.T) {
 	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
 
 	confirmed := false
-	s.backups.confirmSecondBackup(func() { confirmed = true })
+	s.backups.confirmSecondBackup("", func() { confirmed = true })
 
 	if s.win.Canvas().Overlays().Top() == nil {
 		t.Fatal("no dialog shown")
@@ -652,10 +569,117 @@ func TestBackupExcludesDeactivatedCenters(t *testing.T) {
 		t.Fatalf("backup would cover %+v, want nothing once Alpha is deactivated", centers)
 	}
 
-	// The "backup needed" warning follows the same rule: a deactivated Center's
-	// data must not be what asks for a backup that would not include it.
+	// The automatic backup follows the same rule: a deactivated Center's data
+	// must not be what triggers a backup that would not include it.
 	s.reload()
 	if s.hasCenterData() {
 		t.Error("hasCenterData counts a deactivated Center's database")
+	}
+}
+
+// The automatic backup is due with data and no backup younger than the
+// frequency, and never without data.
+func TestAutoBackupDue(t *testing.T) {
+	now := time.Date(2026, 3, 4, 15, 6, 0, 0, time.Local)
+	freq := 48 * time.Hour
+	cases := []struct {
+		name    string
+		hasData bool
+		at      time.Time
+		ok      bool
+		want    bool
+	}{
+		{"never backed up", true, time.Time{}, false, true},
+		{"older than the frequency", true, now.Add(-3 * 24 * time.Hour), true, true},
+		{"exactly the frequency", true, now.Add(-freq), true, true},
+		{"younger than the frequency", true, now.Add(-freq + time.Minute), true, false},
+		{"no data", false, time.Time{}, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := autoBackupDue(tc.hasData, tc.at, tc.ok, now, freq); got != tc.want {
+				t.Errorf("autoBackupDue = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutoBackupNote(t *testing.T) {
+	if got, want := autoBackupNote(), "Automatic backup wants to begin, but needs your help."; got != want {
+		t.Errorf("note = %q, want %q", got, want)
+	}
+}
+
+// newAutoBackupStartup builds a selection window with Alpha holding data, the
+// given frequency, and an archive at `at` (none when zero), recording what the
+// automatic backup does instead of running a real one.
+func newAutoBackupStartup(t *testing.T, days int, at time.Time) (s *startup, notes *[]string, confirmed *bool) {
+	t.Helper()
+	cfg := config.Default()
+	cfg.AutoBackupFrequencyDays = days
+	s, dir := newTestStartupWithConfig(t, cfg, "Alpha")
+	if err := os.WriteFile(filepath.Join(dir, "Alpha", center.DBFileName), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed db: %v", err)
+	}
+	s.reload()
+	if !at.IsZero() {
+		seedArchive(t, s.backupDir(), at)
+	}
+	notes, confirmed = &[]string{}, new(bool)
+	s.backups.start = func(note string) { *notes = append(*notes, note) }
+	s.backups.confirm = func(note string, onConfirm func()) {
+		*confirmed = true
+		*notes = append(*notes, "confirm:"+note)
+		onConfirm()
+	}
+	return s, notes, confirmed
+}
+
+// With no recent-enough backup, the automatic backup runs the same path as Back
+// Up Now, carrying the note for any dialog it raises.
+func TestAutoBackupRunsWhenDue(t *testing.T) {
+	s, notes, _ := newAutoBackupStartup(t, 2, time.Now().Add(-72*time.Hour))
+	s.backups.autoBackup()
+	if want := []string{autoBackupNote()}; !slices.Equal(*notes, want) {
+		t.Errorf("backup started with %q, want %q", *notes, want)
+	}
+}
+
+// A backup younger than the frequency means nothing runs.
+func TestAutoBackupSkipsWhenRecent(t *testing.T) {
+	s, notes, _ := newAutoBackupStartup(t, 2, time.Now().Add(-time.Hour))
+	s.backups.autoBackup()
+	if len(*notes) != 0 {
+		t.Errorf("automatic backup ran despite a recent backup: %q", *notes)
+	}
+}
+
+// Nothing to back up on a fresh install, so nothing runs.
+func TestAutoBackupSkipsWithoutData(t *testing.T) {
+	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
+	started := false
+	s.backups.start = func(string) { started = true }
+	s.backups.autoBackup()
+	if started {
+		t.Error("automatic backup ran with no Center data")
+	}
+}
+
+// The second-backup confirmation shows the note above its question.
+func TestConfirmSecondBackupShowsNote(t *testing.T) {
+	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
+	note := autoBackupNote()
+	s.backups.confirmSecondBackup(note, func() {})
+
+	var texts []string
+	for _, top := range s.win.Canvas().Overlays().List() {
+		for _, o := range test.LaidOutObjects(top) {
+			if l, ok := o.(*widget.Label); ok {
+				texts = append(texts, l.Text)
+			}
+		}
+	}
+	if len(texts) == 0 || texts[0] != note {
+		t.Errorf("dialog labels = %q, want the note first", texts)
 	}
 }

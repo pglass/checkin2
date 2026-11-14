@@ -2,9 +2,10 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
+	"path/filepath"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -20,49 +21,32 @@ import (
 	"github.com/pglass/checkin/internal/version"
 )
 
-// backupInterval is how long a backup may go unrun before the startup screen
-// starts asking for one. A week is short enough that a lost machine costs at
-// most a few days of check-ins, and long enough that the warning still means
-// something when it does appear.
-const backupInterval = 7 * 24 * time.Hour
-
-// backupNeeded reports whether the startup screen should be asking for a
-// backup, and why. The reason is the parenthesised half of the warning, so the
-// caller does not have to know which rule fired.
+// autoBackupDue reports whether the automatic backup should run at startup:
+// there is data to back up, and no backup younger than frequency. ok is false
+// when there is no backup at all.
 //
 // hasData is whether any Center has a database yet: on a fresh install there is
-// nothing to lose, and demanding a backup of nothing would train the user to
-// ignore the warning before they ever have data worth keeping.
-func backupNeeded(hasData bool, at time.Time, ok bool, now time.Time) (string, bool) {
+// nothing to lose, and a backup of nothing would only add an empty archive.
+func autoBackupDue(hasData bool, at time.Time, ok bool, now time.Time, frequency time.Duration) bool {
 	if !hasData {
-		return "", false
+		return false
 	}
-	if !ok {
-		return "No backup found", true
-	}
-	if now.Sub(at) >= backupInterval {
-		return "Over 7d since last backup", true
-	}
-	return "", false
+	return !ok || now.Sub(at) >= frequency
+}
+
+// autoBackupNote is shown first in any dialog an automatic backup raises, so
+// the user knows why a backup is asking for something they did not start.
+func autoBackupNote() string {
+	return "Automatic backup wants to begin, but needs your help."
 }
 
 // lastBackupText renders the "last backup" line for the startup screen. It is
 // separate from the widget so it can be tested without a canvas.
-//
-// The overdue case is handled by backupNeededText, which replaces the date
-// entirely rather than appending to it, since a warning read as a suffix to
-// good news is a warning that gets skipped.
 func lastBackupText(at time.Time, ok bool) string {
 	if !ok {
 		return "Last backup: never"
 	}
 	return "Last backup: " + at.Format("Jan 2, 2006 3:04 PM")
-}
-
-// backupNeededText is the warning shown in place of the "last backup" line
-// when a backup is due.
-func backupNeededText(reason string) string {
-	return "Backup is needed (" + reason + ")"
 }
 
 // backupBar is the startup screen's backup row: when the last backup ran, and
@@ -74,13 +58,16 @@ type backupBar struct {
 	view    fyne.CanvasObject
 
 	// confirm asks the user before a second backup on a day that already has
-	// one, and calls its argument if they go ahead. start takes the backup.
-	// Both are fields rather than direct calls so tests can drive either answer
+	// one, and calls onConfirm if they go ahead. start takes the backup. Both
+	// are fields rather than direct calls so tests can drive either answer
 	// without a real dialog and without a real backup running into a temp
 	// directory that is about to be removed. newBackupBar wires them to the
 	// real implementations.
-	confirm func(onConfirm func())
-	start   func()
+	//
+	// note is shown first in any dialog the backup raises; it is empty for a
+	// backup the user started, and autoBackupNote for an automatic one.
+	confirm func(note string, onConfirm func())
+	start   func(note string)
 }
 
 // newBackupBar builds the row. Backups always have somewhere to go -- the
@@ -91,7 +78,7 @@ func newBackupBar(s *startup) *backupBar {
 	b.label = canvas.NewText("", theme.Color(theme.ColorNameForeground))
 	b.label.TextSize = theme.CaptionTextSize()
 
-	b.button = widget.NewButton("Back Up Now", b.run)
+	b.button = widget.NewButton("Back Up Now", func() { b.run("") })
 
 	b.confirm = b.confirmSecondBackup
 	b.start = b.startBackup
@@ -105,19 +92,7 @@ func newBackupBar(s *startup) *backupBar {
 // called when the row is built and after every backup.
 func (b *backupBar) refresh() {
 	at, ok := backup.LastBackupTime(b.startup.backupDir())
-
-	// A due backup is shown at full size in the error colour, where the
-	// reassuring "last backup" line is a caption: the whole point of the
-	// warning is that it is not skimmed past like the line it replaces.
-	if reason, need := backupNeeded(b.startup.hasCenterData(), at, ok, time.Now()); need {
-		b.label.Text = backupNeededText(reason)
-		b.label.TextSize = theme.TextSize()
-		b.label.Color = theme.Color(theme.ColorNameError)
-	} else {
-		b.label.Text = lastBackupText(at, ok)
-		b.label.TextSize = theme.CaptionTextSize()
-		b.label.Color = theme.Color(theme.ColorNameForeground)
-	}
+	b.label.Text = lastBackupText(at, ok)
 	b.label.Refresh()
 }
 
@@ -144,18 +119,35 @@ func backedUpToday(at time.Time, ok bool, now time.Time) bool {
 //
 // A backup already taken today is confirmed first: repeat runs are harmless, but
 // a stray click should not quietly add a redundant archive.
-func (b *backupBar) run() {
+//
+// note is shown first in any dialog the backup raises; see backupBar.confirm.
+func (b *backupBar) run(note string) {
 	at, ok := backup.LastBackupTime(b.startup.backupDir())
 	if backedUpToday(at, ok, time.Now()) {
-		b.confirm(b.start)
+		b.confirm(note, func() { b.start(note) })
 		return
 	}
-	b.start()
+	b.start(note)
+}
+
+// autoBackup runs the automatic backup if one is due: there is data, and no
+// backup in the internal directory is younger than auto_backup_frequency_days. It
+// is the same as pressing Back Up Now, except that any dialog it raises opens
+// with autoBackupNote. Called once, when the startup window is shown.
+func (b *backupBar) autoBackup() {
+	days := b.startup.cfg.AutoBackupFrequencyDays
+	at, ok := backup.LastBackupTime(b.startup.backupDir())
+	if !autoBackupDue(b.startup.hasCenterData(), at, ok, time.Now(), time.Duration(days)*24*time.Hour) {
+		return
+	}
+	slog.Info("automatic backup due", "frequency_days", days, "last", at, "found", ok)
+	b.run(autoBackupNote())
 }
 
 // confirmSecondBackup asks before taking a second backup on a day that already
-// has one, running onConfirm if the user goes ahead.
-func (b *backupBar) confirmSecondBackup(onConfirm func()) {
+// has one, running onConfirm if the user goes ahead. A non-empty note is shown
+// above the question.
+func (b *backupBar) confirmSecondBackup(note string, onConfirm func()) {
 	var popup dialog.Dialog
 
 	// Hand-rolled buttons rather than dialog.NewConfirm, so the affirmative one
@@ -175,20 +167,26 @@ func (b *backupBar) confirmSecondBackup(onConfirm func()) {
 		msg,
 		container.NewCenter(container.NewHBox(cancelBtn, backUpBtn)),
 	)
+	if note != "" {
+		n := widget.NewLabel(note)
+		n.Wrapping = fyne.TextWrapWord
+		body.Objects = append([]fyne.CanvasObject{n}, body.Objects...)
+	}
 	popup = dialog.NewCustomWithoutButtons("Backup", body, b.startup.win)
 	popup.Show()
 }
 
 // startBackup runs the backup, with no further confirmation -- unless a backup
-// directory is unavailable, in which case checkBackupDirs warns first and the
-// user can connect the drive, go ahead without it, or cancel.
-func (b *backupBar) startBackup() {
+// directory is unavailable, in which case checkBackupDirs warns first (opening
+// with note, if any) and the user can connect the drive, go ahead without it,
+// or cancel.
+func (b *backupBar) startBackup(note string) {
 	centers, err := center.List(b.startup.appDir)
 	if err != nil {
 		b.startup.showError(err)
 		return
 	}
-	checkBackupDirs(b.startup.win, b.startup.backupDir(), b.startup.cfg.BackupDirs,
+	checkBackupDirs(b.startup.win, b.startup.backupDir(), b.startup.cfg.BackupDirs, note,
 		func() { b.runBackup(centers) })
 }
 
@@ -207,6 +205,8 @@ type backupProgress struct {
 	dialog dialog.Dialog
 	bar    *widget.ProgressBar
 	status *widget.Label
+	// summary replaces status once the run succeeds; see backupSummarySegments.
+	summary *widget.RichText
 	// done replaces the progress view's buttons once the run finishes, so the
 	// window stays up with the outcome instead of vanishing.
 	closeBtn *widget.Button
@@ -293,6 +293,12 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir
 	p.status = widget.NewLabel("Starting…")
 	p.status.Wrapping = fyne.TextWrapWord
 
+	// The outcome replaces the status line once the run succeeds. A RichText,
+	// not a Label, for its bulleted lists of monospace paths.
+	p.summary = widget.NewRichText()
+	p.summary.Wrapping = fyne.TextWrapWord
+	p.summary.Hide()
+
 	p.closeBtn = widget.NewButton("Close", func() {
 		p.dialog.Hide()
 		if p.onClose != nil {
@@ -306,6 +312,7 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir
 
 	body := container.NewVBox(
 		p.status,
+		p.summary,
 		p.bar,
 		container.NewHBox(layout.NewSpacer(), p.closeBtn),
 	)
@@ -352,51 +359,95 @@ func (p *backupProgress) finish(res backup.Result, err error) {
 		p.status.SetText("Backup failed: " + err.Error())
 		p.bar.SetValue(p.bar.Min)
 	} else {
-		p.status.SetText(backupSummary(res))
+		p.status.Hide()
+		p.summary.Segments = backupSummarySegments(res)
+		p.summary.Refresh()
+		p.summary.Show()
 		p.bar.SetValue(p.bar.Max)
+		// Wider than the progress view, so the paths in the summary fit.
+		p.dialog.Resize(fyne.NewSize(520, p.dialog.MinSize().Height))
 	}
 	p.closeBtn.Enable()
 }
 
-// backupSummary is the message shown when a backup finishes, naming what was
-// archived and where it went so the user can go and check.
-func backupSummary(res backup.Result) string {
+// backupSummarySegments is the message shown when a backup finishes: how many
+// Centers were backed up and every location the backup now sits in -- the
+// internal directory, then each backup directory reached -- followed by any
+// that were skipped because they were unavailable, and any where the copy
+// failed for another reason, with that reason.
+func backupSummarySegments(res backup.Result) []widget.RichTextSegment {
 	n := len(res.Manifest.Centers)
-	noun := "Centers"
+	noun := "centers"
 	if n == 1 {
-		noun = "Center"
+		noun = "center"
 	}
-	s := fmt.Sprintf("Backed up %d %s to\n%s", n, noun, res.Path)
-	if c := copySummary(res.Copies); c != "" {
-		s += "\n\n" + c
+
+	reached := []string{filepath.Dir(res.Path)}
+	var skipped, failed []string
+	reasons := map[string]string{}
+	failedDirs := map[string]bool{}
+	for _, f := range res.Copies.Failures {
+		if failedDirs[f.DestDir] {
+			continue // the first failure is the one reported
+		}
+		failedDirs[f.DestDir] = true
+		if errors.Is(f.Err, backup.ErrDirUnavailable) {
+			skipped = append(skipped, f.DestDir)
+		} else {
+			failed = append(failed, f.DestDir)
+			reasons[f.DestDir] = f.Err.Error()
+		}
 	}
-	return s
+	for _, d := range res.Copies.Dirs {
+		if !failedDirs[d] {
+			reached = append(reached, d)
+		}
+	}
+
+	segs := []widget.RichTextSegment{
+		&widget.TextSegment{
+			Text:  fmt.Sprintf("Backed up %d %s to %d location(s):", n, noun, len(reached)),
+			Style: precheckPlainEnd,
+		},
+		pathList(reached, nil),
+	}
+	if len(skipped) > 0 {
+		segs = append(segs, precheckBlankLine(),
+			&widget.TextSegment{
+				Text:  fmt.Sprintf("Skipped backup to %d unavailable location(s):", len(skipped)),
+				Style: precheckPlainEnd,
+			},
+			pathList(skipped, nil))
+	}
+	if len(failed) > 0 {
+		segs = append(segs, precheckBlankLine(),
+			&widget.TextSegment{
+				Text:  fmt.Sprintf("Failed backup to %d location(s):", len(failed)),
+				Style: precheckPlainEnd,
+			},
+			pathList(failed, reasons))
+	}
+	return segs
 }
 
-// copySummary lists the backup directories the backup reached and, separately,
-// any it did not, with the first reason for each. It is empty when no backup
-// directories are configured.
-func copySummary(c backup.CopyResult) string {
-	failed := map[string]error{}
-	for _, f := range c.Failures {
-		if _, ok := failed[f.DestDir]; !ok {
-			failed[f.DestDir] = f.Err
+// pathList lists paths one per line in small monospace, each marked "- " and
+// followed by its entry in reasons, if any.
+//
+// Not a widget.ListSegment: RichText draws its bullet at the normal text size,
+// top-aligned with the line, so beside small text the bullet sits visibly high.
+// A dash in the path's own style lines up with it.
+func pathList(paths []string, reasons map[string]string) widget.RichTextSegment {
+	lines := make([]widget.RichTextSegment, 0, len(paths))
+	for _, d := range paths {
+		if r := reasons[d]; r != "" {
+			path := precheckPathEnd
+			path.Inline = true
+			lines = append(lines,
+				&widget.TextSegment{Text: "- " + d, Style: path},
+				&widget.TextSegment{Text: ": " + r, Style: precheckPlainEnd})
+			continue
 		}
+		lines = append(lines, &widget.TextSegment{Text: "- " + d, Style: precheckPathEnd})
 	}
-	var ok, bad []string
-	for _, d := range c.Dirs {
-		if err, isBad := failed[d]; isBad {
-			bad = append(bad, d+": "+err.Error())
-		} else {
-			ok = append(ok, d)
-		}
-	}
-	var parts []string
-	if len(ok) > 0 {
-		parts = append(parts, "Copied to:\n"+strings.Join(ok, "\n"))
-	}
-	if len(bad) > 0 {
-		parts = append(parts, "Not copied to:\n"+strings.Join(bad, "\n"))
-	}
-	return strings.Join(parts, "\n\n")
+	return &widget.ParagraphSegment{Texts: lines}
 }

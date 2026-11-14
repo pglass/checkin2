@@ -125,9 +125,9 @@ func uniqueDestDirs(srcDir string, destDirs []string) []string {
 	return out
 }
 
-// errDirUnavailable is reported for an external directory whose parent does not
+// ErrDirUnavailable is reported for an external directory whose parent does not
 // exist, which is what an unplugged drive looks like.
-var errDirUnavailable = errors.New("directory is not available (is the drive connected?)")
+var ErrDirUnavailable = errors.New("directory is not available (is the drive connected?)")
 
 // checkDestDir reports whether dir can take backups without changing anything:
 // it must be a directory, or not exist yet with a parent that does (it is then
@@ -144,7 +144,7 @@ func checkDestDir(dir string) (exists bool, err error) {
 		return false, err
 	}
 	if _, err := os.Stat(filepath.Dir(dir)); err != nil {
-		return false, errDirUnavailable
+		return false, ErrDirUnavailable
 	}
 	return false, nil
 }

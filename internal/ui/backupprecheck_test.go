@@ -17,6 +17,7 @@ import (
 // stepped by hand.
 type precheckFixture struct {
 	p        *backupPrecheck
+	note     string
 	gone     string
 	proceeds int
 	// tick is the countdown's pending tick, run by the test in place of the
@@ -27,12 +28,19 @@ type precheckFixture struct {
 
 func newPrecheckFixture(t *testing.T) *precheckFixture {
 	t.Helper()
+	return newPrecheckFixtureWithNote(t, "")
+}
+
+// newPrecheckFixtureWithNote is newPrecheckFixture for an automatic backup,
+// whose dialog opens with note.
+func newPrecheckFixtureWithNote(t *testing.T, note string) *precheckFixture {
+	t.Helper()
 	fa := test.NewApp()
 	t.Cleanup(fa.Quit)
 	win := fa.NewWindow("startup")
 
-	f := &precheckFixture{gone: filepath.Join(t.TempDir(), "USB", "backups")}
-	f.p = checkBackupDirs(win, t.TempDir(), []string{t.TempDir(), f.gone}, func() { f.proceeds++ })
+	f := &precheckFixture{gone: filepath.Join(t.TempDir(), "USB", "backups"), note: note}
+	f.p = checkBackupDirs(win, t.TempDir(), []string{t.TempDir(), f.gone}, f.note, func() { f.proceeds++ })
 	if f.p == nil {
 		t.Fatal("no pre-check dialog with a backup directory unavailable")
 	}
@@ -85,7 +93,7 @@ func TestPrecheckAllAvailableProceedsImmediately(t *testing.T) {
 	t.Cleanup(fa.Quit)
 
 	proceeds := 0
-	p := checkBackupDirs(fa.NewWindow("w"), t.TempDir(), []string{t.TempDir()}, func() { proceeds++ })
+	p := checkBackupDirs(fa.NewWindow("w"), t.TempDir(), []string{t.TempDir()}, "", func() { proceeds++ })
 	if p != nil {
 		t.Error("pre-check dialog shown with every directory available")
 	}
@@ -126,9 +134,11 @@ func TestPrecheckWarningStyles(t *testing.T) {
 	if lead.Text != "Warning" || !lead.Style.TextStyle.Bold {
 		t.Errorf("lead-in = %q (bold %v), want bold Warning", lead.Text, lead.Style.TextStyle.Bold)
 	}
-	item := segs[1].(*widget.ListSegment).Items[0].(*widget.ParagraphSegment).Texts[0].(*widget.TextSegment)
-	if !item.Style.TextStyle.Monospace || item.Style.SizeName != precheckPathEnd.SizeName {
-		t.Errorf("path style = %+v, want small monospace", item.Style)
+	// The dash shares the path's style, so the two line up (a ListSegment's
+	// bullet is drawn at full size and sits high beside small text).
+	item := segs[1].(*widget.ParagraphSegment).Texts[0].(*widget.TextSegment)
+	if item.Text != "- /x" || !item.Style.TextStyle.Monospace || item.Style.SizeName != precheckPathEnd.SizeName {
+		t.Errorf("path = %q with style %+v, want small monospace \"- /x\"", item.Text, item.Style)
 	}
 }
 
@@ -249,5 +259,25 @@ func TestPrecheckWarningLineBreaks(t *testing.T) {
 	if got := segmentsText(precheckCountdownSegments(4)); got !=
 		"Refreshed: All backup locations are available.\n\nStarting backup in 4 seconds...\n" {
 		t.Errorf("countdown text = %q", got)
+	}
+}
+
+// An automatic backup's dialog opens with its note, on its own line, in both
+// the warning and the countdown; a manual one has none.
+func TestPrecheckShowsAutoBackupNote(t *testing.T) {
+	note := autoBackupNote()
+	f := newPrecheckFixtureWithNote(t, note)
+	if want := note + "\n\nWarning: "; !strings.HasPrefix(f.text(), want) {
+		t.Errorf("warning = %q, want it to start %q", f.text(), want)
+	}
+	f.connect(t)
+	f.p.refreshBtn.OnTapped()
+	if want := note + "\n\nRefreshed: "; !strings.HasPrefix(f.text(), want) {
+		t.Errorf("countdown = %q, want it to start %q", f.text(), want)
+	}
+
+	manual := newPrecheckFixture(t)
+	if strings.Contains(manual.text(), "Automatic") {
+		t.Errorf("manual backup's warning mentions the automatic backup: %q", manual.text())
 	}
 }

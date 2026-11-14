@@ -2,11 +2,14 @@
 
 * Reduce CPU usage by reducing unnecessary frame copies
 * Fix unpredictable Camera menu selection with multiple webcams
-* Support a default 'internal' backup directory
-* Support multiple additional backup directories. The `backup_dir` setting is
-  deprecated. It is auto-migrated to a `backup_dirs` setting.
-* Remove pruning of old backups. All backups are kept.
-* Run database integrity check when verifying backup snapshots
+* Support automatic backups into multiple directories
+  * Backups are written to a default internal directory
+  * Backups are copied to any additional configured directories
+  * Replace `backup_dir` setting with `backup_dirs`. The setting is
+    auto-migrated at startup.
+  * Remove auto-pruning of old backups. All backups are kept.
+  * Run database integrity check when verifying backup snapshots
+  * Add `auto_backup_frequency_days` setting (default 2)
 
 # 0.0.10
 
