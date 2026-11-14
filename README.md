@@ -1,16 +1,92 @@
 # Checkin
 
-A (vibecoded) local desktop app for checking students in and out each day. It
-supports QR code check-ins using a webcam. All data is stored in a local SQLite file.
+A (vibecoded) local, offline desktop app for checking students in and out each day with QR codes.
 
-## Stack
+## Features
 
-- **Go + Fyne** — GUI
-- **pion/mediadevices** — webcam enumeration and capture (AVFoundation on macOS,
-  DirectShow on Windows)
-- **gocv (OpenCV 5)** — QR detection, with a bounding-box overlay drawn in Go
-- **sqlc + modernc.org/sqlite** — type-safe DB code, pure-Go SQLite driver
-- **skip2/go-qrcode + go-pdf/fpdf** — QR generation and printable PDF sheets
+* **QR code scanning**: Scan unique QR code with a webcam for quick check-ins
+* **Low-cost**: 100% free software that you run on an inexpensive computer
+* **Long retention**: Multi-year retention and no limits on number of students or check-ins
+* **Local storage**: Fully offline. No internet required.
+* **Automatic backups**: Full backups to locally-attached storage
+* **History**: View, search, and export history of check-in times
+
+## Install
+
+Find the latest release on Github at https://github.com/pglass/checkin2/releases/latest, and download and run the `checkin-*-setup.exe` installer.
+
+> [!NOTE]
+> There are only Windows releases. To request releases for other platforms, open [an
+issue](https://github.com/pglass/checkin2/issues).
+
+## Quick tour
+
+This is a brief first time setup and tour of the program.
+
+You will add students to the program, use a QR code to check in and out, and learn a few other features.
+
+1. Add a Center. A Center represents a group of students.
+2. Open the Center by clicking on the center name
+
+   * Opening a Center displays the Center view, which is a list of students and their check in/out times for the current day.
+   * Since the Center was just added, there are no students so the Center view is empty (go to the next step)
+
+3. Add students to the Center one of two ways:
+
+   * `File > Import...`: To import many students from a spreadsheet
+   * `File > Add student`: To add one student at a time
+
+4. Verify your webcam is working for QR code sign in:
+
+   * The program automatically selects a webcam, if it finds one, and begins scanning for QR codes
+   * Use the `Camera` menu to manually select a webcam to use for QR-code scanning
+     * _If you do not see your camera in the list, ensure the webcam is connected to the computer and restart the program. Webcams are enumerated only on startup._
+   * `Camera > Show camera window` to view the camera feed. This shows you what the camera is seeing, but you do not need the camera feed open to scan QR-codes. To hide the feed, just close the camera window.
+   * _(In the bottom left of the Center view window will display "Camera On" when a camera is on and scanning for QR codes)_
+
+5. Generate a QR code for checking in or out:
+
+   * To create one QR code, click `Show QR Code` next to a student's name
+   * To create many QR codes, use the `File > Generate QR Codes...` menu. Choose the students for which to generate QR codes. When complete, it opens a directory containing the QR code image files.
+
+6. Sign in/out using a QR code
+
+   * Hold a QR code up to the camera (about 6-12" away)
+   * The program prompts for an "authorized adult" name when the QR code scans:
+     * Enter the name of the adult checking in this student
+     * Click "Check In" to complete the check-in
+   * Scan the QR code again to check the student out
+     * Recent authorized adults for this student are suggested as clickable buttons immediately below the text box.
+     * Enter the adult name by clicking the button of a recent adult's name. Or type a name into the check box.
+     * Click "Check Out" to check the student out
+   * _(Checked-in students are sorted to the top of the list)_
+   * _(The program ignores quickly-repeated QR code scans. Once a QR code is scanned once, the same QR code is ignored for several seconds.)_
+
+7. View history of check in times.
+
+   * `File > History` opens the history viewer
+   * Optionally, filter history by a start date, end date, and by one or more student names
+   * Optionally, select the sort order
+   * Press "Retrieve" to display the history in the current window. Press "Save History to File..." to export that history to a text file
+
+8. Configure backups to an external drive
+
+   * First, create a new empty directory on the external drive
+   * Go to `File > Settings` to open the Settings menu
+   * Find the `backup_dirs` setting, click `+ Add backup directory`, and then click "Browse..."
+     * In the Browse window, navigate to the directory on the external drive, and then click Open
+   * Trigger a backup from the startup window:
+     * To get to the startup window, close the program and then re-open it.
+     * Press the "Back up now" button in the bottom right of the startup window (if an automatic backup does not trigger).
+     * It may say `A backup was already created today`. You can press `Back up now` to create another one.
+   * After the backup completes, you can check the external drive for a `checkin-backup-*.zip` file.
+   * _The app automatically takes backups every 2 days. It backups to a default internal directory, and any additional directories you configure._
+   * _You can see the last backup time at the bottom of the startup window._
+   * _If you have multiple Centers, a backup backs up all centers into a single archive._
+
+# Development
+
+<details>
 
 ## Prerequisites
 
@@ -389,3 +465,5 @@ For example, if you want a Center restored from backup to replace an existing
 Center of the same name, you can deactivate the existing Center and rename the
 restored Center. Or, alternatively, if you finish exploring a Center restored
 from backup, you can deactivate the restored Center to hide it from view.
+
+</details>
