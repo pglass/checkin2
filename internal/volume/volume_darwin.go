@@ -2,7 +2,6 @@ package volume
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -13,11 +12,6 @@ import (
 
 // volumesDir is where macOS mounts every drive other than the system disk.
 const volumesDir = "/Volumes"
-
-// ErrDuplicateID is returned by Resolve when more than one connected drive has
-// the directory's ID -- a cloned drive, or sticks imaged from the same source --
-// so there is no telling which one the directory is on.
-var ErrDuplicateID = errors.New("more than one connected drive has this drive's ID")
 
 // ID returns the volume UUID of the drive holding dir, or "" when dir is not on
 // a drive mounted under /Volumes: the system disk is always mounted in the same
@@ -131,6 +125,14 @@ func volumeUUID(mount string) (string, error) {
 	}
 	u := buf[uuidOff:]
 	return fmt.Sprintf("%X-%X-%X-%X-%X", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16]), nil
+}
+
+// Rel returns dir's path below its drive's mount point, which is what stays the
+// same when the drive is mounted somewhere else. ok is false for a path that
+// is not on a drive under /Volumes.
+func Rel(dir string) (rel string, ok bool) {
+	_, rel, ok = splitVolume(dir)
+	return rel, ok
 }
 
 // splitVolume splits a path under /Volumes into its drive's mount point and
