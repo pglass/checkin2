@@ -1,5 +1,6 @@
 Checkin.app/
 checkin
+.version
 main
 seed
 *.exe

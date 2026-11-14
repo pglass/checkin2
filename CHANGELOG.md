@@ -1,4 +1,4 @@
-# Unreleased
+# 0.0.11
 
 * Reduce CPU usage by reducing unnecessary frame copies
 * Fix unpredictable Camera menu selection with multiple webcams

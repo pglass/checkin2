@@ -26,11 +26,13 @@ GO_ENV := ARCH=$(ARCH) ./scripts/with-opencv-env
 # App version. Bump here (single source of truth); it is stamped into the binary
 # via -ldflags -X and into the macOS bundle's Info.plist via --appVersion. The
 # build scripts read it from the environment, so this stays the only copy.
-VERSION ?= 0.0.10
+VERSION ?= 0.0.11
 VERSION_LDFLAGS := -X github.com/pglass/checkin/internal/version.Version=$(VERSION)
 
 # All Go sources: the checkin binary rebuilds only when one of these changes.
 GO_SOURCES := $(shell find . -name '*.go')
+# Non-Go inputs compiled into the binary: module files and //go:embed targets.
+GO_INPUTS := go.mod go.sum internal/ui/licenses.txt $(wildcard internal/ui/icons/*) db/schema.sql
 
 .PHONY: build-windows build-darwin-release run test bench vet generate \
         seed bundle opencv opencv-windows bump-version clean sign-windows \
@@ -42,11 +44,20 @@ GO_SOURCES := $(shell find . -name '*.go')
 
 # Dev build for this machine: keeps debug symbols. `make build-darwin-release`
 # is the stripped, verified distributable.
-checkin: $(GO_SOURCES)
+checkin: $(GO_SOURCES) $(GO_INPUTS) .version
 	$(GO_ENV) go build -ldflags="$(VERSION_LDFLAGS) -extldflags=-Wl,-no_warn_duplicate_libraries" -o checkin ./cmd/checkin/
 
 run: checkin
 	./checkin -log-level DEBUG -log-file -
+
+# The version is stamped in via ldflags, so no source file changes when it does.
+# This stamp is rewritten only when VERSION differs from its contents, which
+# rebuilds checkin after a bump (or VERSION=x.y.z on the command line) without
+# rebuilding on every run.
+.version: FORCE
+	@echo '$(VERSION)' | cmp -s - $@ || echo '$(VERSION)' > $@
+
+FORCE:
 
 # Args pass through: `make test ARGS="./internal/camera/ -run TestQRDetect -v"`
 test:
@@ -78,7 +89,7 @@ bump-version:
 	@VERSION="$(if $(filter-out file,$(origin VERSION)),$(VERSION))" ./scripts/bump-version
 
 clean:
-	rm -f checkin checkin-* checkin.exe seed
+	rm -f checkin checkin-* checkin.exe seed .version
 
 # --- Distribution -----------------------------------------------------------
 
