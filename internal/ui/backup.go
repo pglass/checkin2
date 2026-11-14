@@ -49,6 +49,20 @@ func lastBackupText(at time.Time, ok bool) string {
 	return "Last backup: " + at.Format("Jan 2, 2006 3:04 PM")
 }
 
+// overdueBackupText is lastBackupText for when the automatic backup is due,
+// saying how far behind it is: "(more than 2 days ago)", days being
+// auto_backup_frequency_days. With no backup at all, "never" says it already.
+func overdueBackupText(at time.Time, ok bool, days int) string {
+	if !ok {
+		return lastBackupText(at, ok)
+	}
+	unit := "days"
+	if days == 1 {
+		unit = "day"
+	}
+	return fmt.Sprintf("%s (more than %d %s ago)", lastBackupText(at, ok), days, unit)
+}
+
 // backupBar is the startup screen's backup row: when the last backup ran, and
 // a button to run one now.
 type backupBar struct {
@@ -68,6 +82,12 @@ type backupBar struct {
 	// backup the user started, and autoBackupNote for an automatic one.
 	confirm func(note string, onConfirm func())
 	start   func(note string)
+	// countdown shows the automatic backup's countdown and calls proceed when
+	// it runs out; it does nothing if the user cancels. after schedules a call
+	// on the UI thread (afterFunc in the app). Fields for the same reason as
+	// confirm and start: tests drive them without waiting.
+	countdown func(proceed func())
+	after     func(d time.Duration, f func()) (stop func())
 }
 
 // newBackupBar builds the row. Backups always have somewhere to go -- the
@@ -82,6 +102,8 @@ func newBackupBar(s *startup) *backupBar {
 
 	b.confirm = b.confirmSecondBackup
 	b.start = b.startBackup
+	b.countdown = b.showAutoBackupCountdown
+	b.after = afterFunc
 
 	b.view = container.NewBorder(nil, nil, nil, b.button, container.NewVBox(layout.NewSpacer(), b.label))
 	b.refresh()
@@ -92,7 +114,16 @@ func newBackupBar(s *startup) *backupBar {
 // called when the row is built and after every backup.
 func (b *backupBar) refresh() {
 	at, ok := backup.LastBackupTime(b.startup.backupDir())
-	b.label.Text = lastBackupText(at, ok)
+	days := b.startup.cfg.AutoBackupFrequencyDays
+	// Red while the automatic backup is due, so an overdue backup is noticed
+	// even if the automatic one was cancelled.
+	if autoBackupDue(b.startup.hasCenterData(), at, ok, time.Now(), time.Duration(days)*24*time.Hour) {
+		b.label.Text = overdueBackupText(at, ok, days)
+		b.label.Color = theme.Color(theme.ColorNameError)
+	} else {
+		b.label.Text = lastBackupText(at, ok)
+		b.label.Color = theme.Color(theme.ColorNameForeground)
+	}
 	b.label.Refresh()
 }
 
@@ -130,10 +161,37 @@ func (b *backupBar) run(note string) {
 	b.start(note)
 }
 
-// autoBackup runs the automatic backup if one is due: there is data, and no
-// backup in the internal directory is younger than auto_backup_frequency_days. It
-// is the same as pressing Back Up Now, except that any dialog it raises opens
-// with autoBackupNote. Called once, when the startup window is shown.
+// autoBackupDelay is how long the startup window is up before the automatic
+// backup is considered, so the user has seen the window before a pop-up covers
+// it.
+const autoBackupDelay = 4 * time.Second
+
+// autoBackupCountdown is how many seconds the automatic backup's countdown
+// runs, during which it can be cancelled.
+const autoBackupCountdown = 4
+
+// autoBackupCountdownText is the countdown's message with n seconds left.
+func autoBackupCountdownText(n int) string {
+	return fmt.Sprintf("Automatic backup will start in %ds...", n)
+}
+
+// scheduleAutoBackup runs autoBackup autoBackupDelay after the startup window
+// is shown, unless a Center has been opened by then: backups run from this
+// window with no Center open. Called once, when the window is shown, so a
+// cancelled automatic backup is not offered again until the app restarts.
+func (b *backupBar) scheduleAutoBackup() {
+	b.after(autoBackupDelay, func() {
+		if !b.startup.opened {
+			b.autoBackup()
+		}
+	})
+}
+
+// autoBackup offers the automatic backup if one is due: there is data, and no
+// backup in the internal directory is younger than auto_backup_frequency_days.
+// A countdown the user can cancel comes first; after it the backup is the same
+// as pressing Back Up Now, except that any dialog it raises opens with
+// autoBackupNote.
 func (b *backupBar) autoBackup() {
 	days := b.startup.cfg.AutoBackupFrequencyDays
 	at, ok := backup.LastBackupTime(b.startup.backupDir())
@@ -141,7 +199,53 @@ func (b *backupBar) autoBackup() {
 		return
 	}
 	slog.Info("automatic backup due", "frequency_days", days, "last", at, "found", ok)
-	b.run(autoBackupNote())
+	b.countdown(func() { b.run(autoBackupNote()) })
+}
+
+// showAutoBackupCountdown shows "Automatic backup will start in Ns..." counting
+// down from autoBackupCountdown, with a Cancel button. proceed is called when
+// the count runs out; Cancel closes the pop-up and calls nothing.
+func (b *backupBar) showAutoBackupCountdown(proceed func()) {
+	remaining := autoBackupCountdown
+	msg := widget.NewLabel(autoBackupCountdownText(remaining))
+	msg.Alignment = fyne.TextAlignCenter
+	msg.Wrapping = fyne.TextWrapWord
+
+	var popup dialog.Dialog
+	var stop func()
+	done := false // set once proceeded or cancelled, so a queued tick does nothing
+
+	cancelBtn := widget.NewButton("Cancel", func() {
+		if done {
+			return
+		}
+		done = true
+		stop()
+		popup.Hide()
+		slog.Info("automatic backup cancelled")
+	})
+
+	var tick func()
+	tick = func() {
+		if done {
+			return
+		}
+		remaining--
+		if remaining <= 0 {
+			done = true
+			popup.Hide()
+			proceed()
+			return
+		}
+		msg.SetText(autoBackupCountdownText(remaining))
+		stop = b.after(time.Second, tick)
+	}
+
+	body := container.NewVBox(msg, blankLine(), container.NewCenter(cancelBtn))
+	popup = dialog.NewCustomWithoutButtons("Backup", centerVertically(body), b.startup.win)
+	fitBackupPopup(popup, b.startup.win)
+	popup.Show()
+	stop = b.after(time.Second, tick)
 }
 
 // confirmSecondBackup asks before taking a second backup on a day that already
@@ -215,6 +319,63 @@ type backupProgress struct {
 	// window stays up with the outcome instead of vanishing.
 	closeBtn *widget.Button
 	onClose  func()
+	// header sits above everything else: backupRunningText while the backup
+	// runs, then the outcome (see backupOutcomeText).
+	header *widget.Label
+	// after schedules the auto-close countdown (afterFunc in the app);
+	// stopTick cancels its next tick, and closed is set once the pop-up is
+	// closed, so a tick already queued does nothing.
+	after     func(d time.Duration, f func()) (stop func())
+	stopTick  func()
+	remaining int
+	closed    bool
+}
+
+// backupRunningText is shown for as long as a backup runs.
+const backupRunningText = "Backup is currently running. Please do not close the window."
+
+// backupAutoClose is how many seconds a backup that completed with no
+// warnings or errors stays up before closing itself.
+const backupAutoClose = 4
+
+// backupOutcome is how a backup run went, for its final message.
+type backupOutcome int
+
+const (
+	backupSucceeded backupOutcome = iota
+	// backupWarned: the backup was taken, but some backup directories were
+	// unavailable and skipped.
+	backupWarned
+	// backupFailed: the backup failed, or a copy failed for a reason other
+	// than an unavailable directory.
+	backupFailed
+)
+
+// outcomeOf classifies a finished run.
+func outcomeOf(res backup.Result, err error) backupOutcome {
+	if err != nil {
+		return backupFailed
+	}
+	out := backupSucceeded
+	for _, f := range res.Copies.Failures {
+		if !errors.Is(f.Err, backup.ErrDirUnavailable) {
+			return backupFailed
+		}
+		out = backupWarned
+	}
+	return out
+}
+
+// backupOutcomeText is the final message for an outcome. secondsLeft is the
+// auto-close countdown, shown only for a backup that succeeded.
+func backupOutcomeText(o backupOutcome, secondsLeft int) string {
+	switch o {
+	case backupWarned:
+		return "Backup completed"
+	case backupFailed:
+		return "Backup encountered errors"
+	}
+	return fmt.Sprintf("Backup completed successfully (closing in %ds)", secondsLeft)
 }
 
 // minStepDisplay is how long each progress message is held before the next one
@@ -223,12 +384,12 @@ type backupProgress struct {
 // nothing. Pacing lives here rather than in the backup package because it is a
 // property of showing progress to a person, not of taking a backup: an
 // unattended backup must never slow itself down for a reader who is not there.
-const minStepDisplay = time.Second
+const minStepDisplay = 150 * time.Millisecond
 
-// minVerifyStepDisplay is the same for verification, which has more steps and
-// shorter ones: a full second each would make checking a backup feel slower
-// than taking one.
-const minVerifyStepDisplay = 500 * time.Millisecond
+// minVerifyStepDisplay is the same for verification. It is kept separate from
+// minStepDisplay, though the same today, because verification has more steps
+// and shorter ones, so it may want a shorter hold.
+const minVerifyStepDisplay = 150 * time.Millisecond
 
 // minCopyStepDisplay is the same for copies to the backup directories. A newly
 // added directory receives every archive at once, possibly hundreds, so each
@@ -288,7 +449,10 @@ func pacedBy(onProgress func(step, total int, desc string), minFor func(step int
 // onto the Fyne thread with fyne.Do, since Fyne widgets may only be touched
 // from the event loop.
 func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir string, destDirs []string, onClose func()) {
-	p := &backupProgress{win: parent, onClose: onClose}
+	p := &backupProgress{win: parent, onClose: onClose, after: afterFunc}
+
+	p.header = widget.NewLabelWithStyle(backupRunningText, fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	p.header.Wrapping = fyne.TextWrapWord
 
 	p.bar = widget.NewProgressBar()
 	p.bar.Min, p.bar.Max = 0, float64(backup.Steps(len(centers)))
@@ -303,18 +467,14 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir
 	p.summary = newBackupMessage()
 	p.summary.box.Hide()
 
-	p.closeBtn = widget.NewButton("Close", func() {
-		p.dialog.Hide()
-		if p.onClose != nil {
-			p.onClose()
-		}
-	})
+	p.closeBtn = widget.NewButton("Close", p.close)
 	p.closeBtn.Importance = widget.HighImportance
 	// Nothing to do until the run finishes: a backup is short and cancelling
 	// midway would leave the user unsure whether an archive was written.
 	p.closeBtn.Disable()
 
 	body := container.NewVBox(
+		p.header,
 		p.status,
 		p.summary.box,
 		p.bar,
@@ -328,9 +488,8 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir
 	go func() {
 		// Progress arrives as each step begins, so step-1 steps are complete
 		// when step is announced; the bar only reaches full once Run returns.
-		// The verification tail holds each message for the shorter verify
-		// interval: those steps are numerous and quick, and a full second each
-		// would make a backup feel far slower than the work it is doing.
+		// The verification and copy steps each have their own hold time;
+		// see minVerifyStepDisplay and minCopyStepDisplay.
 		firstVerifyStep := backup.FirstVerifyStep(len(centers))
 		firstCopyStep := backup.Steps(len(centers)) + 1
 		onProgress, waitForLastMessage := pacedBy(func(step, total int, desc string) {
@@ -357,8 +516,45 @@ func showBackupProgress(parent fyne.Window, centers []center.Center, internalDir
 	}()
 }
 
-// finish shows the outcome and re-enables the Close button.
+// close hides the pop-up, from the Close button or the auto-close countdown.
+func (p *backupProgress) close() {
+	if p.closed {
+		return
+	}
+	p.closed = true
+	if p.stopTick != nil {
+		p.stopTick()
+	}
+	p.dialog.Hide()
+	if p.onClose != nil {
+		p.onClose()
+	}
+}
+
+// autoCloseTick counts the auto-close down one second, closing at zero.
+func (p *backupProgress) autoCloseTick() {
+	if p.closed {
+		return
+	}
+	p.remaining--
+	if p.remaining <= 0 {
+		p.close()
+		return
+	}
+	p.header.SetText(backupOutcomeText(backupSucceeded, p.remaining))
+	p.stopTick = p.after(time.Second, p.autoCloseTick)
+}
+
+// finish shows the outcome and re-enables the Close button. A backup with no
+// warnings or errors closes itself after backupAutoClose seconds; otherwise
+// the pop-up stays until closed, so the problem is read.
 func (p *backupProgress) finish(res backup.Result, err error) {
+	outcome := outcomeOf(res, err)
+	p.remaining = backupAutoClose
+	p.header.SetText(backupOutcomeText(outcome, p.remaining))
+	if outcome == backupSucceeded {
+		p.stopTick = p.after(time.Second, p.autoCloseTick)
+	}
 	if err != nil {
 		slog.Error("backup failed", "err", err)
 		p.status.SetText("Backup failed: " + err.Error())

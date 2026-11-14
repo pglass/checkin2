@@ -81,25 +81,25 @@ func (l fixedWidthLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
 	objs[0].Resize(fyne.NewSize(l.w, h))
 }
 
-// marginLayout gives its single child asymmetric vertical margins (full width),
-// so a block can sit tight under what it describes while keeping clear space
-// before the next one. VBox spaces every child equally, which cannot express
-// that.
-type marginLayout struct{ top, bottom float32 }
+// marginLayout gives its single child asymmetric vertical margins, so a block
+// can sit tight under what it describes while keeping clear space before the
+// next one. VBox spaces every child equally, which cannot express that. left
+// indents the child; it fills the rest of the width.
+type marginLayout struct{ top, bottom, left float32 }
 
 func (l marginLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
 	if len(objs) == 0 {
-		return fyne.NewSize(0, l.top+l.bottom)
+		return fyne.NewSize(l.left, l.top+l.bottom)
 	}
-	return objs[0].MinSize().AddWidthHeight(0, l.top+l.bottom)
+	return objs[0].MinSize().AddWidthHeight(l.left, l.top+l.bottom)
 }
 
 func (l marginLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
 	if len(objs) == 0 {
 		return
 	}
-	objs[0].Move(fyne.NewPos(0, l.top))
-	objs[0].Resize(fyne.NewSize(size.Width, size.Height-l.top-l.bottom))
+	objs[0].Move(fyne.NewPos(l.left, l.top))
+	objs[0].Resize(fyne.NewSize(size.Width-l.left, size.Height-l.top-l.bottom))
 }
 
 // withWindowMargin wraps content in the standard window-edge margins.

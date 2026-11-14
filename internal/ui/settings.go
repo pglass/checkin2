@@ -81,6 +81,9 @@ type settingsList struct {
 	// counts as unchanged again.
 	orig    []string
 	entries []*widget.Entry
+	// errs holds each entry's validation error line, hidden while it has
+	// nothing to say; see validateList.
+	errs []*canvas.Text
 	// items holds one row per entry; rebuilt in place as values are added and
 	// removed.
 	items *fyne.Container
@@ -131,7 +134,20 @@ type settings struct {
 	// startup. Shown only once a value actually differs from what was loaded,
 	// and nil when the host has no warning to give.
 	restartNote *canvas.Text
+	// saveBtn is disabled, and so drawn greyed out, while any value shows a
+	// validation error; see updateSaveButton.
+	saveBtn *widget.Button
+	// fixNote sits beside the buttons, saying why Save is unavailable, while
+	// saveBtn is disabled.
+	fixNote *canvas.Text
 }
+
+// settingsListIndent is how far a list setting's entries are indented under
+// its key: the width of this text at the normal size.
+const settingsListIndent = "    "
+
+// settingsFixNoteText is fixNote's message.
+const settingsFixNoteText = "To save, please fix invalid settings"
 
 // showSettingsWindow opens the Settings window, or raises the existing one.
 // settingsConfig, settingsPath, settingsApp, and applySettings implement
@@ -170,8 +186,9 @@ func showSettingsFor(host settingsHost, onClosed func()) fyne.Window {
 	s := &settings{host: host}
 	s.win = host.settingsApp().NewWindow("Settings")
 	s.win.SetContent(withWindowMargin(s.build()))
-	s.win.Resize(fyne.NewSize(560, 620))
+	s.win.Resize(fyne.NewSize(672, 620))
 	s.win.SetOnClosed(onClosed)
+	s.win.CenterOnScreen()
 	s.win.Show()
 	return s.win
 }
@@ -258,8 +275,15 @@ func (s *settings) build() fyne.CanvasObject {
 
 	saveBtn := widget.NewButton("Save", s.save)
 	saveBtn.Importance = widget.HighImportance
+	s.saveBtn = saveBtn
+	s.fixNote = canvas.NewText(settingsFixNoteText, theme.Color(theme.ColorNameError))
+	s.fixNote.Hide()
+	s.updateSaveButton() // a list can open with an error already showing
 	cancelBtn := widget.NewButton("Cancel", func() { s.win.Close() })
-	buttons := container.NewHBox(layout.NewSpacer(), cancelBtn, saveBtn)
+	// The note is centered vertically against the buttons beside it.
+	buttons := container.NewHBox(
+		container.NewVBox(layout.NewSpacer(), s.fixNote, layout.NewSpacer()),
+		layout.NewSpacer(), cancelBtn, saveBtn)
 
 	// Saved settings are read at startup only, so say so where the user is
 	// about to save rather than letting a changed value appear to do nothing.
@@ -349,14 +373,22 @@ func (s *settings) buildList(f config.Field, cfg config.Config) []fyne.CanvasObj
 	for _, v := range l.orig {
 		s.addListEntry(l, v)
 	}
+	s.validateList(l)
 	add := widget.NewButtonWithIcon(f.AddLabel, theme.ContentAddIcon(), func() {
 		s.addListEntry(l, "")
 		s.updateRestartNote()
 	})
 	s.lists = append(s.lists, l)
+	// The key and description on their own lines above the entries, rather
+	// than the key beside a tall stack of them, so the stack gets the
+	// window's full width. The stack is indented as one block, so every entry
+	// and the Add button share the same left edge.
+	indent := fyne.MeasureText(settingsListIndent, theme.TextSize(), fyne.TextStyle{}).Width
 	return []fyne.CanvasObject{
-		settingsKeyed(settingsKey(f.Key), container.NewVBox(l.items, container.NewHBox(add))),
+		settingsKey(f.Key),
 		settingsDesc(f.Desc),
+		container.New(marginLayout{left: indent},
+			container.NewVBox(l.items, container.NewHBox(add))),
 	}
 }
 
@@ -365,8 +397,15 @@ func (s *settings) buildList(f config.Field, cfg config.Config) []fyne.CanvasObj
 func (s *settings) addListEntry(l *settingsList, v string) {
 	e := widget.NewEntry()
 	e.SetText(v)
-	e.OnChanged = func(string) { s.updateRestartNote() }
+	errLb := canvas.NewText("", theme.Color(theme.ColorNameError))
+	errLb.TextSize = theme.CaptionTextSize()
+	errLb.Hide()
+	e.OnChanged = func(string) {
+		s.validateList(l)
+		s.updateRestartNote()
+	}
 	l.entries = append(l.entries, e)
+	l.errs = append(l.errs, errLb)
 
 	buttons := container.NewHBox()
 	if l.field.Directory {
@@ -386,13 +425,49 @@ func (s *settings) addListEntry(l *settingsList, v string) {
 				} else {
 					note.Hide()
 				}
+				s.validateList(l)
 				s.updateRestartNote()
 			}
-			l.items.Add(container.NewVBox(row, note))
+			l.items.Add(container.NewVBox(row, note, errLb))
 			return
 		}
 	}
-	l.items.Add(row)
+	l.items.Add(container.NewVBox(row, errLb))
+}
+
+// validateList shows an error under each backup directory that is the same
+// directory as an earlier one (see duplicateBackupDirs), or that was added or
+// edited here and does not exist (see backupDirNotFound), and reports whether
+// there were none. Other lists have nothing to validate.
+func (s *settings) validateList(l *settingsList) bool {
+	if l.field.Key != config.KeyBackupDirs {
+		return true
+	}
+	dups := duplicateBackupDirs(l.values(), s.host.settingsConfig().BackupDirIDs)
+	saved := map[string]bool{}
+	for _, v := range l.orig {
+		saved[filepath.Clean(strings.TrimSpace(v))] = true
+	}
+	ok := true
+	for i, errLb := range l.errs {
+		text := strings.TrimSpace(l.entries[i].Text)
+		msg := ""
+		if first, dup := dups[i]; dup {
+			msg = "Same directory as " + strings.TrimSpace(l.entries[first].Text)
+		} else if text != "" && !saved[filepath.Clean(text)] {
+			msg = backupDirNotFound(text)
+		}
+		errLb.Text = msg
+		if msg == "" {
+			errLb.Hide()
+		} else {
+			errLb.Show()
+			ok = false
+		}
+		errLb.Refresh()
+	}
+	s.updateSaveButton()
+	return ok
 }
 
 // confirmRemoveListEntry asks before removing e from l. An empty entry holds
@@ -419,9 +494,11 @@ func (s *settings) removeListEntry(l *settingsList, e *widget.Entry) {
 			continue
 		}
 		l.entries = append(l.entries[:i], l.entries[i+1:]...)
+		l.errs = append(l.errs[:i], l.errs[i+1:]...)
 		l.items.Remove(l.items.Objects[i])
 		break
 	}
+	s.validateList(l)
 	s.updateRestartNote()
 }
 
@@ -476,12 +553,48 @@ func (s *settings) validateRow(row *settingsRow) bool {
 		row.errLb.Text = err.Error()
 		row.errLb.Refresh()
 		row.errLb.Show() // takes a line only while there is something to say
+		s.updateSaveButton()
 		return false
 	}
 	row.errLb.Text = ""
 	row.errLb.Refresh()
 	row.errLb.Hide()
+	s.updateSaveButton()
 	return true
+}
+
+// updateSaveButton disables Save while any setting shows a validation error,
+// so the button looks unavailable rather than failing when pressed, and shows
+// fixNote beside it to say why. Called whenever validation runs; before the
+// button exists it does nothing.
+func (s *settings) updateSaveButton() {
+	if s.saveBtn == nil {
+		return
+	}
+	if s.hasErrors() {
+		s.saveBtn.Disable()
+		s.fixNote.Show()
+	} else {
+		s.saveBtn.Enable()
+		s.fixNote.Hide()
+	}
+}
+
+// hasErrors reports whether any setting is showing a validation error.
+func (s *settings) hasErrors() bool {
+	for _, row := range s.rows {
+		if !row.errLb.Hidden {
+			return true
+		}
+	}
+	for _, l := range s.lists {
+		for _, e := range l.errs {
+			if !e.Hidden {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // updateRestartNote shows the restart warning only while some value differs
@@ -536,6 +649,9 @@ func (s *settings) save() {
 		}
 	}
 	for _, l := range s.lists {
+		if !s.validateList(l) {
+			ok = false
+		}
 		if err := l.field.SetList(&cfg, l.values()); err != nil {
 			dialog.ShowError(err, s.win)
 			ok = false

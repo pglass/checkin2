@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -68,6 +69,32 @@ func TestLastBackupText(t *testing.T) {
 	ran := lastBackupText(at, true)
 	if !strings.Contains(ran, "2026") || !strings.Contains(ran, "Mar") {
 		t.Errorf("ran text = %q, want it to show the date", ran)
+	}
+}
+
+// While the automatic backup is due, the last backup line says how far behind
+// it is and turns red; otherwise it is the plain line in the normal color.
+func TestBackupBarOverdue(t *testing.T) {
+	at := time.Now().Add(-72 * time.Hour)
+	s, _, _ := newAutoBackupStartup(t, 2, at)
+	s.backups.refresh()
+	want := lastBackupText(at.Truncate(time.Second), true) + " (more than 2 days ago)"
+	if got := s.backups.label.Text; got != want {
+		t.Errorf("overdue text = %q, want %q", got, want)
+	}
+	if s.backups.label.Color != theme.Color(theme.ColorNameError) {
+		t.Error("overdue text is not red")
+	}
+
+	recent, _, _ := newAutoBackupStartup(t, 2, time.Now().Add(-time.Hour))
+	recent.backups.refresh()
+	if strings.Contains(recent.backups.label.Text, "more than") ||
+		recent.backups.label.Color != theme.Color(theme.ColorNameForeground) {
+		t.Errorf("recent backup shown as overdue: %q", recent.backups.label.Text)
+	}
+
+	if got := overdueBackupText(at, true, 1); !strings.HasSuffix(got, "(more than 1 day ago)") {
+		t.Errorf("one-day text = %q, want the singular", got)
 	}
 }
 
@@ -669,6 +696,7 @@ func newAutoBackupStartup(t *testing.T, days int, at time.Time) (s *startup, not
 	}
 	notes, confirmed = &[]string{}, new(bool)
 	s.backups.start = func(note string) { *notes = append(*notes, note) }
+	s.backups.countdown = func(proceed func()) { proceed() }
 	s.backups.confirm = func(note string, onConfirm func()) {
 		*confirmed = true
 		*notes = append(*notes, "confirm:"+note)
@@ -772,5 +800,138 @@ func TestBackupMessageCentersTextAndPathBlock(t *testing.T) {
 	}
 	if text != 2 || lists != 1 {
 		t.Errorf("got %d text blocks and %d path lists, want 2 around 1", text, lists)
+	}
+}
+
+// fakeAfter replaces a scheduler: it records each scheduled call so a test can
+// run them one at a time, as the seconds passing would.
+type fakeAfter struct {
+	delays []time.Duration
+	queue  []func()
+}
+
+func (f *fakeAfter) after(d time.Duration, fn func()) func() {
+	f.delays = append(f.delays, d)
+	f.queue = append(f.queue, fn)
+	return func() {}
+}
+
+// step runs the oldest scheduled call.
+func (f *fakeAfter) step() {
+	fn := f.queue[0]
+	f.queue = f.queue[1:]
+	fn()
+}
+
+// The automatic backup waits after the window is shown, then counts down
+// before starting, unless a Center was opened in the meantime.
+func TestAutoBackupDelayAndCountdown(t *testing.T) {
+	s, notes, _ := newAutoBackupStartup(t, 2, time.Now().Add(-72*time.Hour))
+	s.backups.countdown = s.backups.showAutoBackupCountdown
+	f := &fakeAfter{}
+	s.backups.after = f.after
+
+	s.backups.scheduleAutoBackup()
+	if len(f.delays) != 1 || f.delays[0] != autoBackupDelay || len(*notes) != 0 {
+		t.Fatalf("scheduled %v and started %q, want only a %v wait", f.delays, *notes, autoBackupDelay)
+	}
+	f.step() // the delay passes: the countdown appears
+	for i := 0; i < autoBackupCountdown; i++ {
+		if len(*notes) != 0 {
+			t.Fatalf("backup started after %d of %d seconds", i, autoBackupCountdown)
+		}
+		f.step()
+	}
+	if want := []string{autoBackupNote()}; !slices.Equal(*notes, want) {
+		t.Errorf("backup started with %q, want %q", *notes, want)
+	}
+}
+
+// Opening a Center during the delay means no automatic backup.
+func TestAutoBackupSkippedOnceCenterOpened(t *testing.T) {
+	s, notes, _ := newAutoBackupStartup(t, 2, time.Now().Add(-72*time.Hour))
+	f := &fakeAfter{}
+	s.backups.after = f.after
+	s.backups.scheduleAutoBackup()
+	s.opened = true
+	f.step()
+	if len(*notes) != 0 || len(f.queue) != 0 {
+		t.Errorf("automatic backup went ahead with a Center open: %q", *notes)
+	}
+}
+
+// Cancel closes the countdown and the backup never starts.
+func TestAutoBackupCountdownCancel(t *testing.T) {
+	s, _ := newTestStartupWithConfig(t, config.Default(), "Alpha")
+	f := &fakeAfter{}
+	s.backups.after = f.after
+	proceeded := false
+	s.backups.showAutoBackupCountdown(func() { proceeded = true })
+
+	var cancel *widget.Button
+	for _, o := range test.LaidOutObjects(s.win.Canvas().Overlays().Top()) {
+		if b, ok := o.(*widget.Button); ok && b.Text == "Cancel" {
+			cancel = b
+		}
+	}
+	if cancel == nil {
+		t.Fatal("no Cancel button in the countdown")
+	}
+	test.Tap(cancel)
+	for len(f.queue) > 0 {
+		f.step()
+	}
+	if proceeded {
+		t.Error("backup started after Cancel")
+	}
+	if s.win.Canvas().Overlays().Top() != nil {
+		t.Error("countdown still shown after Cancel")
+	}
+}
+
+// Skipped (unavailable) directories are a warning; any other failure is an
+// error, and only a clean run says it will close.
+func TestBackupOutcome(t *testing.T) {
+	unavailable := backup.CopyFailure{DestDir: "/gone", Err: backup.ErrDirUnavailable}
+	failed := backup.CopyFailure{DestDir: "/full", Err: errors.New("disk full")}
+	for _, tc := range []struct {
+		res  backup.Result
+		err  error
+		want string
+	}{
+		{backup.Result{}, nil, "Backup completed successfully (closing in 4s)"},
+		{backup.Result{Copies: backup.CopyResult{Failures: []backup.CopyFailure{unavailable}}}, nil, "Backup completed"},
+		{backup.Result{Copies: backup.CopyResult{Failures: []backup.CopyFailure{unavailable, failed}}}, nil, "Backup encountered errors"},
+		{backup.Result{}, errors.New("boom"), "Backup encountered errors"},
+	} {
+		if got := backupOutcomeText(outcomeOf(tc.res, tc.err), backupAutoClose); got != tc.want {
+			t.Errorf("outcome text = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// Directories are the same by drive ID and path below the drive when both have
+// IDs, and otherwise by being one directory on disk (symlinks included) or by
+// path.
+func TestDuplicateBackupDirs(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{
+		"/Volumes/OLD/b":   "ID-1",
+		"/Volumes/NEW/b":   "ID-1", // the same drive under another name
+		"/Volumes/NEW/c":   "ID-1", // same drive, another folder
+		"/Volumes/OTHER/b": "ID-2",
+	}
+	dirs := []string{
+		"/Volumes/OLD/b", "/Volumes/NEW/b", "/Volumes/NEW/c", "/Volumes/OTHER/b",
+		real, link, "", "/missing/x", "/missing/x/",
+	}
+	got := duplicateBackupDirs(dirs, ids)
+	want := map[int]int{1: 0, 5: 4, 8: 7}
+	if !maps.Equal(got, want) {
+		t.Errorf("duplicates = %v, want %v", got, want)
 	}
 }

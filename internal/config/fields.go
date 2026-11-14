@@ -86,7 +86,7 @@ var Fields = []Field{
 	{
 		Key:         "camera_fps",
 		Section:     "camera",
-		Desc:        "Webcam capture/detect rate in frames per second.",
+		Desc:        "Webcam processing rate in frames per second.",
 		StructField: "CameraFPS",
 		Get:         func(c Config) string { return strconv.Itoa(c.CameraFPS) },
 		Set:         func(c *Config, s string) error { return setPositiveInt(&c.CameraFPS, "camera_fps", s) },
@@ -94,9 +94,8 @@ var Fields = []Field{
 	{
 		Key:     "camera_request_width",
 		Section: "camera",
-		Desc: "Requested camera resolution width, in pixels. The camera chooses the closest " +
-			"supported resolution, so the actual frame size may not match exactly. " +
-			"Reduce for less CPU. Raise if QR code scans are unreliable.",
+		Desc: "Requested camera resolution width. The camera selects the closest " +
+			"supported resolution. Reduce for less CPU. Raise if QR code scans are unreliable.",
 		StructField: "CameraRequestWidth",
 		Get:         func(c Config) string { return strconv.Itoa(c.CameraRequestWidth) },
 		Set: func(c *Config, s string) error {
@@ -106,7 +105,7 @@ var Fields = []Field{
 	{
 		Key:         "camera_request_height",
 		Section:     "camera",
-		Desc:        "Requested camera resolution height, in pixels. See camera_request_width.",
+		Desc:        "Requested camera resolution height, in pixels. Refer to camera_request_width.",
 		StructField: "CameraRequestHeight",
 		Get:         func(c Config) string { return strconv.Itoa(c.CameraRequestHeight) },
 		Set: func(c *Config, s string) error {
@@ -116,7 +115,7 @@ var Fields = []Field{
 	{
 		Key:         "qr_scan_cooldown",
 		Section:     "camera",
-		Desc:        "Time before the same QR code scans again (e.g. 8s, 500ms). Setting this to at least a few seconds helps prevent a student from scanning in and then immediately scanning out because they held the QR code to the camera for too long.",
+		Desc:        "Duration during which re-scans of the same QR code are ignored, to help avoid unintentional check outs from holding a QR code to the camera for too long",
 		StructField: "QRScanCooldown",
 		Get:         func(c Config) string { return c.QRScanCooldown.String() },
 		Set: func(c *Config, s string) error {
@@ -126,7 +125,7 @@ var Fields = []Field{
 	{
 		Key:         "auto_backup_frequency_days",
 		Section:     "backup",
-		Desc:        "Automatic backup runs at startup this often, in days (specifically, if no backup is younger than this many days).",
+		Desc:        "Automatic backup runs at startup this often, in days. Backup triggers if no backup file is younger than this many days.",
 		StructField: "AutoBackupFrequencyDays",
 		Get:         func(c Config) string { return strconv.Itoa(c.AutoBackupFrequencyDays) },
 		Set: func(c *Config, s string) error {
@@ -136,7 +135,7 @@ var Fields = []Field{
 	{
 		Key:          KeyBackupDirs,
 		Section:      "backup",
-		Desc:         "Each new backup archive is copied to every one of these directories.",
+		Desc:         "The list of additional backup directories. Each new backup archive is copied to each of these directories.",
 		StructField:  "BackupDirs",
 		FreeText:     true,
 		Directory:    true,

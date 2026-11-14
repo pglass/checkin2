@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
@@ -97,16 +98,29 @@ func TestSettingsSaveRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-// Fixing the bad value clears its error.
+// Fixing the bad value clears its error. Save is disabled (greyed out) while
+// the error shows.
 func TestSettingsErrorClearsWhenFixed(t *testing.T) {
 	s, _ := newTestSettings(t)
+	if s.saveBtn.Disabled() {
+		t.Fatal("Save disabled before any edit")
+	}
 	s.rows[0].entry.SetText("oops")
 	if s.rows[0].errLb.Text == "" {
 		t.Fatal("want error for invalid value")
 	}
+	if !s.saveBtn.Disabled() {
+		t.Error("Save enabled with an invalid value")
+	}
+	if s.fixNote.Hidden || s.fixNote.Text != "To save, please fix invalid settings" {
+		t.Errorf("fix note = %q (hidden %v), want it shown", s.fixNote.Text, s.fixNote.Hidden)
+	}
 	s.rows[0].entry.SetText("12")
 	if s.rows[0].errLb.Text != "" {
 		t.Fatalf("error not cleared after fix: %q", s.rows[0].errLb.Text)
+	}
+	if s.saveBtn.Disabled() || !s.fixNote.Hidden {
+		t.Error("Save still disabled, or the fix note still shown, after the fix")
 	}
 }
 
@@ -504,7 +518,8 @@ func TestSettingsAddBackupDir(t *testing.T) {
 	if s.dirty() {
 		t.Error("a blank new entry made the window dirty")
 	}
-	l.entries[1].SetText("/b")
+	b := t.TempDir() // a new entry must exist; see backupDirNotFound
+	l.entries[1].SetText(b)
 	if !s.dirty() {
 		t.Error("a filled-in new entry left the window clean")
 	}
@@ -514,7 +529,7 @@ func TestSettingsAddBackupDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if want := []string{"/a", "/b"}; !reflect.DeepEqual(loaded.BackupDirs, want) {
+	if want := []string{"/a", b}; !reflect.DeepEqual(loaded.BackupDirs, want) {
 		t.Errorf("saved backup_dirs = %q, want %q", loaded.BackupDirs, want)
 	}
 }
@@ -649,5 +664,106 @@ func TestSettingsOmitsHiddenFields(t *testing.T) {
 		if hidden[row.field.Key] {
 			t.Errorf("hidden setting %q has a row in the Settings window", row.field.Key)
 		}
+	}
+}
+
+// A backup directory that is the same as an earlier one shows an error under
+// it and blocks Save; fixing it clears the error.
+func TestSettingsDuplicateBackupDir(t *testing.T) {
+	dir := t.TempDir()
+	s, path := newTestSettingsWithDirs(t, dir, "/elsewhere")
+	l := listFor(t, s, config.KeyBackupDirs)
+
+	l.entries[1].SetText(dir + string(filepath.Separator)) // the same, spelled differently
+	if l.errs[1].Hidden || l.errs[1].Text != "Same directory as "+dir {
+		t.Errorf("error = %q (hidden %v), want it to name %s", l.errs[1].Text, l.errs[1].Hidden, dir)
+	}
+	if !l.errs[0].Hidden {
+		t.Error("the first of the two is marked too")
+	}
+	if !s.saveBtn.Disabled() {
+		t.Error("Save enabled despite a duplicate backup directory")
+	}
+	s.save()
+	if _, err := os.Stat(path); err == nil {
+		t.Error("saved despite a duplicate backup directory")
+	}
+
+	l.entries[1].SetText("/elsewhere")
+	if !l.errs[1].Hidden {
+		t.Errorf("error still shown after the fix: %q", l.errs[1].Text)
+	}
+	if s.saveBtn.Disabled() || !s.fixNote.Hidden {
+		t.Error("Save still disabled, or the fix note still shown, after the fix")
+	}
+}
+
+// A backup directory added or edited here must exist; one already saved need
+// not, so an unplugged drive does not block saving.
+func TestSettingsBackupDirNotFound(t *testing.T) {
+	s, path := newTestSettingsWithDirs(t, "/saved/but/unplugged")
+	l := listFor(t, s, config.KeyBackupDirs)
+	if !l.errs[0].Hidden || s.saveBtn.Disabled() {
+		t.Fatalf("saved directory flagged: %q", l.errs[0].Text)
+	}
+
+	s.addListEntry(l, "")
+	l.entries[1].SetText("/no/such/dir")
+	if l.errs[1].Hidden || l.errs[1].Text != "Directory not found" {
+		t.Errorf("error = %q (hidden %v), want Directory not found", l.errs[1].Text, l.errs[1].Hidden)
+	}
+	if !s.saveBtn.Disabled() {
+		t.Error("Save enabled with a missing directory")
+	}
+	s.save()
+	if _, err := os.Stat(path); err == nil {
+		t.Error("saved despite a missing directory")
+	}
+
+	file := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l.entries[1].SetText(file)
+	if l.errs[1].Text != "Not a directory" {
+		t.Errorf("error for a file = %q, want Not a directory", l.errs[1].Text)
+	}
+
+	l.entries[1].SetText(t.TempDir())
+	if !l.errs[1].Hidden || s.saveBtn.Disabled() {
+		t.Errorf("existing directory still flagged: %q", l.errs[1].Text)
+	}
+}
+
+// The backup directory entries and the Add button are indented by the same
+// amount under the key.
+func TestSettingsBackupDirsIndented(t *testing.T) {
+	s, _ := newTestSettingsWithDirs(t, "/a", "/b")
+	s.win.Resize(fyne.NewSize(672, 620))
+	l := listFor(t, s, config.KeyBackupDirs)
+	d := fyne.CurrentApp().Driver()
+
+	var key fyne.CanvasObject
+	var add *widget.Button
+	for _, o := range test.LaidOutObjects(s.win.Content()) {
+		if txt, ok := o.(*canvas.Text); ok && txt.Text == config.KeyBackupDirs {
+			key = txt
+		}
+		if b, ok := o.(*widget.Button); ok && b.Text == "Add backup directory" {
+			add = b
+		}
+	}
+	if key == nil || add == nil {
+		t.Fatal("backup_dirs key or Add button not found")
+	}
+	keyX := d.AbsolutePositionForObject(key).X
+	addX := d.AbsolutePositionForObject(add).X
+	for i, e := range l.entries {
+		if x := d.AbsolutePositionForObject(e).X; x != addX {
+			t.Errorf("entry %d at x=%v, Add button at x=%v; want the same", i, x, addX)
+		}
+	}
+	if addX <= keyX {
+		t.Errorf("Add button at x=%v, key at x=%v; want it indented", addX, keyX)
 	}
 }

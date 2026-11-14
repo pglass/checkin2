@@ -115,7 +115,7 @@ func ShowStartup(fa fyne.App, appDir string, cfg config.Config, cfgPath string, 
 	// Backups run from this window, with no Center open, so this is where the
 	// automatic one starts. Its dialogs are modal over the window, so no Center
 	// can be opened from under a running backup.
-	s.backups.autoBackup()
+	s.backups.scheduleAutoBackup()
 }
 
 func (s *startup) build() {
