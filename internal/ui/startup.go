@@ -82,7 +82,7 @@ type startup struct {
 // process, that class of crash cannot occur here.
 func ShowStartup(fa fyne.App, appDir string, cfg config.Config, cfgPath string, onOpen func(center.Center, fyne.Window) error) {
 	s := &startup{fyneApp: fa, appDir: appDir, cfg: cfg, cfgPath: cfgPath, onOpen: onOpen}
-	useBackupDirIDs(cfg)
+	useBackupConfig(cfg)
 	s.win = fa.NewWindow("Check-In")
 	s.about = about{fyneApp: fa, parent: s.win}
 	// Settings belongs here as well as in the main window: backup_dirs is set
@@ -202,7 +202,7 @@ func (s *startup) settingsRestartNote() string { return "" }
 // a newly added one without a restart.
 func (s *startup) applySettings(cfg config.Config) {
 	s.cfg = cfg
-	useBackupDirIDs(cfg)
+	useBackupConfig(cfg)
 	s.backups.refresh()
 }
 

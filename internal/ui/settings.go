@@ -167,7 +167,7 @@ func (a *App) settingsRestartNote() string {
 // is what the window's restart warning is about.
 func (a *App) applySettings(cfg config.Config) {
 	a.cfg = cfg
-	useBackupDirIDs(cfg)
+	useBackupConfig(cfg)
 }
 
 func (a *App) showSettingsWindow() {
@@ -525,8 +525,7 @@ func (s *settings) browseDir(entry *widget.Entry) {
 		d.SetLocation(start)
 	}
 
-	// Show before Resize: Resize reaches through the internal window that Show
-	// creates, so resizing first panics (see importer.onBrowse).
+	// Show before Resize, as in importer.onBrowse.
 	d.Show()
 	d.Resize(s.win.Canvas().Size())
 }

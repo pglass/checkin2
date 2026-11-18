@@ -161,6 +161,29 @@ var Fields = []Field{
 		SetList:     setBackupDirIDs,
 	},
 	{
+		Key:         "max_unzip_manifest_size_mb",
+		Section:     "backup",
+		Desc:        "Largest backup manifest that will be read, in megabytes. A real one is a few kilobytes.",
+		StructField: "MaxUnzipManifestSizeMB",
+		Hidden:      true,
+		Get:         func(c Config) string { return strconv.Itoa(c.MaxUnzipManifestSizeMB) },
+		Set: func(c *Config, s string) error {
+			return setPositiveInt(&c.MaxUnzipManifestSizeMB, "max_unzip_manifest_size_mb", s)
+		},
+	},
+	{
+		Key:     "max_unzip_entry_size_mb",
+		Section: "backup",
+		Desc: "Largest Center database that will be extracted from a backup when verifying or " +
+			"restoring it, in megabytes. Raise it only if a Center's database is larger.",
+		StructField: "MaxUnzipEntrySizeMB",
+		Hidden:      true,
+		Get:         func(c Config) string { return strconv.Itoa(c.MaxUnzipEntrySizeMB) },
+		Set: func(c *Config, s string) error {
+			return setPositiveInt(&c.MaxUnzipEntrySizeMB, "max_unzip_entry_size_mb", s)
+		},
+	},
+	{
 		Key:     "qr_base_url",
 		Section: "qr",
 		Desc: "Base URL that generated QR codes point at. The student's name is base64url-encoded " +

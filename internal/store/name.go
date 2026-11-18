@@ -1,6 +1,25 @@
 package store
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+	"unicode"
+)
+
+// nameExtraRunes are the punctuation marks a student's name may contain
+// besides letters, digits, and spaces: hyphens and apostrophes (straight and
+// curly) for names like "Mary-Jo O'Neil", and periods for "St. John" or "Jr.".
+const nameExtraRunes = "-'’."
+
+// nameRuneOK reports whether r may appear in a student's name: a letter or digit
+// in any script, a combining mark (accents typed as separate code points), a
+// space, or one of nameExtraRunes. An allowlist, so nothing that means
+// something in the QR code's URL -- "+" separates the two parts there -- or in
+// a file name can get in.
+func nameRuneOK(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.M, r) ||
+		r == ' ' || strings.ContainsRune(nameExtraRunes, r)
+}
 
 // Name is a student's name, stored as two columns and displayed two ways.
 //
@@ -41,6 +60,23 @@ func (n Name) Full() string {
 // Empty reports whether either part is missing. Both are required for a
 // student to be added.
 func (n Name) Empty() bool { return n.First == "" || n.Last == "" }
+
+// Validate reports whether n can be a student's name: both parts present, and
+// made only of the characters nameRuneOK allows. The error is shown to the
+// user as is.
+func (n Name) Validate() error {
+	if n.Empty() {
+		return fmt.Errorf("first and last name must not be empty")
+	}
+	for _, part := range []string{n.First, n.Last} {
+		for _, r := range part {
+			if !nameRuneOK(r) {
+				return fmt.Errorf("names cannot contain %q: use letters, digits, spaces, and - ' ’ .", r)
+			}
+		}
+	}
+	return nil
+}
 
 // Less orders names by (Last, First), case-insensitively, which is the sort
 // order used everywhere students are listed. Case-insensitive so "de Vries"

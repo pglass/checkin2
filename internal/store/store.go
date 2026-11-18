@@ -176,8 +176,8 @@ func (s *Store) Close() error {
 // already taken -- the same student, not merely a shared surname.
 func (s *Store) AddStudent(ctx context.Context, name Name) (gen.Student, error) {
 	name = NewName(name.First, name.Last)
-	if name.First == "" || name.Last == "" {
-		return gen.Student{}, errors.New("first and last name must not be empty")
+	if err := name.Validate(); err != nil {
+		return gen.Student{}, err
 	}
 	st, err := s.q.AddStudent(ctx, gen.AddStudentParams{
 		Firstname: name.First,

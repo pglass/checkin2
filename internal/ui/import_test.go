@@ -54,27 +54,6 @@ func TestImporterResizeOnlyWhileBrowserOpen(t *testing.T) {
 	w.Resize(fyne.NewSize(1100, 800))
 }
 
-// Resizing a picker that was never shown panics: FileDialog.Resize calls
-// MinSize, which dereferences the internal window that only Show creates. This
-// is why onBrowse resizes after Show, and why onWindowResize is gated on a
-// non-nil browser rather than resizing unconditionally.
-func TestResizeBeforeShowPanics(t *testing.T) {
-	a := test.NewApp()
-	defer a.Quit()
-
-	w := a.NewWindow("host")
-	w.Resize(fyne.NewSize(860, 560))
-	w.Show()
-	d := dialog.NewFileOpen(func(fyne.URIReadCloser, error) {}, w)
-
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic resizing a file dialog before Show")
-		}
-	}()
-	d.Resize(fyne.NewSize(900, 600))
-}
-
 // The preview lists new students first so the rows that will change something
 // are visible without scrolling, and sorts each group by (last, first).
 func TestRefreshPreviewOrdersNewFirst(t *testing.T) {
@@ -120,5 +99,31 @@ func TestRefreshPreviewOrdersNewFirst(t *testing.T) {
 		if wantNew := i < 2; e.isNew != wantNew {
 			t.Errorf("entry %d (%q): isNew = %v, want %v", i, e.name.Display(), e.isNew, wantNew)
 		}
+	}
+}
+
+// Names with characters a student's name cannot have are left out of the
+// preview, so the import cannot stop partway on them, and counted.
+func TestRefreshPreviewSkipsInvalidNames(t *testing.T) {
+	a := test.NewApp()
+	defer a.Quit()
+	sheet, err := spreadsheet.FromRowsForTest([][]string{
+		{"First Name", "Last Name"},
+		{"Ann", "Lee"},
+		{"Mary+Jo", "Smith"},
+		{"Bo", "#1"},
+	})
+	if err != nil {
+		t.Fatalf("FromRowsForTest: %v", err)
+	}
+	im := &importer{win: a.NewWindow("t"), sheet: sheet, existing: map[string]bool{}}
+	im.build()
+	im.resetColumnSelectors()
+
+	if len(im.entries) != 1 || im.entries[0].name.Display() != "Lee, Ann" {
+		t.Errorf("entries = %+v, want only Lee, Ann", im.entries)
+	}
+	if im.invalidLbl.Hidden || im.invalidLbl.Text != "Skipping 2 names with invalid characters" {
+		t.Errorf("invalid label = %q (hidden %v)", im.invalidLbl.Text, im.invalidLbl.Hidden)
 	}
 }

@@ -40,7 +40,10 @@ type importer struct {
 	lastSel     *widget.Select
 	newLbl      *canvas.Text
 	existingLbl *canvas.Text
-	importBtn   *widget.Button
+	// invalidLbl counts names left out for containing characters a student's
+	// name cannot (see store.Name.Validate); hidden when there are none.
+	invalidLbl *canvas.Text
+	importBtn  *widget.Button
 
 	// browser is the file picker while it is open, nil otherwise. Tracked so
 	// window resizes can be forwarded to it.
@@ -117,6 +120,9 @@ func (im *importer) build() {
 	im.newLbl.TextSize = theme.TextSize()
 	im.existingLbl = canvas.NewText("", theme.Color(theme.ColorNameDisabled))
 	im.existingLbl.TextSize = theme.TextSize()
+	im.invalidLbl = canvas.NewText("", theme.Color(theme.ColorNameError))
+	im.invalidLbl.TextSize = theme.TextSize()
+	im.invalidLbl.Hide()
 
 	im.importBtn = newPrimaryButton("Import", im.onImport)
 	im.importBtn.Disable() // nothing to import until a column is chosen
@@ -233,6 +239,7 @@ func (im *importer) previewPane() fyne.CanvasObject {
 		boldText("Preview"),
 		im.newLbl,
 		im.existingLbl,
+		im.invalidLbl,
 	)
 	buttons := container.NewHBox(
 		layout.NewSpacer(),
@@ -268,8 +275,9 @@ func (im *importer) onBrowse() {
 	// window, which only exists between Show and close.
 	d.SetOnClosed(func() { im.browser = nil })
 
-	// Show before Resize: Resize reaches through the internal window that Show
-	// creates, so resizing first panics.
+	// Show before Resize: in older Fyne versions Resize reached through the
+	// internal window that Show creates, so resizing first panicked. Current
+	// Fyne no longer does, but the order costs nothing.
 	d.Show()
 	im.browser = d
 	d.Resize(im.win.Canvas().Size())
@@ -436,6 +444,7 @@ func (im *importer) refreshPreview() {
 
 	if im.sheet == nil {
 		im.setCounts(-1, -1)
+		im.setInvalidCount(0)
 		im.importBtn.Disable()
 		im.list.Refresh()
 		return
@@ -446,6 +455,7 @@ func (im *importer) refreshPreview() {
 	if first < 0 || last < 0 {
 		// Both columns are required before anything can be parsed.
 		im.setCounts(-1, -1)
+		im.setInvalidCount(0)
 		im.importBtn.Disable()
 		im.list.Refresh()
 		return
@@ -455,11 +465,17 @@ func (im *importer) refreshPreview() {
 	// is new only the first time, otherwise the import would attempt the same
 	// insert twice and the second would fail the unique-name constraint.
 	seen := make(map[string]bool)
-	newCount := 0
+	newCount, invalid := 0, 0
 	names := im.sheet.Names(first, last)
 	im.entries = make([]previewEntry, 0, len(names))
 	for _, n := range names {
 		name := store.NewName(n.First, n.Last)
+		// Left out rather than shown: the store would refuse it, which would
+		// stop the import partway through.
+		if name.Validate() != nil {
+			invalid++
+			continue
+		}
 		key := normalizeName(name)
 		isNew := !im.existing[key] && !seen[key]
 		seen[key] = true
@@ -482,6 +498,7 @@ func (im *importer) refreshPreview() {
 	})
 
 	im.setCounts(newCount, len(im.entries)-newCount)
+	im.setInvalidCount(invalid)
 	if newCount > 0 {
 		im.importBtn.Enable()
 	} else {
@@ -503,6 +520,18 @@ func (im *importer) setCounts(newCount, existingCount int) {
 	}
 	im.newLbl.Refresh()
 	im.existingLbl.Refresh()
+}
+
+// setInvalidCount shows how many names were left out for invalid characters,
+// or hides the line when none were.
+func (im *importer) setInvalidCount(n int) {
+	if n == 0 {
+		im.invalidLbl.Hide()
+		return
+	}
+	im.invalidLbl.Text = fmt.Sprintf("Skipping %d names with invalid characters", n)
+	im.invalidLbl.Refresh()
+	im.invalidLbl.Show()
 }
 
 // onImport writes the new students to the database and closes the window.

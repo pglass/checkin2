@@ -72,7 +72,13 @@ func Restore(ctx context.Context, archivePath, centerName, appDir string) (cente
 	defer os.RemoveAll(tmpDir)
 
 	tmpDB := filepath.Join(tmpDir, "restored.db")
-	if err := extractEntry(archivePath, info.File, tmpDB); err != nil {
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return center.Center{}, fmt.Errorf("open archive: %w", err)
+	}
+	err = extractNamed(zr, info, tmpDB)
+	zr.Close()
+	if err != nil {
 		return center.Center{}, err
 	}
 
@@ -99,23 +105,6 @@ func Restore(ctx context.Context, archivePath, centerName, appDir string) (cente
 		return center.Center{}, fmt.Errorf("write the restored database: %w", err)
 	}
 	return c, nil
-}
-
-// extractEntry writes the named archive entry to dest.
-func extractEntry(archivePath, entryName, dest string) error {
-	zr, err := zip.OpenReader(archivePath)
-	if err != nil {
-		return fmt.Errorf("open archive: %w", err)
-	}
-	defer zr.Close()
-
-	for _, f := range zr.File {
-		if f.Name != entryName {
-			continue
-		}
-		return extractOne(f, dest)
-	}
-	return fmt.Errorf("the archive has no entry named %q", entryName)
 }
 
 // moveFile moves src to dest, falling back to a copy when the two are on

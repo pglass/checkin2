@@ -42,6 +42,12 @@ type Config struct {
 	// when its drive is mounted somewhere else. A directory without one, such
 	// as one on the system disk, is used at its path.
 	BackupDirIDs map[string]string
+	// MaxUnzipManifestSizeMB and MaxUnzipEntrySizeMB bound what reading a
+	// backup archive may extract: its manifest, and each Center's snapshot
+	// (see backup.SetUnzipLimits). Hidden: they guard against a crafted or
+	// corrupt archive and need changing only for an unusually large Center.
+	MaxUnzipManifestSizeMB int
+	MaxUnzipEntrySizeMB    int
 	// QRBaseURL is the base that a student's encoded name is appended to when a
 	// QR code is generated. It is deliberately absent from the Settings window:
 	// changing it invalidates every card already printed against the old base,
@@ -57,6 +63,8 @@ func Default() Config {
 		CameraRequestHeight:     480,
 		QRScanCooldown:          8 * time.Second,
 		AutoBackupFrequencyDays: 2,
+		MaxUnzipManifestSizeMB:  1,
+		MaxUnzipEntrySizeMB:     1024,
 		QRBaseURL:               qr.DefaultBaseURL,
 	}
 }

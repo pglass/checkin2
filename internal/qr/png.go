@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pglass/checkin/internal/fsname"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/image/font/opentype"
@@ -348,6 +349,10 @@ func fileBase(st Student) string {
 	out := strings.TrimRight(b.String(), ". ")
 	if out == "" {
 		return "student"
+	}
+	// A Windows device name ("Con", say) cannot be a file name there.
+	if fsname.IsWindowsReserved(out) {
+		out += "_"
 	}
 	return out
 }

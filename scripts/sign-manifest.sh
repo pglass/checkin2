@@ -91,9 +91,12 @@ TMP_PEM="$(umask 077; mktemp -t checkin-signing-pem)"
 TMP_TSQ="$(mktemp -t checkin-tsq)"
 trap 'rm -f "$TMP_PEM" "$TMP_TSQ"' EXIT
 
-# -passin stdin rather than an argument, for the same reason as above.
-openssl pkcs12 -in "$P12" -nodes -passin stdin -out "$TMP_PEM" \
-  <<<"$CHECKIN_P12_PASS"
+# -passin stdin rather than an argument, for the same reason as above. Piped
+# from printf (a shell builtin, so no process sees it as an argument) rather
+# than a <<< here-string, which bash before 5.1 -- including macOS's 3.2 --
+# writes to a temporary file.
+printf '%s\n' "$CHECKIN_P12_PASS" |
+  openssl pkcs12 -in "$P12" -nodes -passin stdin -out "$TMP_PEM"
 
 echo "Signing $MANIFEST"
 # -binary: sign the file's exact bytes. Without it CMS applies S/MIME text

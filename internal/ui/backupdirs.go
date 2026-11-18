@@ -11,11 +11,13 @@ import (
 	"github.com/pglass/checkin/internal/volume"
 )
 
-// useBackupDirIDs makes backups find each backup directory through the drive
-// ID saved for it in cfg, so a drive mounted somewhere else since it was
-// configured still receives its backups and a different drive at its old path
-// does not. Called whenever the running config changes.
-func useBackupDirIDs(cfg config.Config) {
+// useBackupConfig hands the backup package the settings it reads: how to find
+// each backup directory through the drive ID saved for it in cfg, so a drive
+// mounted somewhere else since it was configured still receives its backups
+// and a different drive at its old path does not; and the unzip limits.
+// Called whenever the running config changes.
+func useBackupConfig(cfg config.Config) {
+	backup.SetUnzipLimits(cfg.MaxUnzipManifestSizeMB, cfg.MaxUnzipEntrySizeMB)
 	backup.SetDirResolver(func(dir string) (string, error) {
 		return volume.Resolve(dir, cfg.BackupDirID(dir))
 	})

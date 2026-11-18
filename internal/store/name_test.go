@@ -76,3 +76,24 @@ func TestNameEmpty(t *testing.T) {
 		}
 	}
 }
+
+// Names are letters and digits in any script, spaces, and - ' ’ . so nothing
+// that means something in the QR code's URL gets in.
+func TestNameValidate(t *testing.T) {
+	for _, n := range []Name{
+		{"Mary-Jo", "O'Neil"}, {"Zoë", "Müller"}, {"José", "Nuñez"}, {"José", "Lee"},
+		{"John", "Smith Jr."}, {"Ann", "D’Arcy"}, {"Kid", "2"}, {"美咲", "佐藤"},
+	} {
+		if err := n.Validate(); err != nil {
+			t.Errorf("Validate(%+v) = %v, want ok", n, err)
+		}
+	}
+	for _, n := range []Name{
+		{"Mary+Jo", "Smith"}, {"A#1", "B"}, {"A", "B?"}, {"A/B", "C"}, {`A\B`, "C"},
+		{"A", "B%"}, {"A&B", "C"}, {"Fun", "🎉"}, {"", "Smith"}, {"Ann", ""},
+	} {
+		if err := n.Validate(); err == nil {
+			t.Errorf("Validate(%+v) = nil, want error", n)
+		}
+	}
+}

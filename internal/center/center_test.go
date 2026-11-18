@@ -445,3 +445,31 @@ func TestListAllWithActiveAndDeactivatedSameName(t *testing.T) {
 		t.Errorf("got %d active / %d deactivated, want 1 each", nActive, nDeact)
 	}
 }
+
+// Windows device names are refused on every platform, so a Center made on a
+// Mac can still be restored on Windows.
+func TestValidateNameRejectsWindowsReserved(t *testing.T) {
+	for _, name := range []string{"CON", "nul", "Aux.backup", "COM1", "LPT9"} {
+		if err := ValidateName(name); err == nil {
+			t.Errorf("ValidateName(%q) accepted a Windows reserved name", name)
+		}
+	}
+	if err := ValidateName("Console"); err != nil {
+		t.Errorf("ValidateName(Console) = %v, want ok", err)
+	}
+}
+
+// Names are letters and digits in any script, spaces, and a few punctuation
+// marks; anything a filesystem or SQLite's file URIs treat specially is out.
+func TestValidateNameAllowlist(t *testing.T) {
+	for _, name := range []string{"Room 2", "Café Ōsaka", "Ñandú", "Café", "St. Mary's (East) & West, 2-B_x", "教室"} {
+		if err := ValidateName(name); err != nil {
+			t.Errorf("ValidateName(%q) = %v, want ok", name, err)
+		}
+	}
+	for _, name := range []string{"Room #2", "100%", "a?b", "a+b", "a/b", `a\b`, "a:b", "a*b", `a"b`, "a<b", "a|b", "a\tb", "Fun 🎉", "a$b"} {
+		if err := ValidateName(name); err == nil {
+			t.Errorf("ValidateName(%q) = nil, want error", name)
+		}
+	}
+}

@@ -319,3 +319,71 @@ func hasFailure(res VerifyResult, check Check) bool {
 	}
 	return false
 }
+
+// writeZip writes a zip at a new path holding the given entries.
+func writeZip(t *testing.T, entries map[string][]byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "crafted.zip")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	for name, data := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	return path
+}
+
+// A manifest over the manifest limit is refused without being decoded.
+func TestReadManifestLimit(t *testing.T) {
+	SetUnzipLimits(1, DefaultMaxEntryMB)
+	t.Cleanup(func() { SetUnzipLimits(DefaultMaxManifestMB, DefaultMaxEntryMB) })
+	big := append([]byte(`{"centers":[],"pad":"`), bytes.Repeat([]byte("x"), bytesPerMB)...)
+	path := writeZip(t, map[string][]byte{ManifestName: append(big, '"', '}')})
+	if _, err := ReadManifest(path); err == nil || !strings.Contains(err.Error(), "manifest is larger") {
+		t.Errorf("ReadManifest = %v, want the manifest-size error", err)
+	}
+}
+
+// A snapshot is extracted no further than the smaller of the size its manifest
+// records and the entry limit, and an oversized one fails its checks.
+func TestVerifyEntryLimits(t *testing.T) {
+	SetUnzipLimits(DefaultMaxManifestMB, 1)
+	t.Cleanup(func() { SetUnzipLimits(DefaultMaxManifestMB, DefaultMaxEntryMB) })
+
+	for _, tc := range []struct {
+		name     string
+		recorded int64
+		actual   int
+		want     string
+	}{
+		{"over its recorded size", 10, 100, "larger than the 10 bytes its manifest records"},
+		{"over the entry limit", 5 * bytesPerMB, bytesPerMB + 1, "larger than the 1 MB allowed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			man, _ := json.Marshal(Manifest{Centers: []CenterInfo{{Name: "A", File: "centers/A.db", SizeBytes: tc.recorded}}})
+			path := writeZip(t, map[string][]byte{
+				ManifestName:   man,
+				"centers/A.db": bytes.Repeat([]byte{0}, tc.actual),
+			})
+			res, err := Verify(context.Background(), path, nil)
+			if err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+			if res.OK() || !strings.Contains(res.Failures()[0].Detail, tc.want) {
+				t.Errorf("failures = %+v, want %q", res.Failures(), tc.want)
+			}
+		})
+	}
+}

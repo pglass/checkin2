@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -142,27 +143,38 @@ func Verify(ctx context.Context, archivePath string, onProgress VerifyProgress) 
 
 	total := VerifySteps(len(man.Centers))
 	report(1, total, "Unzipping archive")
-	extracted, err := extractSnapshots(ctx, archivePath, man, tmpDir)
+	zr, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return VerifyResult{}, err
+		return VerifyResult{}, fmt.Errorf("open archive: %w", err)
 	}
+	defer zr.Close()
 
+	// Each Center's snapshot is extracted, checked, and deleted before the
+	// next, so however many Centers the manifest lists, at most one snapshot
+	// -- itself capped by entryLimit -- is on disk at a time.
 	step := 1
-	for _, ci := range man.Centers {
-		path, ok := extracted[ci.File]
+	for i, ci := range man.Centers {
+		if err := ctx.Err(); err != nil {
+			return VerifyResult{}, err
+		}
+		// Numbered rather than named after the entry: the archive's own names
+		// are untrusted, and a Center name only has to be unique, not safe as
+		// a path component on this filesystem.
+		path := filepath.Join(tmpDir, fmt.Sprintf("snapshot-%d.db", i))
+		extractErr := extractNamed(zr, ci, path)
 		for _, check := range Checks {
 			step++
 			report(step, total, fmt.Sprintf("Verifying %s backup: %s", ci.Name, check.Label()))
 
-			if !ok {
+			if extractErr != nil {
 				res.Results = append(res.Results, CheckResult{
-					Center: ci.Name, Check: check, OK: false,
-					Detail: fmt.Sprintf("the archive has no entry named %q", ci.File),
+					Center: ci.Name, Check: check, OK: false, Detail: extractErr.Error(),
 				})
 				continue
 			}
 			res.Results = append(res.Results, runCheck(ctx, check, ci, path))
 		}
+		os.Remove(path)
 	}
 
 	return res, nil
@@ -255,8 +267,19 @@ func ReadManifest(archivePath string) (Manifest, error) {
 		}
 		defer rc.Close()
 
+		// Read no more than the limit (plus one byte, to tell "exactly the
+		// limit" from "over it"): the manifest is untrusted until decoded, and
+		// a real one is a few kilobytes.
+		max := limits().manifest
+		data, err := io.ReadAll(io.LimitReader(rc, max+1))
+		if err != nil {
+			return Manifest{}, fmt.Errorf("read manifest: %w", err)
+		}
+		if int64(len(data)) > max {
+			return Manifest{}, fmt.Errorf("this backup's manifest is larger than the %s allowed (max_unzip_manifest_size_mb)", formatMB(max))
+		}
 		var man Manifest
-		if err := json.NewDecoder(rc).Decode(&man); err != nil {
+		if err := json.Unmarshal(data, &man); err != nil {
 			return Manifest{}, fmt.Errorf("read manifest: %w", err)
 		}
 		return man, nil
@@ -264,46 +287,50 @@ func ReadManifest(archivePath string) (Manifest, error) {
 	return Manifest{}, fmt.Errorf("this file is not a checkin backup: it has no %s", ManifestName)
 }
 
-// extractSnapshots writes the archive's Center snapshots into destDir,
-// returning a map from each entry's archive path to where it was written.
+// extractNamed writes the snapshot the manifest entry ci names to dest, which
+// is chosen by the caller, never derived from the archive, so a crafted archive
+// cannot write anywhere else. Only the first entry of that name is used, so an
+// archive repeating a name cannot make it extract more than once.
 //
-// Only entries the manifest names are extracted, and each is written to a path
-// derived from destDir rather than from the entry name, so a crafted archive
-// cannot write outside destDir.
-func extractSnapshots(ctx context.Context, archivePath string, man Manifest, destDir string) (map[string]string, error) {
-	zr, err := zip.OpenReader(archivePath)
-	if err != nil {
-		return nil, fmt.Errorf("open archive: %w", err)
-	}
-	defer zr.Close()
-
-	wanted := map[string]bool{}
-	for _, ci := range man.Centers {
-		wanted[ci.File] = true
-	}
-
-	out := map[string]string{}
-	for i, f := range zr.File {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if !wanted[f.Name] {
+// At most entryLimit(ci) bytes are written; see entryLimit.
+func extractNamed(zr *zip.ReadCloser, ci CenterInfo, dest string) error {
+	for _, f := range zr.File {
+		if f.Name != ci.File {
 			continue
 		}
-		// Numbered rather than named after the entry: the archive's own names
-		// are untrusted, and a Center name only has to be unique, not safe as a
-		// path component on this filesystem.
-		dest := filepath.Join(destDir, fmt.Sprintf("snapshot-%d.db", i))
-		if err := extractOne(f, dest); err != nil {
-			return nil, fmt.Errorf("extract %s: %w", f.Name, err)
+		limit := entryLimit(ci)
+		err := extractOne(f, dest, limit)
+		if errors.Is(err, errTooLarge) {
+			if limit == ci.SizeBytes {
+				return fmt.Errorf("the snapshot is larger than the %d bytes its manifest records", limit)
+			}
+			return fmt.Errorf("the snapshot is larger than the %s allowed (max_unzip_entry_size_mb)", formatMB(limit))
 		}
-		out[f.Name] = dest
+		return err
 	}
-	return out, nil
+	return fmt.Errorf("the archive has no entry named %q", ci.File)
 }
 
-// extractOne writes one zip entry to dest.
-func extractOne(f *zip.File, dest string) error {
+// errTooLarge is returned by extractOne for an entry over its limit.
+var errTooLarge = errors.New("zip entry is over its size limit")
+
+// entryLimit is the most a Center's snapshot may extract to: the size its
+// manifest records, or the configured entry limit if that is smaller. The
+// manifest's size alone is not enough, since the manifest is as untrusted as
+// the rest of the archive; the configured limit is what bounds a crafted one.
+// A larger file would fail the size check anyway, so stopping at the recorded
+// size loses nothing.
+func entryLimit(ci CenterInfo) int64 {
+	max := limits().entry
+	if ci.SizeBytes >= 0 && ci.SizeBytes < max {
+		return ci.SizeBytes
+	}
+	return max
+}
+
+// extractOne writes one zip entry to dest, failing rather than writing more
+// than limit bytes.
+func extractOne(f *zip.File, dest string, limit int64) error {
 	rc, err := f.Open()
 	if err != nil {
 		return err
@@ -316,10 +343,16 @@ func extractOne(f *zip.File, dest string) error {
 	}
 	defer w.Close()
 
-	// zip.File.Open verifies the entry's CRC on EOF, so a corrupt entry fails
-	// here rather than silently producing a short file.
-	if _, err := io.Copy(w, rc); err != nil {
+	// One byte past the limit is read, to tell an entry of exactly the limit
+	// from a larger one. zip.File.Open verifies the entry's CRC on EOF, so a
+	// corrupt entry within the limit fails here rather than producing a short
+	// file.
+	n, err := io.Copy(w, io.LimitReader(rc, limit+1))
+	if err != nil {
 		return err
+	}
+	if n > limit {
+		return errTooLarge
 	}
 	return w.Close()
 }

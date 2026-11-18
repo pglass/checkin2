@@ -111,7 +111,11 @@ TMP_OUT="$(mktemp -t checkin-signed).exe"
 trap 'rm -f "$TMP_OUT"' EXIT
 
 echo "Signing $TARGET"
-osslsigncode sign \
+# The password goes in on stdin (-readpass -), piped from printf -- a shell
+# builtin, so no process sees it as an argument -- rather than a <<<
+# here-string, which bash before 5.1 (including macOS's 3.2) writes to a
+# temporary file.
+printf '%s\n' "$CHECKIN_P12_PASS" | osslsigncode sign \
   -pkcs12 "$P12" \
   -readpass - \
   -h sha256 \
@@ -119,7 +123,7 @@ osslsigncode sign \
   -i "https://github.com/pglass/checkin" \
   -ts "$TIMESTAMP_URL" \
   -in "$TARGET" \
-  -out "$TMP_OUT" <<<"$CHECKIN_P12_PASS"
+  -out "$TMP_OUT"
 
 mv "$TMP_OUT" "$TARGET"
 trap - EXIT

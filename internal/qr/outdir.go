@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/pglass/checkin/internal/fsname"
 )
 
 // RootDirName is the folder created on the user's Desktop to hold generated QR
@@ -97,5 +99,10 @@ func sanitizeDirName(name string) string {
 			b.WriteRune(r)
 		}
 	}
-	return strings.TrimRight(b.String(), ". ")
+	out := strings.TrimRight(b.String(), ". ")
+	// A Windows device name cannot be a directory name there.
+	if fsname.IsWindowsReserved(out) {
+		out += "_"
+	}
+	return out
 }

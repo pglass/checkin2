@@ -273,8 +273,7 @@ func (b *backupBrowser) browseForDir() {
 	if start := listableDir(b.dir); start != nil {
 		d.SetLocation(start)
 	}
-	// Show before Resize: Resize reaches through the internal window that Show
-	// creates (see settings.browseDir).
+	// Show before Resize, as in importer.onBrowse.
 	d.Show()
 	d.Resize(b.win.Canvas().Size())
 }

@@ -12,7 +12,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/pglass/checkin/internal/fsname"
 	"github.com/pglass/checkin/internal/store"
 )
 
@@ -163,9 +165,28 @@ func ListAll(appDir string) ([]Center, error) {
 	return centers, nil
 }
 
+// nameExtraRunes are the punctuation marks a Center name may contain besides
+// letters, digits, and spaces.
+const nameExtraRunes = "- _ . ' ( ) & ,"
+
+// nameRuneOK reports whether r may appear in a Center name: a letter or digit
+// in any script, a combining mark (so accented letters typed as two code
+// points work), a space, or one of nameExtraRunes. An allowlist rather than a
+// list of forbidden characters: a name is a directory name and part of the
+// database's path, so anything a filesystem, Windows, or SQLite's file URIs
+// treat specially -- / \ : * ? " < > | # % + and control characters -- must
+// stay out, and listing what is safe is the only way to be sure of that.
+func nameRuneOK(r rune) bool {
+	switch {
+	case unicode.IsLetter(r), unicode.IsDigit(r), unicode.Is(unicode.M, r), r == ' ':
+		return true
+	}
+	return r != ' ' && strings.ContainsRune(nameExtraRunes, r)
+}
+
 // ValidateName reports whether name is usable as a Center directory name.
-// Names must be non-empty, free of path separators and characters that are
-// illegal on Windows, and must not be a relative-path special case.
+// Names must be non-empty, made only of the characters nameRuneOK allows,
+// not a relative-path special case, and not a Windows device name.
 func ValidateName(name string) error {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -180,17 +201,16 @@ func ValidateName(name string) error {
 	if strings.HasPrefix(name, ".") {
 		return errors.New("name cannot start with a period")
 	}
-	// Reserved on Windows and/or meaningful to the filesystem everywhere.
-	if strings.ContainsAny(name, `/\:*?"<>|`) {
-		return errors.New(`name cannot contain / \ : * ? " < > |`)
-	}
 	for _, r := range name {
-		if r < 0x20 {
-			return errors.New("name cannot contain control characters")
+		if !nameRuneOK(r) {
+			return fmt.Errorf("name cannot contain %q: use letters, digits, spaces, and %s", r, nameExtraRunes)
 		}
 	}
 	if strings.HasSuffix(name, ".") {
 		return errors.New("name cannot end with a period")
+	}
+	if fsname.IsWindowsReserved(name) {
+		return fmt.Errorf("%q is reserved by Windows and cannot be used as a name", name)
 	}
 	return nil
 }
