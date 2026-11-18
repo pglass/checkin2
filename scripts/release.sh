@@ -158,6 +158,44 @@ if gh release view "$TAG" >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- Source commit ----------------------------------------------------------
+# The tag must point at the commit the exe was built from, and that commit must
+# be on GitHub. Without --target, gh tags the default branch's head *on GitHub*,
+# so a release built from unpushed commits silently tags older source.
+BUILD_COMMIT_FILE="dist/BUILD_COMMIT"
+if [ ! -f "$BUILD_COMMIT_FILE" ]; then
+  echo "Missing $BUILD_COMMIT_FILE: rebuild with make build-windows." >&2
+  exit 1
+fi
+BUILT="$(cat "$BUILD_COMMIT_FILE")"
+case "$BUILT" in
+  *-dirty)
+    echo "The exe was built with uncommitted changes (${BUILT%-dirty})." >&2
+    echo "Commit them and rebuild, so the release matches a commit." >&2
+    exit 1 ;;
+esac
+if [ "$(git rev-parse HEAD)" != "$BUILT" ]; then
+  echo "HEAD ($(git rev-parse --short HEAD)) is not the commit the exe was built from ($(git rev-parse --short "$BUILT"))." >&2
+  echo "Rebuild from HEAD, or check out $BUILT." >&2
+  exit 1
+fi
+echo "Checking that $(git rev-parse --short "$BUILT") is on GitHub"
+git fetch --quiet origin
+DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)"
+if ! git merge-base --is-ancestor "$BUILT" "$DEFAULT_BRANCH"; then
+  echo "Commit $(git rev-parse --short "$BUILT") is not on $DEFAULT_BRANCH. Push it first:" >&2
+  echo "    git push" >&2
+  exit 1
+fi
+# gh ignores --target when the tag already exists, so a tag pushed by hand to
+# another commit would quietly win.
+REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/$TAG^{}" "refs/tags/$TAG" | awk 'END { print $1 }')"
+if [ -n "$REMOTE_TAG" ] && [ "$REMOTE_TAG" != "$BUILT" ]; then
+  echo "Tag $TAG already exists on GitHub at $(git rev-parse --short "$REMOTE_TAG" 2>/dev/null || echo "$REMOTE_TAG"), not the built commit." >&2
+  echo "Delete it (git push --delete origin $TAG) or bump the version." >&2
+  exit 1
+fi
+
 # --- Release notes ----------------------------------------------------------
 # Pull the section for this version out of CHANGELOG.md: from its own '# x.y.z'
 # heading up to the next one. Falls back to a placeholder so a missing section
@@ -218,8 +256,10 @@ else
 fi
 
 echo "Creating ${DRAFT_LABEL}release $TAG"
+# --target pins the tag to the built commit, even if the branch has moved on.
 gh release create "$TAG" \
   ${DRAFT_ARGS[@]+"${DRAFT_ARGS[@]}"} \
+  --target "$BUILT" \
   --title "$TAG" \
   --notes-file "$NOTES_FILE" \
   "$SETUP" "$ZIP" "$MANIFEST" "$SIG" ${TSR_ARGS[@]+"${TSR_ARGS[@]}"}

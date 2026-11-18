@@ -188,6 +188,24 @@ mkdir -p dist
 cp checkin.exe "dist/checkin.exe"
 echo "Release exe -> dist/checkin.exe ($(du -h checkin.exe | cut -f1))"
 
+# Record the commit this exe was built from, for scripts/release.sh: it tags
+# exactly this commit and refuses to release one that is not on GitHub. A build
+# made with uncommitted changes is recorded as dirty, which release.sh also
+# refuses -- no commit matches what was built. Recorded rather than refused
+# here, so everyday debug builds (--console, --run) still work.
+#
+# Untracked files are ignored (a stray scratch file does not change the exe),
+# except untracked .go files: Go compiles every .go file in a package's
+# directory, tracked or not.
+BUILD_COMMIT="$(git rev-parse HEAD)"
+if [ -n "$(git status --porcelain --untracked-files=no)" ] ||
+   [ -n "$(git ls-files --others --exclude-standard -- '*.go')" ]; then
+  BUILD_COMMIT="$BUILD_COMMIT-dirty"
+  echo "warning: built with uncommitted changes; this build cannot be released." >&2
+fi
+echo "$BUILD_COMMIT" > dist/BUILD_COMMIT
+echo "Built from commit $BUILD_COMMIT"
+
 # The exe this produced is unsigned, so Windows greets it with a SmartScreen
 # "unknown developer" prompt. Signing is a separate step (it needs the key, and
 # this build must work without one), which makes it easy to forget -- and the
